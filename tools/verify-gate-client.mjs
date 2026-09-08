@@ -330,6 +330,10 @@ if (fs.existsSync(bgaPath)) {
   console.log('  SKIP  底图工坊交叉断言（未找到 ' + bgaPath + '，可用 DSH_BGA_CLIENT 指定）')
 }
 
+ok('提问气泡图标区里的宿主 tooltip 被隐藏（"复制"不再飘远处）',
+  /\[class\*="_userRow"\] \[class\*="_actions"\] \[role="tooltip"\]\{display:none/.test(ALLCSS),
+  (ALLCSS.match(/\[role="tooltip"\][^\n]{0,60}/g) || []).join(' ⏎ ').slice(0, 120))
+
 console.log('\n— F. 收尾 —')
 gServer.close()
 const realSettingsNow = fs.readFileSync(pathMod.join(REAL_HOME, 'settings.json'), 'utf8')

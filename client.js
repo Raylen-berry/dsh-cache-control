@@ -143,6 +143,10 @@ window.__ModuleLoader__.load({
       'html [class*="_userRow"] [class*="_actions"]{position:absolute !important;right:2px !important;left:auto !important;top:var(--cc-tail-y, auto) !important;display:inline-flex !important;align-items:center !important;white-space:nowrap !important;margin:0 !important;gap:2px !important}',
       'html [class*="_userRow"] [class*="_actions"] [class*="_action"]{width:22px !important;height:22px !important}',
       'html [class*="_userRow"] [class*="_actions"] [class*="_action"] svg{width:14px !important;height:14px !important}',
+      // 宿主 Tooltip 的气泡是 JS 量位置后再绝对定位的；图标行被我们改成 absolute 之后参照系
+      // 错位 ⇒ "复制" 会飘到远处。按用户要求：在**提问气泡的图标区**里直接不渲染它。
+      // 只限这一处（别处消息/工具条的 tooltip 不受影响），按钮的 aria-label 保持可访问性。
+      'html [class*="_userRow"] [class*="_actions"] [role="tooltip"]{display:none !important}',
       // 时间戳：不 hover 时零占位（否则它把复制键从文末顶开 ~50px）
       'html [class*="_userRow"] [class*="_actions"] [class*="_timeStart"],html [class*="_userRow"] [class*="_actions"] [class*="_timeEnd"]{max-width:0 !important;padding:0 !important;overflow:hidden !important;white-space:nowrap !important}',
       'html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeStart"],html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeEnd"]{max-width:none !important;padding-left:6px !important}',
