@@ -188,7 +188,8 @@ t('全关时没有任何底衬（::before 无背景）', !!off && alphaOf(off.pl
 t('整行自身不再有背景（左侧不再被糊）', !!d && alphaOf(d.rowBg) === 0, d && d.rowBg)
 t('整行自身不再有 backdrop-filter', !!d && !/blur\([1-9]/.test(String(d.rowBackdrop)), d && d.rowBackdrop)
 t('底衬是半透明（0<alpha<1）', !!d && (function (a) { return a > 0 && a < 1 })(alphaOf(d.plateBg)), d && alphaOf(d.plateBg) + ' / ' + d.plateBg)
-t('底衬是圆角矩形（radius 16px）', !!d && d.plateRadius === '16px', d && d.plateRadius)
+// 圆角一律 em（1.07em）⇒ 断言"是圆角且随字号走"，不再钉死 16px（v1.4.0 起尺寸全面 em 化）
+t('底衬是圆角矩形（radius 用 em，实测随字号落在此区间）', !!d && (function (v) { return v >= 8 && v <= 26 })(parseFloat(d.plateRadius)), d && d.plateRadius)
 t('底衬定长：明显窄于整行（左侧留干净区）', !!d && parseFloat(d.plateW) < d.rowW - 40, d && (d.plateW + ' vs row ' + d.rowW))
 // 气泡改成内联盒后，"整行右缘"= 气泡文字尾端 + 图标 + 内边距；底衬贴的是整行右缘，
 // 所以判定改为：底衬右缘要不早于气泡右缘（覆盖住），也不能离谱地宽（≤40px 呼吸位）。

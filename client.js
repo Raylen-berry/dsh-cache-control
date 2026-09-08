@@ -29,8 +29,11 @@ window.__ModuleLoader__.load({
     var ReactDOM = null
     try { ReactDOM = require('react-dom') } catch (e) { ReactDOM = null }
     var PANEL_WIDTH = 302
-    /** 我的提问气泡宽度上限 px（文字不到就一直贴文字，到此为止；单点可调）。 */
-    var USER_BUBBLE_MAX_PX = 620
+    /**
+     * 我的提问气泡宽度上限，单位 **em**（相对会话字号）：文字不到就一直贴文字，到此为止。
+     * 41em ≈ 15px 字号下的 615px；字号或页面缩放变了上限跟着变，不是钉死的像素数。
+     */
+    var USER_BUBBLE_MAX_EM = 41
     // 离线夹具用：让 chip 首帧就是展开态（React.useState 的初始值），
     // 省掉按 hook 调用次序猜哪个是 open —— 那种断言一改代码就假失败。
     var FORCE_OPEN = false
@@ -105,11 +108,12 @@ window.__ModuleLoader__.load({
       '.cc-chip .cc-badge{background:transparent;border-color:transparent;padding:0 3px}',
       '.cc-chip .cc-badge.on{background:transparent;border-color:transparent;color:var(--dsw-alias-brand-primary,#4d6bfe)}',
       '.cc-chip .cc-badge.dim{background:transparent;border-color:transparent;color:var(--dsw-alias-label-warning,#b8860b)}',
-      // ---- 2026 微调: 「省缓存/提问」与旁边的「开/关」不在同一水平线 → 标签下移 0.2px;
-      //      标签与徽标间距收紧、chip 内徽标做小些 (面板/分区头里的同名徽标不受影响)。
-      '.cc-chip .cc-seg{gap:4px}',
-      '.cc-chip .cc-segLabel{position:relative;top:0.2px}',
-      '.cc-chip .cc-badge{height:13px;min-width:12px;font-size:10px;border-radius:3px}',
+      // ---- 2026 微调: 「省缓存/提问」与旁边的「开/关」不在同一水平线 ⇒ 标签下移、徽标做小、
+      //      间距收紧。一律用 em（相对 chip 自己的字号），chip 字号变化/DPI 缩放时同步跟着走，
+      //      而不是钉死 0.2px / 13px 这种一次性数值（面板、分区头里的同名徽标不受影响）。
+      '.cc-chip .cc-seg{gap:.35em}',
+      '.cc-chip .cc-segLabel{position:relative;top:.017em}',
+      '.cc-chip .cc-badge{height:1.13em;min-width:.78em;font-size:.87em;border-radius:.26em}',
       '.cc-panel{z-index:2147483000;position:fixed;width:302px;box-sizing:border-box;max-height:calc(100vh - 24px);overflow:auto;overscroll-behavior:contain;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.25));background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base,#fff)));color:var(--dsw-alias-label-primary);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.32);display:flex;flex-direction:column;gap:9px;padding:11px 12px;font-size:12px}',
       '.cc-panelHead{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600}',
       '.cc-close{border:none;background:transparent;color:inherit;font-size:14px;line-height:1;cursor:pointer;padding:2px 5px;border-radius:4px}',
@@ -136,35 +140,38 @@ window.__ModuleLoader__.load({
       // 时间戳平时 opacity:0 仍占位 ⇒ 折成 0 宽，hover 才展开。
       // 宿主 CSS 可能后于插件注入, 同等特异性下会盖回来 ⇒ 一律抬 specificity 到 html 前缀
       // 并 !important。
-      'html [class*="_userRow"]{display:block !important;position:relative !important;box-sizing:border-box !important;width:-moz-fit-content !important;width:fit-content !important;max-width:min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,620px)) !important;margin-left:auto !important;margin-right:0 !important;padding-right:var(--cc-tail-room,34px) !important}',
+      // 尺寸一律 em / 宿主自己的字号变量（跟随会话字号与页面缩放自适应）；只有"轨道宽"这种
+      // 需要精确让位的量由 JS 量完写 --cc-tail-room，纵向对齐写 --cc-tail-y。
+      'html [class*="_userRow"]{display:block !important;position:relative !important;box-sizing:border-box !important;width:-moz-fit-content !important;width:fit-content !important;max-width:min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,41em)) !important;margin-left:auto !important;margin-right:0 !important;padding-right:var(--cc-tail-room,2.4em) !important}',
       'html [class*="_userRow"] [class*="_userStack"]{display:block !important;min-width:0 !important;max-width:100% !important}',
-      // 上下 padding 对称(7px)：单行/多行都垂直居中；行距与字号沿用宿主（不动 line-height）
-      'html [class*="_userRow"] [class*="_bubble"]{display:block !important;padding:7px 12px !important}',
-      'html [class*="_userRow"] [class*="_actions"]{position:absolute !important;right:2px !important;left:auto !important;top:var(--cc-tail-y, auto) !important;display:inline-flex !important;align-items:center !important;white-space:nowrap !important;margin:0 !important;gap:2px !important}',
-      'html [class*="_userRow"] [class*="_actions"] [class*="_action"]{width:22px !important;height:22px !important}',
-      'html [class*="_userRow"] [class*="_actions"] [class*="_action"] svg{width:14px !important;height:14px !important}',
+      // 上下 padding 对称(.47em)：单行/多行都垂直居中；圆角随字号走
+      'html [class*="_userRow"] [class*="_bubble"]{display:block !important;padding:.47em .8em !important;border-radius:1.45em !important}',
+      'html [class*="_userRow"] [class*="_actions"]{position:absolute !important;right:.13em !important;left:auto !important;top:var(--cc-tail-y, auto) !important;display:inline-flex !important;align-items:center !important;white-space:nowrap !important;margin:0 !important;gap:.13em !important}',
+      // 图标尺寸用宿主的"字号 + 字号增量"变量算，而不是写死 22px
+      'html [class*="_userRow"] [class*="_actions"] [class*="_action"]{width:calc(1.5em + var(--dsh-content-font-delta,0px)) !important;height:calc(1.5em + var(--dsh-content-font-delta,0px)) !important;border-radius:1.5em !important}',
+      'html [class*="_userRow"] [class*="_actions"] [class*="_action"] svg{width:.95em !important;height:.95em !important}',
       // 宿主 Tooltip 的气泡是 JS 量位置后再绝对定位的；图标行被我们改成 absolute 之后参照系
       // 错位 ⇒ "复制" 会飘到远处。按用户要求：在**提问气泡的图标区**里直接不渲染它。
       // 只限这一处（别处消息/工具条的 tooltip 不受影响），按钮的 aria-label 保持可访问性。
       'html [class*="_userRow"] [class*="_actions"] [role="tooltip"]{display:none !important}',
-      // 时间戳：不 hover 时零占位（否则它把复制键从文末顶开 ~50px）
+      // 时间戳：不 hover 时零占位（否则它把复制键从气泡右侧挤开）；hover 展开的宽度也按字号
       'html [class*="_userRow"] [class*="_actions"] [class*="_timeStart"],html [class*="_userRow"] [class*="_actions"] [class*="_timeEnd"]{max-width:0 !important;padding:0 !important;overflow:hidden !important;white-space:nowrap !important}',
-      'html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeStart"],html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeEnd"]{max-width:none !important;padding-left:6px !important}',
+      'html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeStart"],html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeEnd"]{max-width:none !important;padding-left:.4em !important}',
       // ---- 钉住的那条：底衬改画在 ::before 上（用户 2026-09-07 改）----
       // 原先把"半透明 + backdrop-filter"直接铺在被钉住的整行上，而行宽 = 整个会话列宽，
       // 于是气泡左边那一大片空白也在模糊 —— 用户不要：左侧保持干净，只要**一段固定长度**
       // 的模糊，并且要是**圆角矩形**、模糊度可调。
       // 定长怎么取：与气泡同一个上限 min(会话内容宽 × .55, --cc-user-bubble-max)。它是
-      // "随会话列宽定死的一段长度"，不随这条消息几个字而长短不一；右缘贴齐气泡右缘
-      // （宿主 .userRow 是 align-items:flex-end 右对齐），四周各出 2–6px 当呼吸位。
+      // "随会话列宽定死的一段长度"，不随这条消息几个字而长短不一；四周呼吸位与圆角一律 em，
+      // 跟随会话字号与页面缩放一起变（宿主 .userRow 右对齐，所以右缘仍贴齐行右缘）。
       // 行本身只留 sticky；::before 用 z-index:-1 —— 行有 z-index:6 自成堆叠上下文，
       // 负层因此落在"正文之上、气泡之下"，backdrop-filter 采到的正是身后滚过去的正文。
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]{position:sticky;top:0;z-index:6;will-change:transform}',
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{content:"";position:absolute;z-index:-1;'
-        + 'top:-2px;bottom:-2px;right:-6px;'
-        + 'width:calc(min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,620px)) + 12px);'
-        + 'max-width:calc(100% + 12px);'
-        + 'border-radius:16px;'
+        + 'top:-.13em;bottom:-.13em;right:-.4em;'
+        + 'width:calc(min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,41em)) + .8em);'
+        + 'max-width:calc(100% + .8em);'
+        + 'border-radius:1.07em;'
         + 'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#202024) 58%,transparent);'
         + '-webkit-backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2);'
         + 'backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2)}',
@@ -210,6 +217,7 @@ window.__ModuleLoader__.load({
         clearBubble: false,
         pinBlur: 10,        // 钉顶底衬（圆角矩形毛玻璃）的模糊半径 px，0–24
         pinMarked: '',
+        fitTick: 0,        // 「重读」按钮用的自增计数：只为触发一次重渲染去重新读实测值
         appearanceReady: true,
         // 对话页固定宽度（原 bg-atelier「底图工坊 · 对话页」区，移入本插件）
         chatWidth: 860,
@@ -496,19 +504,19 @@ window.__ModuleLoader__.load({
       var limit = (scroller && scroller.getBoundingClientRect)
         ? scroller.getBoundingClientRect().top + PIN_TOP_EPS : null
       var pick = null
-      var hasGeom = false
       if (limit !== null) {
         for (var j = 0; j < rows.length; j++) {
           var t = pinTarget(rows[j])
           if (!t || !t.setAttribute || !t.getBoundingClientRect) continue
           var r = t.getBoundingClientRect()
           if (!r) continue
-          hasGeom = true
           // 文档顺序遍历：最后一条"顶边已越过上沿"的就是要钉的
           if (r.top <= limit) pick = t
         }
       }
-      if (!pick && (limit === null || !hasGeom)) pick = pinTarget(rows[rows.length - 1])
+      // 一条都没越过上沿（会话很短 / 刚发完还没有长回答）时退回"钉最后一条"：
+      // 底衬于是始终存在，模糊度滑杆看得见也调得动；滚出篇幅后自动回到分节标题语义。
+      if (!pick) pick = pinTarget(rows[rows.length - 1])
       if (!pick || !pick.setAttribute) {
         if (STORE.state.pinMarked !== '') STORE.set({ pinMarked: '' })
         return
@@ -573,7 +581,18 @@ window.__ModuleLoader__.load({
         if (!stack || !stack.getBoundingClientRect || !stack.style) continue
         var bubble = stack.querySelector ? stack.querySelector('[class*="_bubble"]') : null
         if (!bubble || !bubble.getBoundingClientRect) continue
-        if (bubble.children && bubble.children.length > 0) continue   // 图片/JSON 块: 不动
+        // 只跳过"含图片/内嵌块"的气泡（那种量不准）。文字里带 @路径 渲染出的 <span> 子节点
+        // 照常量 —— 上一版按 children.length>0 整条跳过，把带文件引用的提问全漏掉了，
+        // 框宽就退回"块宽 = 上限"的固定观感（用户反馈的"完全不动态"正是这个）。
+        if (bubble.querySelector && bubble.querySelector('img,video,canvas,svg:not([class*="_action"])')) continue
+        var probe = lineBoxes(bubble)
+        if (!probe.length) continue
+        var baseLineH = probe[0].bottom - probe[0].top
+        var hasBlock = false
+        for (var pb = 1; pb < probe.length; pb++) {
+          if ((probe[pb].bottom - probe[pb].top) > baseLineH * 1.8) { hasBlock = true; break }
+        }
+        if (hasBlock) continue
         var text = String(bubble.textContent || '')
         if (!text) continue
         var sr = stack.getBoundingClientRect()
@@ -581,7 +600,7 @@ window.__ModuleLoader__.load({
         var applied = stack.style.width || ''
         var sig = text.length + '|' + Math.round(sr.width) + '|' + applied
         if (bubble.getAttribute && bubble.getAttribute('data-cc-fit') === sig) { done++; continue }
-        var lines = lineBoxes(bubble)
+        var lines = probe
         if (!lines.length) continue
         var left = lines[0].left, right = lines[0].right
         for (var k = 1; k < lines.length; k++) {
@@ -596,19 +615,24 @@ window.__ModuleLoader__.load({
         // 用普通 px（不用百分比：shrink-to-fit 容器里百分比会绕回父宽）。
         // CSS 那边给了 _userStack{max-width:100%}，列宽变窄时自然夹回，签名变化后下一轮重算。
         stack.style.width = target + 'px'
-        // 图标行的纵向对齐：CSS 已把它钉在行右缘的轨道里(right:2px)，
-        // 这里只算 top —— 与**最后一行**同高（变量必须写在 row 上：图标是 row 的子节点，
-        // 挂在 stack 上继承不到，这是上一版复制键跑偏的直接原因）。
+        // 图标行：实测它的宽高 ⇒ 轨道宽 = 图标行宽 + 一点余量（跟着字号/DPI 走，不写死 34px），
+        // 纵向 top 对齐到**最后一行**的中心（变量必须写在 row 上：图标是 row 的子节点，
+        // 挂在 stack 上继承不到 —— 这是上一版复制键跑偏的直接原因）。
         lines = lineBoxes(bubble)
         if (!lines.length) continue
         var last = lines[lines.length - 1]
         var rr = row.getBoundingClientRect ? row.getBoundingClientRect() : stack.getBoundingClientRect()
-        var tailY = Math.round(last.top - rr.top + (last.bottom - last.top - FIT_ICON_H) / 2)
-        if (tailY < 0) tailY = 0
-        var rowH = rr.height || 0
-        if (rowH && tailY + FIT_ICON_H > rowH) tailY = Math.max(0, Math.round(rowH - FIT_ICON_H))
+        var acts = row.querySelector ? row.querySelector('[class*="_actions"]') : null
+        var ar = acts && acts.getBoundingClientRect ? acts.getBoundingClientRect() : null
+        var iconH = (ar && ar.height) ? ar.height : FIT_ICON_H
+        var iconW = (ar && ar.width) ? ar.width : FIT_ICON_H
         if (row.style && row.style.setProperty) {
-          row.style.removeProperty('--cc-tail-x')   // 旧版遗留：横向改用 right 定位，不再需要
+          row.style.removeProperty('--cc-tail-x')            // 横向改用 right 定位，旧变量不再需要
+          row.style.setProperty('--cc-tail-room', Math.ceil(iconW + iconH * 0.45) + 'px')
+          var tailY = Math.round(last.top - rr.top + (last.bottom - last.top - iconH) / 2)
+          if (tailY < 0) tailY = 0
+          var rowH = rr.height || 0
+          if (rowH && tailY + iconH > rowH) tailY = Math.max(0, Math.round(rowH - iconH))
           row.style.setProperty('--cc-tail-y', tailY + 'px')
         }
         var sr3 = stack.getBoundingClientRect()
@@ -630,6 +654,7 @@ window.__ModuleLoader__.load({
         if (row.style && row.style.removeProperty) {
           row.style.removeProperty('--cc-tail-x')
           row.style.removeProperty('--cc-tail-y')
+          row.style.removeProperty('--cc-tail-room')
         }
         var stack = row.querySelector ? row.querySelector('[class*="_userStack"]') : null
         if (!stack || !stack.style) continue
@@ -645,16 +670,25 @@ window.__ModuleLoader__.load({
 
     var fitObserver = null
     var fitTimer = 0
+    // 同一类失败只提示一次：静默吞异常会让人完全看不出"框为什么不贴文字/底衬为什么不出来"。
+    var warnedKeys = {}
+    function warnOnce(tag, e) {
+      if (warnedKeys[tag]) return
+      warnedKeys[tag] = true
+      try { console.warn('[dsh-cache-control] ' + tag + ' 失败: ' + String((e && e.message) || e)) } catch (e2) { /* ignore */ }
+    }
+    function fitSafe() {
+      try { fitUserBubbles() } catch (e) { warnOnce('fitUserBubbles', e) }
+    }
     function requestFit() {
       if (fitTimer) return
-      fitTimer = setTimeout(function () {
-        fitTimer = 0
-        try { fitUserBubbles() } catch (e) { /* 量不到就算了, CSS 上限仍然兜着 */ }
-      }, 90)
+      fitTimer = setTimeout(function () { fitTimer = 0; fitSafe() }, 90)
     }
     /**
      * 观察器只挂在会话流容器上（比 body 便宜得多）：新消息/流式改字 ⇒ 重贴合；
      * scroll ⇒ 重选"钉哪一条" + 重定位字尾；resize ⇒ 清签名重算。
+     * 另外补两件事：① 首屏延迟再量一次（挂载时机早于消息渲染时第一轮会空跑）；
+     * ② 等 webfont 就绪再清签名重算一次（字体切换会改行宽，一次量错的值会被签名锁住）。
      */
     function startFitWatch() {
       if (!domReady() || fitObserver) return
@@ -676,6 +710,13 @@ window.__ModuleLoader__.load({
       else { fitScrollHandler = null }
       if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('resize', fitResizeHandler)
       else { fitResizeHandler = null }
+      setTimeout(fitSafe, 0)
+      setTimeout(fitSafe, 400)
+      try {
+        if (document.fonts && typeof document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+          document.fonts.ready.then(function () { clearFit(); fitSafe() }, function () { /* 忽略 */ })
+        }
+      } catch (e) { /* 老引擎没有 fonts.ready */ }
       requestFit()
     }
     function stopFitWatch() {
@@ -694,26 +735,34 @@ window.__ModuleLoader__.load({
 
     /**
      * 把外观开关映射到 <html> 上：data-* 决定"生不生效"，CSS 变量决定"长什么样"
-     * （--cc-pin-blur = 钉顶底衬的模糊半径，滑杆实时改这一个变量即可，不必重注入样式；
-     *   --cc-user-bubble-max = 我的提问气泡宽度上限 px，改 USER_BUBBLE_MAX_PX 一处即可）。
+     * （--cc-pin-blur = 钉顶底衬的模糊半径；--cc-user-bubble-max = 提问气泡宽度上限，
+     *   单位 em，改 USER_BUBBLE_MAX_EM 一处即可，随会话字号一起缩放）。
+     * 每一步各自 try/catch：以前一处抛错（例如常量改名）会连带把后面的观察器全跳过，
+     * 表现就是"底衬根本不出现 ⇒ 模糊度像失效了一样"。
      */
     function applyAppearance(s) {
       if (!domReady()) return
       var el = document.documentElement
-      if (s.pinLastUser) el.setAttribute('data-cc-pin-last-user', '1'); else el.removeAttribute('data-cc-pin-last-user')
-      if (s.clearBubble) el.setAttribute('data-cc-clear-bubble', '1'); else el.removeAttribute('data-cc-clear-bubble')
+      try {
+        if (s.pinLastUser) el.setAttribute('data-cc-pin-last-user', '1'); else el.removeAttribute('data-cc-pin-last-user')
+        if (s.clearBubble) el.setAttribute('data-cc-clear-bubble', '1'); else el.removeAttribute('data-cc-clear-bubble')
+      } catch (e) { warnOnce('applyAppearance attrs', e) }
       // 取值 0 也要写（"完全不模糊、只留半透明底"是合法档位），所以不做真值判断。
-      if (el.style && el.style.setProperty) {
-        el.style.setProperty('--cc-pin-blur', clampBlur(s.pinBlur) + 'px')
-        el.style.setProperty('--cc-user-bubble-max', USER_BUBBLE_MAX_PX + 'px')
-      }
-      if (s.pinLastUser) startPinWatch(); else stopPinWatch()
+      try {
+        if (el.style && el.style.setProperty) {
+          el.style.setProperty('--cc-pin-blur', clampBlur(s.pinBlur) + 'px')
+          el.style.setProperty('--cc-user-bubble-max', USER_BUBBLE_MAX_EM + 'em')
+        }
+      } catch (e) { warnOnce('applyAppearance vars', e) }
+      try { if (s.pinLastUser) startPinWatch(); else stopPinWatch() } catch (e) { warnOnce('pinWatch', e) }
       // 气泡贴文字/字尾定位与"钉哪一条"要跟着滚动与消息变化重算 ⇒ 观察器常驻（只挂会话流容器）；
       // 停用插件时 stopFitWatch() 会把内联 width / --cc-tail-* / data-cc-fit 全部撤干净。
-      startFitWatch()
+      try { startFitWatch() } catch (e) { warnOnce('fitWatch', e) }
       // 宽度观察器只在开关开着时才挂：关着没必要为一条不存在的钉法盯整棵 body。
-      if (s.chatWidthEnabled && s.appearanceReady) startWidthWatch(); else stopWidthWatch()
-      applyChatWidth()
+      try {
+        if (s.chatWidthEnabled && s.appearanceReady) startWidthWatch(); else stopWidthWatch()
+        applyChatWidth()
+      } catch (e) { warnOnce('widthWatch', e) }
     }
 
     function setPinLastUser(v) {
@@ -1001,11 +1050,36 @@ window.__ModuleLoader__.load({
             '会话守则是"必须遵守的规则"，不是"模型无法违反"——它约束行为，不产生技术硬拦截。')))
     }
 
+    /**
+     * 自检读数：底衬到底有没有被画出来、计算后的 backdrop-filter / 宽度是多少。
+     * "模糊度像失效"可能有好几种成因（开关没生效、被钉元素没出现、变量没落上、
+     * 被别的样式盖掉）——把实测值直接显示出来，一眼能分辨，不用靠猜。
+     */
+    function readPlateState() {
+      var out = { pinned: false, blurVar: '', filter: '', plateW: '', font: '' }
+      try {
+        if (typeof document === 'undefined' || !document.querySelector) return out
+        var el = document.querySelector('[' + APPEAR_ATTRS.pin + ']')
+        out.pinned = !!el
+        if (typeof getComputedStyle !== 'function') return out
+        var root = getComputedStyle(document.documentElement)
+        out.blurVar = root.getPropertyValue('--cc-pin-blur').trim()
+        out.font = (root.getPropertyValue('--dsh-content-font-size').trim() || root.fontSize || '').trim()
+        if (el) {
+          var cs = getComputedStyle(el, '::before')
+          out.filter = cs.backdropFilter || cs.webkitBackdropFilter || ''
+          out.plateW = cs.width || ''
+        }
+      } catch (e) { out.filter = '读取失败' }
+      return out
+    }
+
     function AppearanceCard() {
       var s = useCache()
       var b = clampBlur(s.pinBlur)
       // 小数值细分：<3.5 按 0.1 步进（能选到 1.3/1.5/1.7 这类微调档），≥3.5 按 0.5 足够。
       var blurStep = b < 3.5 ? '0.1' : '0.5'
+      var plate = readPlateState()
       return h('div', { className: 'cc-card' },
         Switch('把最近一条「我的提问」钉在会话区顶部', s.pinLastUser, setPinLastUser, !s.appearanceReady),
         Switch('我的气泡背景透明（露出壁纸）', s.clearBubble, setClearBubble, !s.appearanceReady),
@@ -1019,6 +1093,18 @@ window.__ModuleLoader__.load({
           '气泡置顶等功能未装载：当前运行的 host 还不认识这几个字段，写盘会被旧版抹掉。请重启桌面应用。') : null,
         s.pinLastUser && s.appearanceReady ? h('div', { className: 'cc-muted' },
           '钉住位置自检：' + (s.pinMarked || '还没找到 [class*="_userRow"]（当前页面可能没有会话，或类名已变）')) : null,
+        // 实测读数（拖滑杆时能立刻看到 blur(...) 有没有跟着变）
+        h('div', { className: 'cc-row', style: { gap: '8px', flexWrap: 'wrap' } },
+          h('span', { className: 'cc-muted' },
+            '底衬实测：被钉元素 ' + (plate.pinned ? '有' : '无')
+            + ' · --cc-pin-blur=' + (plate.blurVar || '(未设置)')
+            + ' · backdrop-filter=' + (plate.filter || '(无)')
+            + ' · 底衬宽=' + (plate.plateW || '(无)')
+            + ' · 会话字号=' + (plate.font || '(未知)')),
+          h('button', {
+            className: 'cc-mini', type: 'button',
+            onClick: function () { STORE.set({ fitTick: (STORE.state.fitTick || 0) + 1 }) },
+          }, '重读')),
         h(Fold, { label: '说明' },
           h('div', { className: 'cc-note' },
             '三项都是纯界面开关：只往 <html> 上加 data-cc-* / --cc-pin-blur 并注入样式，不改消息数据、不改宿主代码。'
@@ -1419,9 +1505,20 @@ window.__ModuleLoader__.load({
       setClearBubble: setClearBubble,
       setPinBlur: setPinBlur,
       clampBlur: clampBlur,
-      bubbleMaxPx: function () { return USER_BUBBLE_MAX_PX },
+      bubbleMaxEm: function () { return USER_BUBBLE_MAX_EM },
+      setBubbleMaxEm: function (v) {
+        USER_BUBBLE_MAX_EM = Math.min(120, Math.max(8, Math.round(Number(v) * 10) / 10 || 41))
+        applyAppearance(STORE.state)
+      },
+      // 兼容旧测试缝：给 px 就按当前会话字号折算成 em。
       setBubbleMaxPx: function (v) {
-        USER_BUBBLE_MAX_PX = Math.min(2000, Math.max(200, Math.round(Number(v) || 620)))
+        var fs = 15
+        try {
+          if (typeof getComputedStyle === 'function' && document.documentElement) {
+            fs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dsh-content-font-size')) || 15
+          }
+        } catch (e) { /* 用默认字号 */ }
+        USER_BUBBLE_MAX_EM = Math.min(120, Math.max(8, Math.round((Number(v) || 620) / fs * 10) / 10))
         applyAppearance(STORE.state)
       },
       applyChatWidth: applyChatWidth,

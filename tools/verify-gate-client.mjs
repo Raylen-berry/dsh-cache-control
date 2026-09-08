@@ -270,6 +270,7 @@ ok('展开渲染无 React 警告', warnings.length === 0, warnings[0] ? warnings
 
 console.log('\n— H. 本轮四项改动（名称长度 / 底衬形态 / 徽标无背景 / 对话页搬过来了）—')
 const ALLCSS = injectedCss.join('\n')
+const clientSrc = fs.readFileSync(PLUGIN + 'client.js', 'utf8')
 // ① 设置页名称：导航条目与四个分区标题都要 2–4 字（编号圈符不算名字的一部分）
 //    先写一份"新 host 全字段 + 对话页宽度开着"的盘，④ 卡里的滑杆才会渲染出来。
 fs.writeFileSync(settingsFile, JSON.stringify({
@@ -288,11 +289,21 @@ const plateRule = (ALLCSS.match(/html\[data-cc-pin-last-user="1"\] \[data-cc-pin
 ok('被钉行自身只留 sticky（不再铺背景/模糊）',
   /position:sticky/.test(pinRule) && !/background/.test(pinRule) && !/backdrop-filter/.test(pinRule), pinRule.slice(0, 120))
 ok('底衬画在 ::before 上', plateRule.includes('::before') && /content:""/.test(plateRule), plateRule.slice(0, 60))
-ok('底衬定长（按会话列宽 ×.55 折算并夹在 100% 内，不是整行铺满）',
+ok('底衬定长（按会话列宽 ×.55 与 em 上限折算，不写死像素）',
   plateRule.includes('--dsh-chat-content-width') && plateRule.includes('* .55')
-  && /width:calc\(min\(/.test(plateRule) && plateRule.includes('max-width:calc(100% + 12px)'),
-  plateRule.slice(0, 170))
-ok('底衬是圆角矩形', /border-radius:16px/.test(plateRule), plateRule.slice(0, 200))
+  && /width:calc\(min\(/.test(plateRule) && plateRule.includes('var(--cc-user-bubble-max,41em)')
+  && plateRule.includes('max-width:calc(100% + .8em)'),
+  plateRule.slice(0, 190))
+ok('底衬圆角/呼吸位是 em（跟随字号缩放）', /border-radius:1\.07em/.test(plateRule) && /right:-\.4em/.test(plateRule), plateRule.slice(0, 120))
+// #3 要求：微调数值不再钉死像素 ⇒ 逐条守：气泡内边距/圆角/图标尺寸/轨道宽/chip 徽标都走 em 或变量
+ok('提问气泡尺寸一律 em/变量（没有写死的 px 微调）',
+  /_bubble"\]\{display:block !important;padding:\.47em \.8em !important;border-radius:1\.45em/.test(ALLCSS)
+  && /width:calc\(1\.5em \+ var\(--dsh-content-font-delta,0px\)\)/.test(ALLCSS)
+  && /padding-right:var\(--cc-tail-room,2\.4em\)/.test(ALLCSS)
+  && /\.cc-chip \.cc-segLabel\{position:relative;top:\.017em\}/.test(ALLCSS)
+  && /\.cc-chip \.cc-badge\{height:1\.13em/.test(ALLCSS), (ALLCSS.match(/(\.47em|1\.45em|2\.4em|\.017em|1\.13em)/g) || []).join(','))
+ok('气泡上限用 em 常量（USER_BUBBLE_MAX_EM，随字号缩放）',
+  /var\(--cc-user-bubble-max,41em\)/.test(ALLCSS) && /--cc-user-bubble-max', USER_BUBBLE_MAX_EM \+ 'em'/.test(clientSrc), '')
 ok('模糊度走可调变量 --cc-pin-blur（默认 10px）',
   plateRule.includes('blur(var(--cc-pin-blur,10px)') && (ALLCSS.match(/--cc-pin-blur/g) || []).length >= 2,
   (ALLCSS.match(/backdrop-filter:[^;]*;/g) || []).join(' '))
@@ -316,10 +327,11 @@ ok('设置页出现「④ 对话页」卡（开关 + 640–3840 滑杆 + 常用�
   pageHtml4.includes('④ 对话页') && /min="640"/.test(pageHtml4) && /max="3840"/.test(pageHtml4)
   && pageHtml4.includes('1920') && pageHtml4.includes('启用固定对话页宽度'),
   'has=' + pageHtml4.includes('④ 对话页'))
-// 对面插件(dsh-bg-atelier)的交叉断言：装了才判，没装就跳过（开源仓库里不能硬依赖别人的路径）。
+// 对面插件(dsh-bg-atelier)的交叉断言：装了才判，没装就跳过（开源仓库不能硬依赖别人的路径）。
 const bgaPath = process.env.DSH_BGA_CLIENT || 'D:/DeepSeek/dsh-plugins/bg-atelier/client.js'
 if (fs.existsSync(bgaPath)) {
   const bgaSrc = fs.readFileSync(bgaPath, 'utf8')
+  // 那边源码里还留了"这块搬走了"的注释（是文档，不是代码），所以先把注释剥掉再判。
   const bgaCode = bgaSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '').replace(/[^:]\/\/.*$/gm, '')
   ok('底图工坊那边已删净：无「对话页」小节、无 pinChatWidth、不再写 --dsh-chat-user-width、无 chatWidth 字段',
     !/Section\('对话页'/.test(bgaCode) && !/pinChatWidth/.test(bgaCode)

@@ -65,8 +65,10 @@ function grabFn(name) {
   return src.slice(at, end)
 }
 const FIT_ICON_H = Number((src.match(/var FIT_ICON_H = (\d+)/) || [])[1])
-const BUBBLE_MAX = Number((src.match(/var USER_BUBBLE_MAX_PX = (\d+)/) || [])[1])
-if (!FIT_ICON_H || !BUBBLE_MAX) throw new Error('常量没抓到: FIT_ICON_H=' + FIT_ICON_H + ' MAX=' + BUBBLE_MAX)
+const BUBBLE_MAX_EM = Number((src.match(/var USER_BUBBLE_MAX_EM = ([\d.]+)/) || [])[1])
+const FONT_PX = 15                     // 页面固定 15px，em 上限折算成 px 才好断言
+const BUBBLE_MAX = Math.round(BUBBLE_MAX_EM * FONT_PX)
+if (!FIT_ICON_H || !BUBBLE_MAX_EM) throw new Error('常量没抓到: FIT_ICON_H=' + FIT_ICON_H + ' EM=' + BUBBLE_MAX_EM)
 const jsFns = 'var FIT_ICON_H = ' + FIT_ICON_H + ';\n' + grabFn('lineBoxes') + '\n' + grabFn('fitUserBubbles')
 console.log('pluginCss len=' + pluginCss.length + ' BUBBLE_MAX=' + BUBBLE_MAX + ' FIT_ICON_H=' + FIT_ICON_H + ' jsFns len=' + jsFns.length)
 
@@ -74,11 +76,13 @@ const SHORT = '这条短消息应该很窄。'
 const MID = '中等长度的一条提问，大概三十来个字，气泡应当刚好包住它。'
 const LONG = '很长的正文：' + '用来观察框是否贴住最宽那一行、文字是否始终在框内垂直居中、复制图标是否紧跟最后一个字。'.repeat(12)
 
-function rowOf(id, text, boxW) {
+function rowOfHtml(id, html, boxW) { return rowOfRaw(id, html, boxW) }
+function rowOf(id, text, boxW) { return rowOfRaw(id, text, boxW) }
+function rowOfRaw(id, html, boxW) {
   return `<div style="width:${boxW};margin-bottom:18px" data-case="${id}">
     <div class="uSmzmW_userRow">
       <div class="uSmzmW_userStack">
-        <div class="uSmzmW_bubble">${text}</div>
+        <div class="uSmzmW_bubble">${html}</div>
       </div>
       <div class="npc0Lq_actions uSmzmW_actions">
         <span class="npc0Lq_timeStart">09:41</span>
@@ -90,7 +94,7 @@ function rowOf(id, text, boxW) {
 
 const page = `<!doctype html><html><meta charset="utf-8"><style>
 html,body{margin:0;height:100%;background:#101216;color:#e8e8e8;font-family:"Microsoft YaHei","PingFang SC",system-ui}
-#root{width:1180px;margin:0 auto;padding:18px 0;--dsh-chat-content-width:1180px;--dsh-content-font-size:15px;--cc-user-bubble-max:${BUBBLE_MAX}px}
+#root{width:1180px;margin:0 auto;padding:18px 0;font-size:${FONT_PX}px;--dsh-chat-content-width:1180px;--dsh-content-font-size:15px;--cc-user-bubble-max:${BUBBLE_MAX}px}
 ${hostCss}
 ${pluginCss}
 </style>
@@ -99,6 +103,7 @@ ${rowOf('short', SHORT, '100%')}
 ${rowOf('mid', MID, '100%')}
 ${rowOf('long', LONG, '100%')}
 ${rowOf('narrow', LONG, '420px')}
+${rowOfHtml('refspan', '带引用的提问：' + '<span>@D:/DeepSeek/某文件.md</span> ' + MID, '100%')}
 </div>
 <pre id="out"></pre>
 <script>
@@ -141,7 +146,7 @@ ${jsFns}
     var out
     try {
       out = { fit: n, viewport: window.innerWidth, bubbleMax: ${BUBBLE_MAX},
-        short: check('short'), mid: check('mid'), long: check('long'), narrow: check('narrow') }
+        short: check('short'), mid: check('mid'), long: check('long'), narrow: check('narrow'), refspan: check('refspan') }
     } catch (e) { out = { err: String(e) } }
     document.getElementById('out').textContent = 'MEASURE ' + JSON.stringify(out)
   }
@@ -170,8 +175,8 @@ console.log(JSON.stringify(J, null, 1))
 
 let fail = 0
 const t = (n, c, x = '') => { if (!c) fail++; console.log((c ? '  PASS  ' : '  FAIL  ') + n + (x ? '  [' + x + ']' : '')) }
-t('fitUserBubbles 处理了 4 条', J.fit === 4, 'fit=' + J.fit)
-for (const k of ['short', 'mid', 'long', 'narrow']) {
+t('fitUserBubbles 处理了 5 条（含带 span 子节点那条）', J.fit === 5, 'fit=' + J.fit)
+for (const k of ['short', 'mid', 'long', 'narrow', 'refspan']) {
   const C = J[k]
   t(k + ': 框宽 = 最宽行 + 内边距(±3px)', Math.abs(C.bubbleW - C.expectW) <= 3, C.bubbleW + ' vs ' + C.expectW)
   t(k + ': 文字全在框内', C.inside === true)

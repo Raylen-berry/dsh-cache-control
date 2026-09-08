@@ -70,24 +70,38 @@
 **为什么必须用 JS 量一次**：块盒的宽度只跟"可用宽/上限"有关，与文字实际末端无关（inline 盒虽然贴字，
 但背景逐行着色、行内 padding 只落在首末片段 ⇒ 框"超"到文字之外、文字也不垂直居中）。所以：
 
-- **CSS 定骨架**：`userRow` = `display:block; position:relative; box-sizing:border-box; width:fit-content;
-  margin-left:auto`，硬上限 `min(列宽×.55, var(--cc-user-bubble-max,620px))`，并在**右缘留一条
-  `--cc-tail-room`(默认 34px) 宽的轨道**（`padding-right`）；`userStack` 块盒；`bubble` 块盒 +
-  **上下对称 padding 7px**（⇒ 单行/多行都垂直居中，行距字号不动）；图标行 `position:absolute;
-  right:2px; left:auto; top:var(--cc-tail-y,auto)` ⇒ 落在轨道里 = **气泡右侧**，没测出来时留在原位兜底。
-- **JS 量一次**（`fitUserBubbles()`）：用 `Range.getClientRects()` 取逐行矩形 ⇒
-  ① `stack.style.width = 最宽行 + 左右内边距`（框贴文字，列宽变窄时靠 `max-width:100%` 自动夹回）；
-  ② 重写宽度后再量**最后一行**，把 `--cc-tail-y` 写成与该行同高的 top（变量必须写在 `userRow` 上——
-  图标行是 row 的子节点，写在 `userStack` 上继承不到，这是复制键一度跑偏的直接原因）。
-- 实测（列宽 1180）：10 字 174px、30 字 444px、长文 579px 后停在上限内；复制键距**气泡右缘 10px**
-  （轨道内）且始终与最后一行同高；上下留白 8/8 相等；420px 窄容器也不越框。
-- 只处理纯文字气泡（含图片/JSON 块的整条跳过）；`data-cc-fit` 记签名，流式输出不会每帧重排；
-  停用插件时 `stopFitWatch()` 把 `stack.style.width` / `--cc-tail-*` / `data-cc-fit` 全撤掉。
-- **时间戳零占位**：它平时 `opacity:0` 却仍占 ~50px，正是"复制键离文字太远"的另一半原因 ⇒
-  折叠成 `max-width:0;padding:0;overflow:hidden`，`:hover` 才展开。
-- 可调点：`USER_BUBBLE_MAX_PX`（框宽上限）、`--cc-tail-room`（右侧轨道宽 = 复制键离框缘的距离）、
-  `FIT_ICON_H`（图标行高，用于与最后一行对齐）；钉顶底衬仍是**定长**
-  （`min(列宽×.55, 上限) + 12px`，2026-09-07 选定的形态），短消息时它比气泡宽。
+- **CSS 定骨架（尺寸一律 em / 宿主字号变量）**：`userRow` = `display:block; position:relative;
+  box-sizing:border-box; width:fit-content; margin-left:auto`，上限 `min(列宽×.55,
+  var(--cc-user-bubble-max,41em))`，右缘再留一条轨道 `padding-right:var(--cc-tail-room,2.4em)`；
+  `bubble` = 块盒 + **上下对称 padding .47em** + 圆角 `1.45em`；图标行 `position:absolute;
+  right:.13em; left:auto; top:var(--cc-tail-y,auto)` ⇒ 落在轨道里 = **气泡右侧**；图标尺寸
+  `calc(1.5em + var(--dsh-content-font-delta,0px))` 跟宿主字号走。字号变、页面缩放变，这些一起变 ——
+  不再有任何"某次量出来好看就钉死"的像素数。
+- **JS 量一次**（`fitUserBubbles()`）：`Range.getClientRects()` 取逐行矩形 ⇒
+  ① `stack.style.width = 最宽行 + 左右内边距`（框贴文字；列宽变窄靠 `max-width:100%` 自动夹回）；
+  ② 实测图标行宽高 ⇒ 写 `--cc-tail-room`（轨道 = 图标行宽 + .45×图标高）与 `--cc-tail-y`
+  （与**最后一行**同高）。变量必须写在 `userRow` 上：图标行是 row 的子节点，写到 `userStack` 上
+  继承不到 —— 这是复制键一度跑偏的直接原因。
+- 实测（列宽 1180、字号 15px）：10 字 174px、30 字 444px、长文 579px；复制键距气泡右缘
+  **13.1px**（em 轨道，随字号缩放）且与末行同高；上下留白 8/8.1 相等；420px 窄容器不越框。
+- **两条踩过的坑（别改回去）**：
+  ① 用 `bubble.children.length > 0` 判"含内嵌块就跳过"，会把**带 `@路径` 引用的提问**（宿主渲染
+     成 `<span>`）整条漏掉 ⇒ 框宽退回"块宽 = 上限"的固定观感（就是"完全不动态"那次反馈）。现在
+     只跳过真的含 `img/video/canvas` 或某行矩形异常高（内嵌块）的气泡。
+  ② `applyAppearance()` 里任何一步抛错（例如常量改名）会连带把后面的观察器全跳过 ⇒ 被钉元素
+     不出现，看起来就是"模糊度失效"。现在每段各自 `try/catch` + `warnOnce`，首屏再补量两次，并在
+     `document.fonts.ready` 后清签名重算（字体切换会改行宽，一次量错会被签名锁住）。
+- 设置页 ③ 气泡置顶 卡里带一行**底衬实测读数**：被钉元素有/无、`--cc-pin-blur`、
+  `getComputedStyle(el,'::before').backdropFilter`、底衬宽、会话字号 +「重读」按钮 ⇒
+  以后"看起来失效"能当场分辨是哪一种成因。
+- 只处理纯文字气泡；`data-cc-fit` 记签名，流式输出不会每帧重排；停用插件时 `stopFitWatch()`
+  把 `stack.style.width` / `--cc-tail-*` / `data-cc-fit` 全撤干净。
+- **时间戳零占位**：平时 `opacity:0` 却仍占位 ⇒ `max-width:0;padding:0;overflow:hidden`，
+  `:hover` 才展开（展开后的内边距也是 em）。
+- 可调点：`USER_BUBBLE_MAX_EM`（上限，默认 41em；测试缝 `internals.setBubbleMaxEm` /
+  `setBubbleMaxPx`）、`--cc-tail-room`（轨道宽 = 复制键离框缘的距离，JS 自动量、也可手动覆盖）、
+  `FIT_ICON_H`（仅量不到图标时的兜底高度）。钉顶底衬仍是**定长**
+  （`min(列宽×.55, 上限) + .8em`，2026-09-07 选定的形态），短消息时它比气泡宽。
 
 底衬形态的两次选定：
 2026-09-07 选**半透明毛玻璃**（不是实底、不是无底衬）；
@@ -229,6 +243,15 @@ v1.4.0 起 ≈ `423.4px`（= 748×.55 + 12，气泡宽 411px）对整行 `748px`
 3. 重启应用。插件停用/卸载后不残留任何行为改动（`gate.md` override 与 `settings.json` 是数据，需自行删除）。
 
 ## 版本与变更记录
+
+- **v1.4.1**（根因修复 + 尺寸自适应）
+  - `applyAppearance` 每段各自 `try/catch` + `warnOnce`：一处抛错不再连带把钉顶/贴合观察器全部
+    跳过（那会让"底衬模糊度"看着像失效）；首屏补量两次 + `document.fonts.ready` 后清签名重算。
+  - 气泡量测不再按 `children.length` 整条跳过（带 `@路径` `<span>` 的提问曾被全漏 ⇒ 框宽退回固定
+    上限），改为只跳过真含 `img/video/canvas` 或内嵌块的气泡；轨道宽与纵向对齐改为**实测图标行**。
+  - 尺寸全面 em 化：气泡内边距/圆角/图标尺寸/轨道宽/上限(`USER_BUBBLE_MAX_EM` 取代 px 常量)/
+    chip 徽标与标签位移一律 em 或实测值，跟随会话字号与页面缩放自适应。
+  - 设置页 ③ 新增**底衬实测读数**自检行 +「重读」按钮；提问气泡图标区隐藏宿主 tooltip。
 
 - **v1.4.0**（改名 / 气泡微调 / 小数档）
   - **分区名改**：② 门禁 → **② 会话守则**（chip 工具提示、设置页、规则 md 标题同步）；
