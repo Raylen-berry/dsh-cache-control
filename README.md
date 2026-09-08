@@ -1,0 +1,288 @@
+# dsh-cache-control（会话策略：省缓存 / 会话守则 / 气泡置顶 / 对话页）
+
+给 DSH Desktop（dsh 0.7.2-alpha，web profile）加**四个互相独立的开关**，设置页名称就叫
+**会话策略**（4 字，四个分区标题 ① 省缓存 / ② 会话守则 / ③ 气泡置顶 / ④ 对话页 一律 2–4 字）：
+① ② 在输入框右下角的 chip 上各自可点，③ ④ 在设置页里。
+
+| | ① 省缓存 · 压缩策略 | ② 会话守则 · 长期规则 |
+|---|---|---|
+| 动的是什么 | standard preset 里 `@deepseek-ai/dsh-compaction-basic` 的 config | system prompt 里一个常驻段（规则文本） |
+| 生效时机 | **之后新建的会话**（preset 按组装文件 mtime 分代） | **所有会话的下一个 model step**（含当前会话，无需重启） |
+| 会被压缩冲掉吗 | — | 不会：压缩只折叠对话历史，system prompt 每请求重发 |
+| 代价 | 无额外 token | 规则体积 × 每请求（含子代理/工作流子会话） |
+
+③ 气泡置顶与 ④ 对话页是纯界面开关，只改样式与 CSS 变量，不动消息数据、不动宿主代码。
+只影响 `standard` 之外的说明：会话守则走宿主全局提示词层，对**所有 preset、子代理、workflow 子会话**都生效。
+
+## ① 省缓存 · 压缩策略
+
+设置页（设置 → “会话策略”）与对话区快捷面板里各有一条独立开关：
+
+- **总开关**：启用 → 把下列参数写进 standard preset 的 compaction-basic 行；
+  关闭 → 移除该行的 config，恢复 DSH 出厂默认（压力到窗口 80% 自动压缩、逐字保留 16%）。
+- **压缩触发点**：占路由模型上下文窗口的百分比，默认 25%（deepseek-v4-flash 窗口 1,000,000
+  tokens ⇒ 约 250k 触发）。
+- **保留原文尾部**：逐字保留最近内容的窗口百分比（必须小于触发点），默认 5%（⇒ 约 50k）。
+- **自动压缩**：`auto` 开关；关闭后不再自动压缩与溢出恢复，仅保留手动 `/compact`。
+
+## ② 会话守则 · 长期规则
+
+插件内的 `session-gate.md` 就是规则本体，作为一份**可长期演进的 md**随包分发：
+
+- **R1 独立研判**：不默认用户是对的；命中「事实/技术错误、目标与手段冲突、与既有约束冲突、
+  代价不划算」四类必须指出，且反对要可核查（对象 + 理由 + 替代方案）；最终裁决权在用户，
+  但不可逆损失（删数据、覆盖无备份、改生产、花钱、对外发布）必须先确认。
+- **R2 必要提问**：只有「不同理解会改变结果」且「答案查不到」时才停下来问；能查的先查；
+  一轮最多三问、带候选项与推荐；拿不准但可回滚就先做完再标注。
+- **R3 分工固定**：用户定目标、补真实情况、判定可用性；助手负责搜索、执行、制作、验证、交付。
+  交付必须可判断（改动路径 + 依据 + 未覆盖项 + 风险与回退）。
+
+界面上：
+
+- **启用开关**独立于省缓存开关，勾选框各管各的。chip 是固定版式的两段状态：
+  `省缓存 [开/关] ｜ 提问 [开/关]`，`[开/关]` 复用同一个徽标元件（`.cc-badge`），面板里两个分区头也用它。
+- **面板**（输入框右侧）里两块用分隔线分区，可「查看规则」直接看当前生效文本。
+- **设置页**里可**编辑规则**：写入 `$DSH_HOME/dsh-cache-control/gate.md`（override），
+  不改动插件目录里的内置 `session-gate.md`；点「清除自定义，回到内置」即删除 override。
+
+实现要点（也是几条硬约束的理由）：
+
+- 注入走 `ctx.inject(['systemPrompt']) → systemPrompt.section({ name, order: 400, text })`，
+  与 `dsh-web-app` 注入 `app:web-surface` 同一条路；`text` 是**函数**，DSH 每个 model step
+  重新 `assemble()`，所以改开关/改文本不用重启也不用新会话。拿不到 `systemPrompt` 服务时只
+  关掉会话守则，不影响压缩功能。
+- 关 = `text` 返回空串，`renderPrompt` 会丢弃空段 ⇒ 提示词里一个字都不留。
+- **文本按 mtime+size 缓存并即时重读**：直接编辑 md 存盘，下一个请求就是新内容（无需重启、无需刷新页面）。
+- 注入前把成对花括号 `{{` / `}}` 替换成全角 `｛｛` / `｝｝`：`renderPrompt` 对未知变量引用是
+  **抛错**策略，用户编辑规则时写了 `{{...}}` 会让每次请求组装失败 —— 所以宁可改字形也不让会话挂。
+- 上限 6 KB（约 2.5k tokens）；超限自动截断并在界面标「超出上限已截断」，避免规则膨胀悄悄吃掉上下文。
+
+### ③ 气泡置顶（纯界面，与①②独立）
+
+| 开关 | 效果 | 实现 |
+|---|---|---|
+| `pinLastUser` | 滚动时把**已越过会话区上沿的最后一条「我的提问」**钉在顶部：往上翻会换成第 4、3 条……滚到底才钉最近那条（分节标题语义） | 从 `[class*="_userRow"]` 爬到 `[data-chat-flow]` 的直接子元素打 `data-cc-pin` + `position:sticky`；"钉哪一条"按 `rect.top <= 滚动区上沿 + 2px` 判定，`scroll` 触发重选；底衬画在该元素的 `::before` 上（见下） |
+| `clearBubble` | 我的气泡背景透明，露出壁纸（配合 dsh-bg-atelier） | `[class*="_userRow"] [class*="_bubble"]{background:transparent}` |
+| `pinBlur` | 钉顶底衬的**模糊度**滑杆，0–24px（0 = 只留半透明底、不模糊）；小值有小数档：<3.5 按 0.1 步进（可选 1.3 / 1.5 / 1.7），≥3.5 按 0.5 步进 | `<html style="--cc-pin-blur:Npx">`，底衬规则写 `backdrop-filter:blur(var(--cc-pin-blur,10px))` —— 拖滑杆只改一个变量，不重注入样式 |
+
+我的提问气泡的动态贴合（v1.4.0 起始终生效，无开关；几何由 `probe-userrow.mjs` 用**真浏览器 + 真函数源码**实测）：
+
+**为什么必须用 JS 量一次**：块盒的宽度只跟"可用宽/上限"有关，与文字实际末端无关（inline 盒虽然贴字，
+但背景逐行着色、行内 padding 只落在首末片段 ⇒ 框"超"到文字之外、文字也不垂直居中）。所以：
+
+- **CSS 定骨架**：`userRow` = `display:block; position:relative; box-sizing:border-box; width:fit-content;
+  margin-left:auto`，硬上限 `min(列宽×.55, var(--cc-user-bubble-max,620px))`，并在**右缘留一条
+  `--cc-tail-room`(默认 34px) 宽的轨道**（`padding-right`）；`userStack` 块盒；`bubble` 块盒 +
+  **上下对称 padding 7px**（⇒ 单行/多行都垂直居中，行距字号不动）；图标行 `position:absolute;
+  right:2px; left:auto; top:var(--cc-tail-y,auto)` ⇒ 落在轨道里 = **气泡右侧**，没测出来时留在原位兜底。
+- **JS 量一次**（`fitUserBubbles()`）：用 `Range.getClientRects()` 取逐行矩形 ⇒
+  ① `stack.style.width = 最宽行 + 左右内边距`（框贴文字，列宽变窄时靠 `max-width:100%` 自动夹回）；
+  ② 重写宽度后再量**最后一行**，把 `--cc-tail-y` 写成与该行同高的 top（变量必须写在 `userRow` 上——
+  图标行是 row 的子节点，写在 `userStack` 上继承不到，这是复制键一度跑偏的直接原因）。
+- 实测（列宽 1180）：10 字 174px、30 字 444px、长文 579px 后停在上限内；复制键距**气泡右缘 10px**
+  （轨道内）且始终与最后一行同高；上下留白 8/8 相等；420px 窄容器也不越框。
+- 只处理纯文字气泡（含图片/JSON 块的整条跳过）；`data-cc-fit` 记签名，流式输出不会每帧重排；
+  停用插件时 `stopFitWatch()` 把 `stack.style.width` / `--cc-tail-*` / `data-cc-fit` 全撤掉。
+- **时间戳零占位**：它平时 `opacity:0` 却仍占 ~50px，正是"复制键离文字太远"的另一半原因 ⇒
+  折叠成 `max-width:0;padding:0;overflow:hidden`，`:hover` 才展开。
+- 可调点：`USER_BUBBLE_MAX_PX`（框宽上限）、`--cc-tail-room`（右侧轨道宽 = 复制键离框缘的距离）、
+  `FIT_ICON_H`（图标行高，用于与最后一行对齐）；钉顶底衬仍是**定长**
+  （`min(列宽×.55, 上限) + 12px`，2026-09-07 选定的形态），短消息时它比气泡宽。
+
+底衬形态的两次选定：
+2026-09-07 选**半透明毛玻璃**（不是实底、不是无底衬）；
+2026-09-07 改成**定长圆角矩形**——原先把毛玻璃铺在被钉住的整行上，而行宽 = 整个会话列宽，
+于是气泡**左边一大片空白也在模糊**。现在：
+
+- 行自身只留 `position:sticky`，`background` / `backdrop-filter` 一律不再铺；
+- 底衬画在 `::before` 上：`right:-6px`（右缘贴住气泡右缘，宿主 `.userRow` 是 `align-items:flex-end`
+  右对齐），宽度 `calc(min(calc(var(--dsh-chat-content-width,748px) * .55), 100%) + 12px)`
+  —— v1.4.0 起取 `.55`（插件给提问气泡定的新上限系数，与气泡同宽），所以是一段**随会话列宽定死的长度**，
+  不随这条消息几个字而长短不一（"固定长度"）；
+- `border-radius:16px` 圆角矩形；四周出 2–6px 呼吸位（`top:-2px;bottom:-2px`，不加 padding ⇒ 不挤动布局）；
+- `z-index:-1`：被钉行有 `z-index:6` 自成堆叠上下文，负层因此落在"正文之上、气泡之下"，
+  `backdrop-filter` 采到的正是身后滚过去的正文；
+- 模糊度走 `--cc-pin-blur` 可调变量，默认 10px。
+
+一个必须知道的真实边界：sticky 的移动量 = 父级高度 − 自身高度，所以**只有当你那条提问下面
+还有比它更高的内容（通常是长回答）时，钉顶才看得出来**；短回答或空会话里它就像没生效。
+
+为什么不是纯 CSS 一行：`sticky` 的移动量 = 父级高度 − 自身高度。真实结构（读自
+`dsh-client-ui-chat` 的产物）是
+`[data-conversation-scroll] > … > [data-chat-flow] > [data-chat-flow-key] > .userRow > .userStack > .bubble`，
+给内层 `.userRow` 直接加 sticky 不会动（父级等高、没有剩余高度），所以要钉的是
+`[data-chat-flow]` 的**直接子元素**（每条消息一层）。找行用 `[class*="_userRow"]`，
+定层用宿主的稳定属性 `[data-chat-flow]`（该属性在 `column` 上、每条消息的 `data-chat-flow-key`
+在其子层，均在产物里核实过）；属性不在时退回"按剩余高度往上爬"的通用判据。
+气泡透明只能按类名匹配，而 `uSmzmW_` 这类前缀是构建哈希 ⇒ 用后缀选择器
+`[class*="_userRow"] [class*="_bubble"]`，宿主升级改名时最坏结果是这条样式不生效，不会连累其它功能。
+设置页会把"钉到了哪个元素 + 共几条提问"打印出来供自检。
+
+观察器分两条：**钉顶**那条只在开关打开时挂 `document.body`（childList + subtree，rAF 去抖），关闭即断开并清掉所有
+`data-cc-pin`；**气泡贴合**那条只挂 `[data-chat-flow]` 容器（+ `scroll` / `resize`，90ms 去抖），负责重算框宽、
+字尾位置和"钉哪一条"。插件停用/卸载时 `stopFitWatch()` 会撤掉观察器并清干净 `stack.style.width`、
+`--cc-tail-*`、`data-cc-fit` 三样内联痕迹。
+
+**输入框右下角 chip 里的「开 / 关」徽标不吃背景**（2026-09-07）：`.cc-chip .cc-badge` 三条规则
+把 `background` / `border-color` 都置 `transparent`，状态只靠文字颜色区分（开=品牌蓝、关=三级灰、
+未装载=警示黄）。面板与分区头里的同名徽标**保持原样**（那里有底色对比的需要），所以规则限定在
+`.cc-chip` 作用域内。
+
+### ④ 对话页（固定会话列宽，v1.3.0 从 dsh-bg-atelier 移入）
+
+| 开关 | 效果 |
+|---|---|
+| `chatWidthEnabled` + `chatWidth` | 关闭 = 跟随 DSH 自适应；打开 = 把会话列宽钉在 640–3840px（含 1280/1600/1920/2560/3840 快捷键） |
+
+- 钉法：先按 `[data-composer-card]` 往上找到内联带 `--dsh-conversation-column-width` 的那个祖先
+  （= 会话根，宿主 `publishWidths` 就在它身上标定列宽），再往它身上写
+  `--dsh-chat-content-width` / `--dsh-composer-card-max-width`（宽 +32）/ `--dsh-chat-user-width`
+  三个变量并带 `!important`，绕过宿主的响应式 clamp；另有一条 `:root{--dsh-chat-user-width:…!important}`
+  兜底，覆盖 composer 还没挂上的窗口期。关闭时逐个 `removeProperty` + 删掉兜底样式，交回自适应。
+- 会话根随切会话/导航会重建 ⇒ 另挂一条 MutationObserver（300ms 去抖）**只在开关开着时**存在，
+  根节点一重建就把变量补写回去。
+- 滑杆拖动过程中只做即时预览（局部 state + 直接钉 CSS 变量），松手/失焦/方向键才 `STORE.set` → 存盘：
+  否则每拖一格都会把设置页整页重渲染一遍，手感发涩。
+- 与 ③ 的联动：底衬"定长"取的是 `--dsh-chat-content-width × .55`（v1.4.0 起，与气泡同系数），所以这里改列宽，钉顶底衬会跟着等比变。
+- **一次性迁移**：这两项原先存在 `$DSH_HOME/dsh-bg-atelier/settings.json`。host 启动时若发现自家
+  `settings.json` 缺 `chatWidth` / `chatWidthEnabled`，就读底图工坊那份搬过来并写盘
+  （`migrateFromAtelier()`，日志 `对话页宽度已从 dsh-bg-atelier 迁入`）；搬完之后自家有字段就不再读对方，
+  你之后改的值不会被对方旧值盖回。bg-atelier v1.3.0 起客户端不再声明这两个字段，也就不会再 PUT 回去。
+
+## 安装
+
+前提：DSH Desktop（`dsh` CLI 可用），并在装完后**重启桌面应用一次**。DSH 关闭状态下任选其一：
+
+1. 从本仓库装（推荐）：
+   ```powershell
+   git clone https://github.com/Raylen-berry/dsh-cache-control.git D:\dsh-plugins\dsh-cache-control
+   dsh plugin --profile web add link:D:/dsh-plugins/dsh-cache-control
+   ```
+   （Linux/macOS 把路径换成自己的绝对路径即可；`link:` 改动即生效，便于边改边试。）
+2. 手工接线：在 `profiles/web/package.json` 的 `dependencies` 与 `dsh.profile.bundles` 里加
+   `dsh-cache-control`，并把 `profiles/web/node_modules/dsh-cache-control` 做成指向本目录的
+   junction / symlink。
+
+装完后 host 半（`index.js`，含会话守则段注册）随 profile 装载。
+
+⚠️ **改了 `client.js` 必须重启，光刷新页面没有用**（我此前说过"刷新即可"，那是错的）。
+依据（宿主 `dsh-client-modules` 的产物 + 实测）：插件 client 半不是按请求从磁盘读的 —— 它在
+**服务启动时一次性 compose** 成带 rev 哈希的 combo，挂在 `/plugins` 前缀下、以
+`cache-control: public, max-age=31536000, immutable` 提供。原始路径
+`/plugins/dsh-cache-control/client.js` 实测是 **404**（我先前在这里写过它，是错的），
+只有 compose 后的哈希 URL 才有响应。唯一能让新字节进图的入口是 `rebuilt(id)`，
+而它属于 HMR watch（需要 `pnpm run dev:web` 在跑）。打包运行的桌面应用没有这个 watch
+⇒ 磁盘上的新 `client.js` 只有重启才会进组合。重启后 rev 变了、index 注入的是新 URL，
+所以浏览器那份一年期 immutable 缓存不会挡住新版。
+
+此后：改规则 md 立即生效（host 每次组装重读磁盘）；开关与滑杆改动即时写盘；
+压缩参数对之后新建的会话生效；界面与 chip 的改动要重启才可见。
+
+## 验证
+
+回归与探针脚本都在本仓库 `tools/` 下（**只用于开发，不进 npm 包**，见 `package.json` 的 `files`）。
+分两层：**逻辑回归**（Node 里跑，写盘全部落在临时 home，不碰你真实的 `$DSH_HOME`）与
+**浏览器实测**（无头 Chrome，把宿主产物里的真实 CSS 规则与真实类名塞进复刻约束的夹具，判定用数字不用肉眼）。
+
+```powershell
+node tools/verify-session-gate.mjs    # 规则解析 / 花括号防御 / 截断 / 压缩行无回归
+node tools/verify-gate-http.mjs       # host 半真起 http 服务：路由、两开关正交、异常输入
+node tools/verify-gate-client.mjs     # client 半真渲染：磁盘 → 路由 → STORE → DOM（含抽屉展开态）
+node tools/verify-ui-appearance.mjs   # 外观引擎 + 置顶跟随滚动选条 + chip 点击语义 + 对话页宽度钉法
+node tools/verify-host-width.mjs      # host：字段钳制 + 从底图工坊的一次性迁移（临时 DSH_HOME）
+```
+
+浏览器侧（会往 `tools/*-out/` 落 HTML/JSON/PNG，已在 `.gitignore` 里）：
+
+```powershell
+node tools/probe-userrow.mjs          # 气泡贴文字 / 复制键在气泡右侧轨道 / 上下留白对称（跑的是 client.js 里的真函数源码）
+node tools/cc-appear-probe.mjs        # 钉顶底衬形态与模糊度：--dump-dom 让页面自量自报
+node tools/cc-fixture.mjs             # 面板朝向与 portal：插槽/portal × 旧朝向/新朝向
+node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
+```
+
+脚本里的默认路径是**本机（Windows + DSH Desktop）的绝对路径**，换机器用环境变量覆盖即可：
+`DSH_CC_PLUGIN`（本插件目录）、`DSH_APP_MODULES`（宿主 `node_modules`）、`DSH_CHAT_BUNDLE`
+（`dsh-client-ui-chat/lib/client.js`）、`DSH_CC_INDEX`、`DSH_TOOL_HOME`（临时 home）、
+`DSH_TOOL_OUT`（夹具输出目录）、`CHROME`（Chrome 可执行文件）。
+`verify-gate-client.mjs` 里对底图工坊的交叉断言在找不到对面插件时会自动 SKIP（`DSH_BGA_CLIENT` 可指定）。
+
+夹具里量出来的关键数字（写在这里，下次改动好比对是否退化）：
+旧朝向面板可见比例 `0.021`（超出视口底部 411px）；新朝向完整可见。
+钉顶：`position:sticky`、`top:0px`、被钉元素 `y:0 h:84`、`travelPx:676`、滚动 1298px 后仍在滚动区顶；
+透明：开 `rgba(0, 0, 0, 0)` / 关 `rgb(47, 47, 52)`（后者是宿主 `--dsw-specific-bubble` 的真值）。
+底衬（2026 形态，`cc-appear-probe.mjs` 实量，夹具视口 1280 / 列宽 748）：整行
+`rowBg rgba(0, 0, 0, 0)` + `rowBackdrop none`（左侧干净）；`::before` 底衬
+v1.4.0 起 ≈ `423.4px`（= 748×.55 + 12，气泡宽 411px）对整行 `748px` ⇒ 左边留出 ~324px 不糊
+（v1.4.0 前是 `537.094px` = 748×.702 + 12，留 ~211px）；`border-radius:16px`；
+`position:absolute / z-index:-1`；右缘 `right:-6px` 与气泡右缘差 6px；
+`--cc-pin-blur` 未设 ⇒ `blur(10px)`，设 `0px` ⇒ `blur(0px)`，设 `20px` ⇒ `blur(20px)`。
+注意夹具的坑：最后一条提问下面若没有长回答，sticky 没有移动量，量出来会误判成"没钉住"；
+`--dump-dom` 那条还必须给每个状态独立的 `--user-data-dir`，否则后启动的实例会把活儿交给
+已在跑的浏览器进程、自己退出，dump 出来就是空文件。
+
+## 卸载 / 回退
+
+1. 关闭省缓存总开关（把 standard 还原为出厂默认），或手动删除组装文件里带
+   `# managed by dsh-cache-control` 的 config 块；关闭会话守则开关即可让规则段消失。
+2. 在 profile 移除依赖与 bundle 项、删除 junction；或 `dsh plugin --profile web remove dsh-cache-control`。
+3. 重启应用。插件停用/卸载后不残留任何行为改动（`gate.md` override 与 `settings.json` 是数据，需自行删除）。
+
+## 版本与变更记录
+
+- **v1.4.0**（改名 / 气泡微调 / 小数档）
+  - **分区名改**：② 门禁 → **② 会话守则**（chip 工具提示、设置页、规则 md 标题同步）；
+    ③ 外观 → **③ 气泡置顶**。
+  - **我的提问气泡微调**（始终生效）：宽度上限系数 `.702 → .55`；上下 padding 压到 6px
+    （行距/字号不动）；时间/复制那一行从气泡下方挪到气泡**文末右侧同排**，放不下才换行；
+    钉顶底衬公式同步改用 `.55`（实测列宽 748 ⇒ 气泡 411px / 底衬 ~423.4px）。
+  - **`pinBlur` 支持 1 位小数**：<3.5 按 0.1 步进（可到 1.3 / 1.5 / 1.7），≥3.5 按 0.5 步进；
+    host `sanitize` 同口径保留 1 位小数。
+- **v1.3.0**（本轮四项）
+  - **钉顶底衬改形态**：从"铺满被钉住的整行"改为画在 `::before` 上的**定长圆角矩形**，
+    整行不再有 `background` / `backdrop-filter` ⇒ 会话列左侧不再被模糊；新增
+    **可调模糊度** `pinBlur`（0–24px，写在 `<html>` 的 `--cc-pin-blur` 上，拖滑杆不重注入样式）。
+  - **chip 的「开 / 关」徽标改纯透明**：`.cc-chip .cc-badge` 三条规则去掉背景与描边，
+    状态只靠文字颜色；面板内的同名徽标不受影响。
+  - **名称一律压到 2–4 字**：设置页导航条目 `会话策略 · 省缓存/守则` → **会话策略**；
+    分区标题 → `省缓存` / `会话守则` / `气泡置顶` / `对话页`；快捷面板分区头同步缩短。
+    长说明没删，都挪到各卡正文与 hover 里。
+  - **接住 bg-atelier 的「对话页固定宽度」**：新增 ④ 对话页卡（开关 + 640–3840px 滑杆 +
+    常用宽度快捷键 + 会话根重建时的补写观察器），并由 `migrateFromAtelier()` 在启动时
+    一次性把 `$DSH_HOME/dsh-bg-atelier/settings.json` 里的 `chatWidth` / `chatWidthEnabled`
+    搬进自家 `settings.json`（只在自家缺这两个字段时读对方，之后不再读）。
+  - `sanitize` 新增三字段钳制：`pinBlur` 0–24（v1.4.0 起保留 1 位小数）、`chatWidth` 640–3840、`chatWidthEnabled` 只认 `true`。
+  - 验证补三条：`cc-appear-probe.mjs`（无 CDP 的浏览器实量，本沙箱里唯一跑得通的那条）、
+    `verify-host-width.mjs`（钳制 + 迁移幂等）、`verify-bga-trim.mjs`（对面插件的回归）。
+- **v1.2.0**
+  - 新增 **③ 会话区外观**：`pinLastUser`（最近一条「我的提问」钉顶）、`clearBubble`（我的气泡背景透明）。
+    纯客户端样式 + 运行时打标记，设置项持久化在同一个 `settings.json`。
+    两项形态按用户选定实现：钉在**会话滚动区顶部**、钉住条目自带**半透明毛玻璃底衬**。
+    开关默认 `false`，不由插件替用户打开。
+  - chip 改为**三段可点**：`省缓存 [开/关] ｜ 提问 [开/关] ｜ ▾`。点前两段直接切对应开关，
+    ▾ 才弹滑杆与规则面板（不用进设置页）；每段 hover 有独立介绍。
+  - **修"点开面板看不见"**：旧写法 `top: chip 下沿 + 6`，而输入条贴在视口底部 ⇒ 面板整块开到屏幕外。
+    无头 Chrome 夹具实测（`03-调试临时/cc-fixture.mjs`，三个 variant 只动「父级」与「朝向」两个变量）：
+    旧朝向可见比例 **0.021**（超出视口底部 411px）；改成贴 chip 上沿 + `max-height` 锁进可用空间后完整可见。
+    同时把面板 portal 到 `body`（与宿主 `dsh-client-ui-attachment` 同源做法）——**实测它不是主因**：
+    朝向正确时留在插槽里也完整可见；portal 消除的是 `contain:paint`／"裁剪盒恰是包含块"这类组合。
+  - 新增两道能力/状态闸：`loaded`（没成功读到设置就拒绝保存，防止默认值盖掉真实配置）、
+    `gateReady` / `appearanceReady`（旧 host 不认识的字段一律禁用对应开关，避免写盘被抹）。
+  - 修 `readBody` 超限时 `req.destroy()` 打断连接的缺陷（客户端 ECONNRESET + Windows libuv 断言），改为排空后回 400。
+- **v1.0.0** 仅省缓存（压缩策略）单开关。
+
+> 说明：本插件只写 `$DSH_HOME/dsh-cache-control/*` 与 standard preset 的 `compaction-basic` 行。
+> 任何替你改动运行时开关值的行为都应算作越界——v1.1.0 曾直接写入过 `gateEnabled: true`，已记在此处。
+
+## 说明与限制
+
+- **会话守则是软约束**：它让规则每请求都在提示词里、且不被压缩稀释，但不产生技术硬拦截 —— 模型仍可违反。
+  真要拦截得走工具层/审批钩子，那是另一件事。
+- 修改点位于打包目录（app 安装的 node_modules，profile 以 junction 指向它）；
+  若 DSH 升级重建该文件，插件启动时会自动对账并重新应用当前设置（写回标记行）。
+- 浏览器端刻意不编辑组装文本；本插件的“编辑”由其 host 进程完成，页面只有开关、滑杆与规则编辑器。
+- 数值换算显示用 `ROUTED_CONTEXT_WINDOW = 1_000_000` 这个常量（当前路由 qwen3.8-flash 声明的窗口
+  也是 1,000,000，所以对你这台机器是对的）；若换到别的窗口的模型，界面上的 token 数会失真，
+  但引擎侧是**比例式阈值**，实际触发点仍按窗口同比变化。token 数为 token-meter 的估算口径。
+- v1.2.0 起 chip 固定为三段：`省缓存 [开/关] ｜ 提问 [开/关] ｜ ▾`，前两段点击即切换、
+  ▾ 弹滑杆与规则面板；标签不随状态改名（v1.1.0 那套"两个都开就叫会话策略"已去掉）。

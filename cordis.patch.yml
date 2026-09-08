@@ -1,0 +1,25 @@
+# ============================================================================
+# dsh-cache-control — DSH bundle patch
+# ============================================================================
+# Host row: mounted into the profile composition on boot, like dsh-bg-atelier.
+# The row id and package name below are what loader patches / the Plugins page
+# show. The host half serves the settings/gate routes AND registers the session
+# gate's system-prompt section (host plane, so every preset, subagent and
+# workflow child gets it); the client half is served from disk as
+# /plugins/dsh-cache-control/client.js.
+# Install (canonical form, run from a terminal while DSH is closed):
+#
+#   dsh plugin --profile web add link:D:/DeepSeek/dsh-plugins/dsh-cache-control
+#
+# or wire the package by hand the same way dsh-bg-atelier is wired:
+#   1. add the dependency + bundle entry in profiles/web/package.json, and
+#   2. junction node_modules/dsh-cache-control to this directory.
+# Then restart the desktop app once (host half + new client bundle). After that
+# settings apply live: compaction to NEW sessions, gate to the NEXT step of any
+# session, and edits to session-gate.md / gate.md are picked up on the next
+# request — no further restarts.
+# ============================================================================
+
+- insert:
+    - id: cache-control
+      name: dsh-cache-control
