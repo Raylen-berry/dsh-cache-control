@@ -6,8 +6,8 @@
 //     （保存后作用于"之后新建的会话"）。
 //   * 会话守则 —— 把 session-gate.md 常驻注入 system prompt
 //     （每个 model step 重新组装，故对已打开的会话下一步即生效，且不被压缩稀释）。
-//   * 气泡置顶 —— 最近一条「我的提问」钉顶（圆角矩形定长毛玻璃底衬，模糊度可调）、
-//     我的气泡透明。
+//   * 气泡置顶 —— 最近一条「我的提问」钉顶（圆角矩形毛玻璃底衬随这条提问的实际长度
+//     伸缩，长文限高 38vh、滚轮在气泡内滚，模糊度可调）、我的气泡透明。
 //   * 对话页 —— 固定会话宽度（原 bg-atelier「底图工坊 · 对话页」区，2026-09-07 移入）。
 // 各块互不隶属：面板里各自一条开关，各说各的生效语义。
 //
@@ -159,22 +159,26 @@ window.__ModuleLoader__.load({
       'html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeStart"],html [class*="_userRow"]:hover [class*="_actions"] [class*="_timeEnd"]{max-width:none !important;padding-left:.4em !important}',
       // ---- 钉住的那条：底衬改画在 ::before 上（用户 2026-09-07 改）----
       // 原先把"半透明 + backdrop-filter"直接铺在被钉住的整行上，而行宽 = 整个会话列宽，
-      // 于是气泡左边那一大片空白也在模糊 —— 用户不要：左侧保持干净，只要**一段固定长度**
+      // 于是气泡左边那一大片空白也在模糊 —— 用户不要：左侧保持干净，只要**一段**
       // 的模糊，并且要是**圆角矩形**、模糊度可调。
-      // 定长怎么取：与气泡同一个上限 min(会话内容宽 × .55, --cc-user-bubble-max)。它是
-      // "随会话列宽定死的一段长度"，不随这条消息几个字而长短不一；四周呼吸位与圆角一律 em，
-      // 跟随会话字号与页面缩放一起变（宿主 .userRow 右对齐，所以右缘仍贴齐行右缘）。
+      // 长度（用户 2026-09-08 第二次反馈改）：不再"定长"。JS 在钉住/重排时量出这条提问
+      // 气泡（含图标轨道）的实际宽度写成 --cc-pin-w（再放 .8em 呼吸位），短句底衬就短；
+      // 读不到几何时退回旧上限 min(会话内容宽 × .55, --cc-user-bubble-max) 兜底。
+      // 高度（同次反馈）：长文本钉住时不再无限撑高——气泡本体 max-height 38vh，超出
+      // 滚轮在气泡内滚（overscroll-behavior:contain，滚到底才交还给会话流）。
       // 行本身只留 sticky；::before 用 z-index:-1 —— 行有 z-index:6 自成堆叠上下文，
       // 负层因此落在"正文之上、气泡之下"，backdrop-filter 采到的正是身后滚过去的正文。
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]{position:sticky;top:0;z-index:6;will-change:transform}',
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{content:"";position:absolute;z-index:-1;'
         + 'top:-.13em;bottom:-.13em;right:-.4em;'
-        + 'width:calc(min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,41em)) + .8em);'
+        + 'width:var(--cc-pin-w, calc(min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,41em)) + .8em));'
         + 'max-width:calc(100% + .8em);'
         + 'border-radius:1.07em;'
         + 'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#202024) 58%,transparent);'
         + '-webkit-backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2);'
         + 'backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2)}',
+      // 长提问的显示上限 + 气泡内滚轮
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]{max-height:38vh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}',
       // color-mix 不支持时退到固定半透明（Electron Chromium 都支持，这条只是保险）。
       '@supports not (color: color-mix(in srgb, white 50%, transparent)){'
         + 'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{background:rgba(32,32,36,.6)}}',
@@ -488,6 +492,24 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 钉住条目的底衬宽度：量被钉行（含右侧图标轨道）的实际像素宽 + .8em 呼吸位，
+     * 写进 --cc-pin-w（短句 ⇒ 短底衬）。量不到就清掉变量，退回 CSS 里的旧上限。
+     */
+    function updatePinPlate(pickEl) {
+      try {
+        if (!domReady()) return
+        var pick = pickEl || document.querySelector('[' + APPEAR_ATTRS.pin + ']')
+        if (!pick || !pick.style || !pick.style.setProperty) return
+        var row = pick.querySelector ? pick.querySelector('[class*="_userRow"]') : pick
+        var w = row && row.getBoundingClientRect ? row.getBoundingClientRect().width : 0
+        if (!(w > 0)) { pick.style.removeProperty('--cc-pin-w'); return }
+        var rootFont = 14
+        try { rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14 } catch (e) {}
+        pick.style.setProperty('--cc-pin-w', Math.ceil(w + rootFont * 0.8) + 'px')
+      } catch (e) { warnOnce('updatePinPlate', e) }
+    }
+
+    /**
      * 钉住哪一条 = "分节标题"语义，跟随滚动：取**顶边已越过会话区上沿**的最后一条提问。
      * 有 5 条提问时：滚到 4/5 之间（5 的顶边还在视口内）⇒ 钉 4；滚到底 ⇒ 钉 5；
      * 回到 3/4 之间 ⇒ 钉 3；刚进会话、没有任何提问越过上沿 ⇒ 不钉。
@@ -522,6 +544,7 @@ window.__ModuleLoader__.load({
         return
       }
       pick.setAttribute(APPEAR_ATTRS.pin, APPEAR_ATTRS.on)
+      updatePinPlate(pick)
       // 自检文案用完整 class 串：真出问题时这是唯一能对着看的线索。
       var label = String(pick.className || pick.tagName).trim().replace(/\s+/g, ' ')
         + ' · 共 ' + rows.length + ' 条提问'
@@ -641,6 +664,7 @@ window.__ModuleLoader__.load({
         }
         done++
       }
+      updatePinPlate()   // 量完宽度顺手刷新底衬长度（短句贴短句）
       return done
     }
 
@@ -1184,7 +1208,7 @@ window.__ModuleLoader__.load({
         h('section', null,
           h('h3', { className: 'cc-h' }, '会话策略'),
           h(Fold, { label: '总述' },
-            h('p', { className: 'cc-sub' }, '四块互相独立的开关：① 压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；② 会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；③ 气泡置顶只管会话区样式（钉住最近一条提问 · 圆角矩形定长毛玻璃底衬 · 气泡透明）；④ 对话页只管会话列宽（原底图工坊里的同名区块）。'))),
+            h('p', { className: 'cc-sub' }, '四块互相独立的开关：① 压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；② 会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；③ 气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；④ 对话页只管会话列宽（原底图工坊里的同名区块）。'))),
         h('section', null,
           h('h3', { className: 'cc-h' }, '① 省缓存'),
           CacheCard()),
