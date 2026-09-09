@@ -328,7 +328,7 @@ ok('设置页出现「④ 对话页」卡（开关 + 640–3840 滑杆 + 常用�
   && pageHtml4.includes('1920') && pageHtml4.includes('启用固定对话页宽度'),
   'has=' + pageHtml4.includes('④ 对话页'))
 // 对面插件(dsh-bg-atelier)的交叉断言：装了才判，没装就跳过（开源仓库不能硬依赖别人的路径）。
-const bgaPath = process.env.DSH_BGA_CLIENT || 'D:/DeepSeek/dsh-plugins/bg-atelier/client.js'
+const bgaPath = process.env.DSH_BGA_CLIENT || 'D:/DeepSeek/dsh-plugins/dsh-desktop-wallpaper/client.js'
 if (fs.existsSync(bgaPath)) {
   const bgaSrc = fs.readFileSync(bgaPath, 'utf8')
   // 那边源码里还留了"这块搬走了"的注释（是文档，不是代码），所以先把注释剥掉再判。

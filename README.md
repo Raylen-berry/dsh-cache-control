@@ -100,23 +100,30 @@
   `:hover` 才展开（展开后的内边距也是 em）。
 - 可调点：`USER_BUBBLE_MAX_EM`（上限，默认 41em；测试缝 `internals.setBubbleMaxEm` /
   `setBubbleMaxPx`）、`--cc-tail-room`（轨道宽 = 复制键离框缘的距离，JS 自动量、也可手动覆盖）、
-  `FIT_ICON_H`（仅量不到图标时的兜底高度）。钉顶底衬仍是**定长**
-  （`min(列宽×.55, 上限) + .8em`，2026-09-07 选定的形态），短消息时它比气泡宽。
+  `FIT_ICON_H`（仅量不到图标时的兜底高度）。钉顶底衬宽度自 **v1.4.2** 起按这条提问的**实测宽度**
+  写入 `--cc-pin-w`（量不到才退回 `min(列宽×.55, 上限) + .8em` 的旧上限）。
 
-底衬形态的两次选定：
+底衬形态的三次选定：
 2026-09-07 选**半透明毛玻璃**（不是实底、不是无底衬）；
-2026-09-07 改成**定长圆角矩形**——原先把毛玻璃铺在被钉住的整行上，而行宽 = 整个会话列宽，
+2026-09-07 改成**圆角矩形**——原先把毛玻璃铺在被钉住的整行上，而行宽 = 整个会话列宽，
 于是气泡**左边一大片空白也在模糊**。现在：
 
 - 行自身只留 `position:sticky`，`background` / `backdrop-filter` 一律不再铺；
 - 底衬画在 `::before` 上：`right:-6px`（右缘贴住气泡右缘，宿主 `.userRow` 是 `align-items:flex-end`
-  右对齐），宽度 `calc(min(calc(var(--dsh-chat-content-width,748px) * .55), 100%) + 12px)`
-  —— v1.4.0 起取 `.55`（插件给提问气泡定的新上限系数，与气泡同宽），所以是一段**随会话列宽定死的长度**，
-  不随这条消息几个字而长短不一（"固定长度"）；
+  右对齐），宽度 `var(--cc-pin-w, calc(min(calc(var(--dsh-chat-content-width,748px) * .55), 100%) + 12px))`
+  —— **v1.4.2 起 `--cc-pin-w` 由 JS 按这条提问的实测宽度写入**（气泡含右侧图标轨道的像素宽 + `.8em` 呼吸位），
+  短句就是短底衬、长文就是长底衬；读不到几何时（`getBoundingClientRect` 拿不到正宽）退回括号里那个
+  "列宽 × .55 + 12px" 的旧上限兜底；
+- 长文钉顶时不再无限撑高：气泡本体 `max-height:38vh` + `overflow-y:auto` +
+  `overscroll-behavior:contain`（在气泡内滚，滚到底才交还给会话流），`scrollbar-width:thin`；
 - `border-radius:16px` 圆角矩形；四周出 2–6px 呼吸位（`top:-2px;bottom:-2px`，不加 padding ⇒ 不挤动布局）；
 - `z-index:-1`：被钉行有 `z-index:6` 自成堆叠上下文，负层因此落在"正文之上、气泡之下"，
   `backdrop-filter` 采到的正是身后滚过去的正文；
 - 模糊度走 `--cc-pin-blur` 可调变量，默认 10px。
+
+宽度怎么来的（v1.4.2）：`updatePinPlate()` 在"钉住哪一条"确定后、以及每次重排（`fitUserBubbles`）
+结束时各跑一次 —— 量被钉行里 `[class*="_userRow"]` 的实际像素宽，加上 `根字号 × .8` 当呼吸位，
+`Math.ceil` 后写进该行的 `--cc-pin-w`；量不到就 `removeProperty`，让 CSS 里的旧上限接管。
 
 一个必须知道的真实边界：sticky 的移动量 = 父级高度 − 自身高度，所以**只有当你那条提问下面
 还有比它更高的内容（通常是长回答）时，钉顶才看得出来**；短回答或空会话里它就像没生效。
@@ -157,7 +164,8 @@
   根节点一重建就把变量补写回去。
 - 滑杆拖动过程中只做即时预览（局部 state + 直接钉 CSS 变量），松手/失焦/方向键才 `STORE.set` → 存盘：
   否则每拖一格都会把设置页整页重渲染一遍，手感发涩。
-- 与 ③ 的联动：底衬"定长"取的是 `--dsh-chat-content-width × .55`（v1.4.0 起，与气泡同系数），所以这里改列宽，钉顶底衬会跟着等比变。
+- 与 ③ 的联动：底衬宽度 v1.4.2 起跟随**这条提问的实测宽度**（`--cc-pin-w`），读不到几何时才退回
+  `--dsh-chat-content-width × .55` 的旧上限；所以这里改列宽，只在"兜底路径"下才会等比影响钉顶底衬。
 - **一次性迁移**：这两项原先存在 `$DSH_HOME/dsh-bg-atelier/settings.json`。host 启动时若发现自家
   `settings.json` 缺 `chatWidth` / `chatWidthEnabled`，就读底图工坊那份搬过来并写盘
   （`migrateFromAtelier()`，日志 `对话页宽度已从 dsh-bg-atelier 迁入`）；搬完之后自家有字段就不再读对方，
@@ -227,8 +235,10 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
 透明：开 `rgba(0, 0, 0, 0)` / 关 `rgb(47, 47, 52)`（后者是宿主 `--dsw-specific-bubble` 的真值）。
 底衬（2026 形态，`cc-appear-probe.mjs` 实量，夹具视口 1280 / 列宽 748）：整行
 `rowBg rgba(0, 0, 0, 0)` + `rowBackdrop none`（左侧干净）；`::before` 底衬
-v1.4.0 起 ≈ `423.4px`（= 748×.55 + 12，气泡宽 411px）对整行 `748px` ⇒ 左边留出 ~324px 不糊
-（v1.4.0 前是 `537.094px` = 748×.702 + 12，留 ~211px）；`border-radius:16px`；
+**v1.4.2 起按该条提问实测宽度**：夹具里 411px 宽的气泡 ⇒ `--cc-pin-w ≈ 423.4px`
+（= 411 + 根字号 15 × .8，向上取整），对整行 `748px` ⇒ 左边留出 ~324px 不糊；短句提问则底衬跟着变短。
+（v1.4.2 之前是"定长"：`423.4px` = 748×.55 + 12，短消息时明显比气泡宽；v1.4.0 之前是 `537.094px` = 748×.702 + 12。）
+`border-radius:16px`；
 `position:absolute / z-index:-1`；右缘 `right:-6px` 与气泡右缘差 6px；
 `--cc-pin-blur` 未设 ⇒ `blur(10px)`，设 `0px` ⇒ `blur(0px)`，设 `20px` ⇒ `blur(20px)`。
 注意夹具的坑：最后一条提问下面若没有长回答，sticky 没有移动量，量出来会误判成"没钉住"；
@@ -244,6 +254,14 @@ v1.4.0 起 ≈ `423.4px`（= 748×.55 + 12，气泡宽 411px）对整行 `748px`
 
 ## 版本与变更记录
 
+- **v1.4.2**（钉顶底衬改"实测宽度" + 长文限高）
+  - 底衬宽度不再"定长"：新增 `updatePinPlate()`，在钉住哪一条确定后、以及每次气泡重排
+    （`fitUserBubbles`）结束时，量出被钉行里 `[class*="_userRow"]` 的实际像素宽 + `根字号 × .8`
+    呼吸位，写进该行的 `--cc-pin-w`（短句 ⇒ 短底衬）；量不到就 `removeProperty`，
+    由 CSS 里的旧上限 `min(列宽×.55, 上限) + .8em` 兜底。
+  - 长提问钉顶不再无限撑高：气泡本体 `max-height:38vh` + `overflow-y:auto` +
+    `overscroll-behavior:contain` + `scrollbar-width:thin` —— 超出时在气泡内滚，滚到底才交还会话流。
+  - 只动 `client.js` 与版本号；host 半、路由、settings 字段均未变，**不需要重启**（客户端热更新即可）。
 - **v1.4.1**（根因修复 + 尺寸自适应）
   - `applyAppearance` 每段各自 `try/catch` + `warnOnce`：一处抛错不再连带把钉顶/贴合观察器全部
     跳过（那会让"底衬模糊度"看着像失效）；首屏补量两次 + `document.fonts.ready` 后清签名重算。
