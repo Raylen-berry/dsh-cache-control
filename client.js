@@ -86,7 +86,7 @@ window.__ModuleLoader__.load({
       // ---- 输入工具条 chip（容器）+ 弹出面板（一个框，两个独立开关）----
       '.cc-chip{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.25));background:transparent;height:22px;color:var(--dsw-alias-label-primary);white-space:nowrap;border-radius:999px;align-items:center;gap:2px;padding:0 2px 0 4px;font-size:11.5px;line-height:1;display:inline-flex;transition:border-color .12s,color .12s,background-color .12s;position:relative;top:1.2px}',
       '.cc-chip.on{border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.4))}',
-      '.cc-chip .cc-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary);flex:none}',
+      '.cc-chip .cc-dot{width:6px;height:6px;border-radius:50%;corner-shape:round;background:var(--dsw-alias-label-tertiary);flex:none}',
       '.cc-chip .cc-dot.on{background:var(--dsw-alias-brand-primary,#4d6bfe)}',
       '.cc-chip .cc-chipState{opacity:.85}',
       // ---- chip 内每个可点段：点「省缓存」切压缩、点「提问」切门禁、点 ▾ 弹滑杆面板 ----
@@ -166,9 +166,20 @@ window.__ModuleLoader__.load({
       // 读不到几何时退回旧上限 min(会话内容宽 × .55, --cc-user-bubble-max) 兜底。
       // 高度（同次反馈）：长文本钉住时不再无限撑高——气泡本体 max-height 38vh，超出
       // 滚轮在气泡内滚（overscroll-behavior:contain，滚到底才交还给会话流）。
-      // 行本身只留 sticky；::before 用 z-index:-1 —— 行有 z-index:6 自成堆叠上下文，
+      // 行本身只留 sticky；::before 用 z-index:-1 —— 行自成堆叠上下文，
       // 负层因此落在"正文之上、气泡之下"，backdrop-filter 采到的正是身后滚过去的正文。
-      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]{position:sticky;top:0;z-index:6;will-change:transform}',
+      //
+      // z-index 6 → 500（2026-09-10，用户报"代码块顶栏【js…复制】压住置顶气泡第一行"，
+      // 机制用真浏览器逐档扫描确认，见 out/report-zscan3.json）：
+      //   · 代码块顶栏自己 position:sticky;top:0，吸附在**会话滚动容器**上 ⇒ 滚过高代码块时
+      //     顶栏浮在视口顶端，正好落进顶部钉住区；
+      //   · 顶栏与被钉提问分属不同 flow item、同处一个堆叠上下文 ⇒ 比 z-index，
+      //     且 **z 相等时 DOM 靠后者（顶栏）赢**；
+      //   · 扫 0/2/6/7/10/20/30/100 八档：z=6 时顶栏 z≥6 就压住气泡（= 用户看到的现象）；
+      //     中途试过 20，仍被 z≥20 压住 ⇒ 只挪阈值不解决，必须显著高于一切正文 chrome。
+      // 500 高于宿主正文里的全部层级（slot 6 / composer 7 / 回到底部 8 / 代码块与工具卡 chrome ≤100），
+      // 且仍在会话子树内部，不会盖过 body 级 portal 出去的菜单、弹窗那类浮层。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]{position:sticky;top:0;z-index:500;will-change:transform}',
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{content:"";position:absolute;z-index:-1;'
         + 'top:-.13em;bottom:-.13em;right:-.4em;'
         + 'width:var(--cc-pin-w, calc(min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,41em)) + .8em));'
@@ -177,8 +188,26 @@ window.__ModuleLoader__.load({
         + 'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#202024) 58%,transparent);'
         + '-webkit-backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2);'
         + 'backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2)}',
-      // 长提问的显示上限 + 气泡内滚轮
-      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]{max-height:38vh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}',
+      // ---- 长提问的显示上限 + 气泡内滚轮 ----
+      //   上限值不再是写死的 38vh：由 --cc-pin-max-vh 决定（设置页"钉顶气泡最高"滑杆），
+      //   上限调高 = 钉住时能直接看到更多原文，代价是它挡住的身后内容也更多。
+      //   槽宽（2026-09-10 用户反馈"右侧滑块极度不敏感"实测后改）：
+      //   原来写 scrollbar-width:thin，Chromium 里这一属性只要不是 auto 就会**忽略**
+      //   ::-webkit-scrollbar 的 width —— 宿主 dsh-client-ui-theme 那套 width:8px 的定制
+      //   会一起失效，实得槽宽钉死在 ~10px 且槽底全透明，可抓的滑块极细。
+      //   改成 auto + 自定 16px：外观仍是细条（4px 透明描边把"条"从 16px 视觉上收成 8px），
+      //   但可抓范围翻倍。实测：thin=10px、auto+自定16px=16px。
+      //   再加 scrollbar-gutter:stable（2026-09-10 同批）：长提问一超过 38vh 就出现滚动条、
+      //   占掉内容宽 ⇒ 最后一行重折行，而折行又改签名触发下一轮量宽，来回抖动；reserve 提前
+      //   把这条槽留出来，长度变化时排版不再跳。**代价**：这条槽无条件占 16px，所以下面
+      //   fitUserBubbles() 量宽时必须补回来（否则短提问也会被凭空挤窄一行）。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]{max-height:min(var(--cc-pin-max-vh,38vh), calc(100vh - var(--dsh-composer-height,152px) - 24px));overflow-y:auto;overscroll-behavior:contain;scrollbar-width:auto;scrollbar-gutter:stable}',
+      //   ↑ 高度封顶（2026-09-10 同批）：钉条现在 z-index:500 高于输入卡，若把「钉顶气泡最高」
+      //   拉到很大就会压住底部输入卡。所以取"用户设的 vh"与"视口高 − 输入卡高 − 24px 呼吸位"
+      //   的较小值：滑杆随便拉，钉条**永远够不到**输入卡。--dsh-composer-height 是宿主自己
+      //   发布的输入卡高度变量，读不到时按 152px 兜底。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]::-webkit-scrollbar{width:16px}',
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]::-webkit-scrollbar-thumb{border:4px solid transparent;background-clip:content-box;border-radius:8px}',
       // color-mix 不支持时退到固定半透明（Electron Chromium 都支持，这条只是保险）。
       '@supports not (color: color-mix(in srgb, white 50%, transparent)){'
         + 'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{background:rgba(32,32,36,.6)}}',
@@ -220,6 +249,7 @@ window.__ModuleLoader__.load({
         pinLastUser: false,
         clearBubble: false,
         pinBlur: 10,        // 钉顶底衬（圆角矩形毛玻璃）的模糊半径 px，0–24
+        pinMaxVh: 38,       // 被钉气泡自身的最高高度（vh），12–80；超出部分在气泡内滚
         pinMarked: '',
         fitTick: 0,        // 「重读」按钮用的自增计数：只为触发一次重渲染去重新读实测值
         appearanceReady: true,
@@ -272,6 +302,13 @@ window.__ModuleLoader__.load({
       return Math.min(24, Math.max(0, v))
     }
 
+    /** 被钉气泡最高高度：12–80 vh，取整（与 host 侧 sanitize 同口径，两端都钳一次）。 */
+    function clampPinMaxVh(v) {
+      v = Math.round(Number(v))
+      if (!Number.isFinite(v)) v = 38
+      return Math.min(80, Math.max(12, v))
+    }
+
     function applyGate(g) {
       if (!g || (g.bytes === undefined && g.text === undefined)) return {}
       return {
@@ -301,13 +338,15 @@ window.__ModuleLoader__.load({
         patch.pinLastUser = s.pinLastUser === true
         patch.clearBubble = s.clearBubble === true
         patch.pinBlur = clampBlur(s.pinBlur)
+        patch.pinMaxVh = clampPinMaxVh(s.pinMaxVh)
         // 对话页固定宽度（bg-atelier 移入）：host 侧 sanitize 负责区间钳制
         patch.chatWidth = Number(s.chatWidth) > 0 ? Math.round(Number(s.chatWidth)) : 860
         patch.chatWidthEnabled = s.chatWidthEnabled === true
         // 旧 host 的 sanitize 不认识这些字段，任何一次写盘都会把它们抹掉 ⇒
         // 只有响应里真的带回来才算能力就绪，否则界面禁用这几项并说明原因。
         patch.appearanceReady = s.pinLastUser !== undefined && s.clearBubble !== undefined
-          && s.pinBlur !== undefined && s.chatWidth !== undefined && s.chatWidthEnabled !== undefined
+          && s.pinBlur !== undefined && s.pinMaxVh !== undefined
+          && s.chatWidth !== undefined && s.chatWidthEnabled !== undefined
         patch.loading = false
         patch.loaded = true
         patch.error = ''
@@ -357,6 +396,7 @@ window.__ModuleLoader__.load({
           pinLastUser: s.pinLastUser,
           clearBubble: s.clearBubble,
           pinBlur: s.pinBlur,
+          pinMaxVh: s.pinMaxVh,
           chatWidth: s.chatWidth,
           chatWidthEnabled: s.chatWidthEnabled,
         }),
@@ -633,7 +673,15 @@ window.__ModuleLoader__.load({
         var cs = typeof getComputedStyle === 'function' ? getComputedStyle(bubble) : null
         var padL = cs ? (parseFloat(cs.paddingLeft) || 0) : 12
         var padR = cs ? (parseFloat(cs.paddingRight) || 0) : 12
-        var target = Math.ceil(right - left + padL + padR)
+        // 被钉气泡开了 scrollbar-gutter:stable ⇒ 无论当前有没有滚动条，那条 16px 槽都已经
+        // 从内容宽里扣掉了。量宽必须补回来，否则短提问也会被挤出多余的一行。
+        // 只在真的开了 reserve 时补（其它气泡的滚动条不在排版内，量到多少就是多少）。
+        var fitGutter = 0
+        if (cs && /stable/.test(cs.scrollbarGutter || '')) {
+          fitGutter = (bubble.offsetWidth || 0) - (bubble.clientWidth || 0)
+          if (!(fitGutter > 0)) fitGutter = 0
+        }
+        var target = Math.ceil(right - left + padL + padR + fitGutter)
         if (target <= 0) continue
         // 用普通 px（不用百分比：shrink-to-fit 容器里百分比会绕回父宽）。
         // CSS 那边给了 _userStack{max-width:100%}，列宽变窄时自然夹回，签名变化后下一轮重算。
@@ -709,6 +757,42 @@ window.__ModuleLoader__.load({
       fitTimer = setTimeout(function () { fitTimer = 0; fitSafe() }, 90)
     }
     /**
+     * 滚轮到边后把滚动"还给"会话（2026-09-10 用户反馈"滚轮会把对话框划上去"实测后加）。
+     *
+     * 背景：被钉住的长提问本体是 overflow-y:auto + overscroll-behavior:contain。
+     * contain 是**故意**的（气泡内滚到底不该顺手把会话也带走），但它同时挡住了浏览器
+     * 本该做的串联 —— 实测：气泡到顶后继续向上滚，外层会话一动不动、气泡也不动，
+     * 滚轮在这条提问上等于彻底失灵（成了死区）；只有把光标挪到气泡左右那 3px 缝里
+     * 才能滚会话。而"钉住最近一条提问"这个交互的预期是：滚轮压在钉住的提问上，
+     * 会话照常翻（像 Discord 的置顶消息）。
+     *
+     * 所以这里只补一件事：**气泡自己滚不动了（到边或压根没得滚）**时，把这次 deltaY
+     * 转交给会话滚动区并 preventDefault（否则会被 contain 吃掉）。气泡内还有余量时
+     * 一律不插手，维持原有"在气泡内滚"的语义。
+     *
+     * 必须挂捕获阶段 + passive:false（默认 passive 的 wheel 监听里 preventDefault 无效）。
+     */
+    function pinWheelHandler(e) {
+      try {
+        var el = e.target
+        var b = el && el.closest ? el.closest('[class*="_bubble"]') : null
+        if (!b || !b.closest || !b.closest('[data-cc-pin="1"]')) return   // 只管被钉住的那条
+        var sc = scrollerFor(b)
+        if (!sc) return
+        var max = b.scrollHeight - b.clientHeight
+        if (max <= 1) {                     // 气泡不够高、没得滚 ⇒ 直接转给会话
+          sc.scrollTop += e.deltaY
+          if (e.cancelable) e.preventDefault()
+          return
+        }
+        var atTop = b.scrollTop <= 0 && e.deltaY < 0
+        var atBottom = b.scrollTop >= max - 1 && e.deltaY > 0
+        if (!atTop && !atBottom) return     // 气泡内还能滚 ⇒ 维持原样（内层滚）
+        sc.scrollTop += e.deltaY            // 到边 ⇒ 手动补上被 contain 挡住的串联
+        if (e.cancelable) e.preventDefault()
+      } catch (err) { warnOnce('pinWheelHandler', err) }
+    }
+    /**
      * 观察器只挂在会话流容器上（比 body 便宜得多）：新消息/流式改字 ⇒ 重贴合；
      * scroll ⇒ 重选"钉哪一条" + 重定位字尾；resize ⇒ 清签名重算。
      * 另外补两件事：① 首屏延迟再量一次（挂载时机早于消息渲染时第一轮会空跑）；
@@ -732,6 +816,11 @@ window.__ModuleLoader__.load({
       // 手搓 DOM / 老引擎可能没有事件 API ⇒ 逐个判类型再挂，缺了什么就少一份能力，不抛错。
       if (typeof document.addEventListener === 'function') document.addEventListener('scroll', fitScrollHandler, true)
       else { fitScrollHandler = null }
+      // 滚轮到边转发给会话：捕获阶段 + passive:false（preventDefault 才有效）。
+      // 没被钉住时 handler 第一句就 return，开销可忽略。
+      if (typeof document.addEventListener === 'function') {
+        document.addEventListener('wheel', pinWheelHandler, { capture: true, passive: false })
+      }
       if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('resize', fitResizeHandler)
       else { fitResizeHandler = null }
       setTimeout(fitSafe, 0)
@@ -748,6 +837,9 @@ window.__ModuleLoader__.load({
       if (fitTimer) { clearTimeout(fitTimer); fitTimer = 0 }
       if (typeof document !== 'undefined' && fitScrollHandler && document.removeEventListener) {
         document.removeEventListener('scroll', fitScrollHandler, true)
+      }
+      if (typeof document !== 'undefined' && document.removeEventListener) {
+        document.removeEventListener('wheel', pinWheelHandler, { capture: true })
       }
       if (typeof window !== 'undefined' && fitResizeHandler && window.removeEventListener) {
         window.removeEventListener('resize', fitResizeHandler)
@@ -775,6 +867,7 @@ window.__ModuleLoader__.load({
       try {
         if (el.style && el.style.setProperty) {
           el.style.setProperty('--cc-pin-blur', clampBlur(s.pinBlur) + 'px')
+          el.style.setProperty('--cc-pin-max-vh', clampPinMaxVh(s.pinMaxVh) + 'vh')
           el.style.setProperty('--cc-user-bubble-max', USER_BUBBLE_MAX_EM + 'em')
         }
       } catch (e) { warnOnce('applyAppearance vars', e) }
@@ -805,6 +898,16 @@ window.__ModuleLoader__.load({
     function setPinBlur(v) {
       if (!STORE.state.appearanceReady) return
       STORE.set({ pinBlur: clampBlur(v) })
+      applyAppearance(STORE.state)
+      scheduleSave()
+    }
+    /**
+     * 被钉气泡的最高高度（vh）：决定"钉住时能直接看到多少提问原文"，
+     * 超出部分在气泡内滚（滚轮到边会转交给会话）。调高挡住的正文也更多，是纯手感取舍。
+     */
+    function setPinMaxVh(v) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ pinMaxVh: clampPinMaxVh(v) })
       applyAppearance(STORE.state)
       scheduleSave()
     }
@@ -1113,6 +1216,13 @@ window.__ModuleLoader__.load({
             value: String(b), disabled: !s.appearanceReady,
             onChange: function (e) { setPinBlur(Number(e.target.value)) } }),
           h('span', { className: 'cc-val' }, b + 'px')),
+        // 钉顶气泡的最高高度：38vh 是"能看多少原文"与"挡多少正文"的折中，按需调。
+        h('div', { className: 'cc-row' },
+          h('span', { style: { minWidth: '108px' } }, '钉顶气泡最高'),
+          h('input', { type: 'range', min: '12', max: '80', step: '1',
+            value: String(s.pinMaxVh), disabled: !s.appearanceReady,
+            onChange: function (e) { setPinMaxVh(Number(e.target.value)) } }),
+          h('span', { className: 'cc-val' }, s.pinMaxVh + 'vh')),
         !s.appearanceReady ? h('div', { className: 'cc-err' },
           '气泡置顶等功能未装载：当前运行的 host 还不认识这几个字段，写盘会被旧版抹掉。请重启桌面应用。') : null,
         s.pinLastUser && s.appearanceReady ? h('div', { className: 'cc-muted' },
@@ -1132,6 +1242,8 @@ window.__ModuleLoader__.load({
         h(Fold, { label: '说明' },
           h('div', { className: 'cc-note' },
             '三项都是纯界面开关：只往 <html> 上加 data-cc-* / --cc-pin-blur 并注入样式，不改消息数据、不改宿主代码。'
+            + '「钉顶气泡最高」决定钉住时能直接看到多少提问原文（超出部分在气泡内滚，滚轮到边会转交给会话）；'
+            + '调高看得全、但挡住的身后正文也更多，38vh 是原默认折中值。'
             + '选择器按 CSS Module 的**后缀**匹配（userRow / bubble），因为前缀是构建哈希。'
             + '钉顶用 position:sticky，钉的是"顶边已越过会话区上沿的最后一条提问"——所以往上翻时'
             + '置顶条会跟着换成 4、3……滚到底才钉最近那条；直接给内层行加 sticky 会因父级没有'
@@ -1521,6 +1633,7 @@ window.__ModuleLoader__.load({
       pinTarget: pinTarget,
       fitUserBubbles: fitUserBubbles,
       clearFit: clearFit,
+      pinWheelHandler: pinWheelHandler,
       lineBoxes: lineBoxes,
       startFitWatch: startFitWatch,
       stopFitWatch: stopFitWatch,
@@ -1528,6 +1641,8 @@ window.__ModuleLoader__.load({
       setPinLastUser: setPinLastUser,
       setClearBubble: setClearBubble,
       setPinBlur: setPinBlur,
+      setPinMaxVh: setPinMaxVh,
+      clampPinMaxVh: clampPinMaxVh,
       clampBlur: clampBlur,
       bubbleMaxEm: function () { return USER_BUBBLE_MAX_EM },
       setBubbleMaxEm: function (v) {

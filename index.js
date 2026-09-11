@@ -142,6 +142,7 @@ export const DEFAULTS = Object.freeze({
   pinLastUser: false,    // 会话区外观：最近一条"我的提问"钉在顶部
   clearBubble: false,    // 会话区外观：我的气泡背景透明（露出壁纸）
   pinBlur: 10,           // 会话区外观：钉顶底衬（圆角矩形毛玻璃）的模糊半径 px
+  pinMaxVh: 38,          // 会话区外观：被钉气泡自身的最高高度（vh；超出的部分在气泡内滚）
   chatWidth: 860,        // 对话页：固定会话列宽 px（chatWidthEnabled 为真时生效）
   chatWidthEnabled: false, // 对话页：是否启用固定列宽（关 = 跟随 DSH 自适应）
 })
@@ -149,6 +150,9 @@ export const DEFAULTS = Object.freeze({
 /** 钉顶底衬模糊半径的取值区间（与 client 侧 clampBlur 同口径）。 */
 export const PIN_BLUR_MIN = 0
 export const PIN_BLUR_MAX = 24
+/** 被钉气泡最高高度的取值区间，单位 vh（与 client 侧 clampPinMaxVh 同口径）。 */
+export const PIN_MAX_VH_MIN = 12
+export const PIN_MAX_VH_MAX = 80
 /** 对话页固定宽度的取值区间（与 bg-atelier 时代一致：640–3840px）。 */
 export const CHAT_WIDTH_MIN = 640
 export const CHAT_WIDTH_MAX = 3840
@@ -169,11 +173,14 @@ export function sanitize(raw) {
   let pinBlur = Math.round(Number(src.pinBlur) * 10) / 10   // 保留 1 位小数（1.3 / 1.5 这类微调档）
   if (!Number.isFinite(pinBlur)) pinBlur = DEFAULTS.pinBlur
   pinBlur = Math.min(PIN_BLUR_MAX, Math.max(PIN_BLUR_MIN, pinBlur))
+  let pinMaxVh = Math.round(Number(src.pinMaxVh))
+  if (!Number.isFinite(pinMaxVh) || pinMaxVh <= 0) pinMaxVh = DEFAULTS.pinMaxVh
+  pinMaxVh = Math.min(PIN_MAX_VH_MAX, Math.max(PIN_MAX_VH_MIN, pinMaxVh))
   let chatWidth = Math.round(Number(src.chatWidth))
   if (!Number.isFinite(chatWidth) || chatWidth <= 0) chatWidth = DEFAULTS.chatWidth
   chatWidth = Math.min(CHAT_WIDTH_MAX, Math.max(CHAT_WIDTH_MIN, chatWidth))
   const chatWidthEnabled = src.chatWidthEnabled === true
-  return { enabled, triggerPct, retainPct, auto, gateEnabled, pinLastUser, clearBubble, pinBlur, chatWidth, chatWidthEnabled }
+  return { enabled, triggerPct, retainPct, auto, gateEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh, chatWidth, chatWidthEnabled }
 }
 
 /** 由百分比换算成引擎字段与展示数字。 */
