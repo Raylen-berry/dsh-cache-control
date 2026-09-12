@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
         fitTick: 0,        // 「重读」按钮用的自增计数：只为触发一次重渲染去重新读实测值
         appearanceReady: true,
         // 对话页固定宽度（原 bg-atelier「底图工坊 · 对话页」区，移入本插件）
-        chatWidth: 860,
+        chatWidth: 80,      // v1.5.0 起是**百分比**（30–100），不再是 px
         chatWidthEnabled: false,
       },
       listeners: [],
@@ -302,6 +302,21 @@ window.__ModuleLoader__.load({
       return Math.min(24, Math.max(0, v))
     }
 
+    /**
+     * 对话页宽度：**百分比**（v1.5.0 起，原来是 640–3840px）。30–100 取整，与 host 侧同口径。
+     * 迁移：盘上存的 px 值（>100，例如 900）一律当旧值，落到默认 80% —— 900px 在本机
+     * 1139px 的会话区里正好≈79%，所以 80% 是等价的观感；转换需要知道当时的区域宽度，
+     * 与其瞎猜一个像素反而更不协调，不如明确落到 80% 由用户自己加减。
+     */
+    var CHAT_PCT_MIN = 30
+    var CHAT_PCT_MAX = 100
+    var CHAT_PCT_DEFAULT = 80
+    function clampChatWidth(v) {
+      var n = Math.round(Number(v))
+      if (!Number.isFinite(n) || n <= 0 || n > CHAT_PCT_MAX) return CHAT_PCT_DEFAULT
+      return Math.min(CHAT_PCT_MAX, Math.max(CHAT_PCT_MIN, n))
+    }
+
     /** 被钉气泡最高高度：12–80 vh，取整（与 host 侧 sanitize 同口径，两端都钳一次）。 */
     function clampPinMaxVh(v) {
       v = Math.round(Number(v))
@@ -339,8 +354,9 @@ window.__ModuleLoader__.load({
         patch.clearBubble = s.clearBubble === true
         patch.pinBlur = clampBlur(s.pinBlur)
         patch.pinMaxVh = clampPinMaxVh(s.pinMaxVh)
-        // 对话页固定宽度（bg-atelier 移入）：host 侧 sanitize 负责区间钳制
-        patch.chatWidth = Number(s.chatWidth) > 0 ? Math.round(Number(s.chatWidth)) : 860
+        // 对话页固定宽度（bg-atelier 移入）：host 侧 sanitize 负责区间钳制。
+        // v1.5.0 起是百分比；盘上的旧 px 值（>100）会被 clampChatWidth 落到默认 80%。
+        patch.chatWidth = clampChatWidth(s.chatWidth)
         patch.chatWidthEnabled = s.chatWidthEnabled === true
         // 旧 host 的 sanitize 不认识这些字段，任何一次写盘都会把它们抹掉 ⇒
         // 只有响应里真的带回来才算能力就绪，否则界面禁用这几项并说明原因。
@@ -933,15 +949,23 @@ window.__ModuleLoader__.load({
     // --dsh-chat-user-width = 提问列宽。关闭时逐个 removeProperty，交回 DSH 自适应。
     // pinChatWidth 供滑杆"即时预览但不写状态"用，松手/失焦才 STORE.set 提交，
     // 免得每拖一格就把整页（含上百张图卡的底图工坊）重渲染一遍。
-    function pinChatWidth(enabled, rawW) {
-      var w = enabled && Number(rawW) > 0 ? Math.round(Number(rawW)) : null
+    //
+    // **v1.5.0：单位从 px 改成百分比**（用户 2026-09-12 原话："改成百分比，具体的数值不仅会
+    // 随着全屏或是缩小有变动，还会因为显示器的比例出现不协调"）。三个变量都写同一个 P%。
+    // 真浏览器实测（本机会话区 clientWidth 1139）：
+    //   80% ⇒ 消息列 860px、输入卡 886px ；60% ⇒ 645 / 664 ；100% ⇒ 1075（满宽）/ 1107。
+    // 结论：三个变量都是"**可用内容区的 P%**"（100% 时 1075 = 1139 − 两侧 32px 内边距），
+    // 而卡片恰好 = P% ×(内容区 + 32) ⇒ **卡片永远比列宽宽 32×P 像素**——
+    // 与 px 时代"+32px 出挑"的关系完全一致，只是整体按比例缩放，全屏/缩窗都跟着走。
+    function pinChatWidth(enabled, rawPct) {
+      var pct = enabled && Number(rawPct) > 0 ? Math.round(Number(rawPct)) : null
       var root = findChatRoot()
-      syncWidthStyle(w)   // :root 兜底与根节点钉法并行：composer 还没挂上时也能生效
+      syncWidthStyle(pct)   // :root 兜底与根节点钉法并行：composer 还没挂上时也能生效
       if (!root) return false
-      if (w) {
-        root.style.setProperty('--dsh-chat-content-width', w + 'px', 'important')
-        root.style.setProperty('--dsh-composer-card-max-width', (w + 32) + 'px', 'important')
-        root.style.setProperty('--dsh-chat-user-width', w + 'px', 'important')
+      if (pct) {
+        root.style.setProperty('--dsh-chat-content-width', pct + '%', 'important')
+        root.style.setProperty('--dsh-composer-card-max-width', pct + '%', 'important')
+        root.style.setProperty('--dsh-chat-user-width', pct + '%', 'important')
       } else {
         root.style.removeProperty('--dsh-chat-content-width')
         root.style.removeProperty('--dsh-composer-card-max-width')
@@ -954,9 +978,9 @@ window.__ModuleLoader__.load({
     // 声明在会话根自己身上，所以在 <html> 上给 --dsh-chat-user-width 赋值就能顺着继承链
     // 生效 —— 覆盖 findChatRoot() 暂时找不到根节点的窗口（首屏 / 换会话 / composer 未挂）。
     var widthStyleEl = null
-    function syncWidthStyle(w) {
+    function syncWidthStyle(pct) {
       if (!domReady()) return
-      var css = w > 0 ? ':root{--dsh-chat-user-width:' + w + 'px !important}' : ''
+      var css = pct > 0 ? ':root{--dsh-chat-user-width:' + pct + '% !important}' : ''
       if (!css) {
         if (widthStyleEl && widthStyleEl.parentNode) widthStyleEl.parentNode.removeChild(widthStyleEl)
         widthStyleEl = null
@@ -1006,7 +1030,7 @@ window.__ModuleLoader__.load({
     /** 滑杆提交值（拖动途中由 WidthField 直接走 pinChatWidth 预览，不经过这里）。 */
     function commitChatWidth(v) {
       if (!STORE.state.appearanceReady) return
-      v = Math.min(3840, Math.max(640, Math.round(Number(v) || 860)))
+      v = clampChatWidth(v)
       STORE.set({ chatWidth: v })
       pinChatWidth(STORE.state.chatWidthEnabled, v)
       scheduleSave()
@@ -1253,7 +1277,7 @@ window.__ModuleLoader__.load({
 
     // ------------------------------------------------ 设置页：对话页卡（④） --
     // 常用宽度快捷键（bg-atelier 原样搬来）
-    var WIDTH_PRESETS = [1280, 1600, 1920, 2560, 3840]
+    var WIDTH_PRESETS = [60, 70, 80, 90, 100]   // v1.5.0: 原 px 快捷键(1280/1600/1920/2560/3840) → 百分比
 
     /**
      * 宽度滑杆：拖动过程中只改本组件的局部状态 + 直接钉 CSS 变量做即时预览，
@@ -1262,11 +1286,11 @@ window.__ModuleLoader__.load({
      */
     function WidthField() {
       var s = useCache()
-      var pair = React.useState(s.chatWidth > 0 ? s.chatWidth : 860)
+      var pair = React.useState(clampChatWidth(s.chatWidth))
       var val = pair[0]
       var setVal = pair[1]
       React.useEffect(function () {
-        setVal(s.chatWidth > 0 ? s.chatWidth : 860)
+        setVal(clampChatWidth(s.chatWidth))
       }, [s.chatWidth])
 
       function onInput(v) {
@@ -1279,22 +1303,22 @@ window.__ModuleLoader__.load({
           chips.push(h('button', {
             key: w, type: 'button',
             className: 'cc-mini' + (val === w ? ' on' : ''),
-            title: '宽度 ' + w + 'px',
+            title: '占会话区可用宽度的 ' + w + '%',
             onClick: function () { setVal(w); pinChatWidth(true, w); commitChatWidth(w) },
-          }, String(w)))
+          }, w + '%'))
         })(WIDTH_PRESETS[i])
       }
       return h('div', null,
         h('div', { className: 'cc-row', style: { marginTop: '10px' } },
           h('span', { style: { minWidth: '108px' } }, '对话页宽度'),
           h('input', {
-            type: 'range', min: '640', max: '3840', step: '10', value: String(val),
+            type: 'range', min: String(CHAT_PCT_MIN), max: String(CHAT_PCT_MAX), step: '1', value: String(val),
             onChange: function (e) { onInput(Number(e.target.value)) },
             onPointerUp: function () { commitChatWidth(val) },
             onKeyUp: function () { commitChatWidth(val) },
             onBlur: function () { commitChatWidth(val) },
           }),
-          h('span', { className: 'cc-val' }, Math.round(val) + 'px')),
+          h('span', { className: 'cc-val' }, Math.round(val) + '%')),
         h('div', { className: 'cc-chips' }, chips))
     }
 
@@ -1307,8 +1331,10 @@ window.__ModuleLoader__.load({
         h(Fold, { label: '说明' },
           h('div', { className: 'cc-note' },
             s.chatWidthEnabled
-              ? '现在把会话列宽钉在 ' + (s.chatWidth || 860) + 'px：直接往会话根元素上写 --dsh-chat-content-width /'
-                + ' --dsh-composer-card-max-width / --dsh-chat-user-width（!important，绕过 DSH 的响应式 clamp）。'
+              ? '现在把会话列宽钉在会话区可用宽度的 ' + clampChatWidth(s.chatWidth) + '%：往会话根元素上写'
+                + ' --dsh-chat-content-width / --dsh-composer-card-max-width / --dsh-chat-user-width（!important，'
+                + '绕过 DSH 的响应式 clamp）。**百分比**，所以全屏/缩窗、换显示器比例都跟着走（v1.5.0 之前是固定 px）。'
+                + '100% = 铺满可用区（两侧各留宿主自己的 32px 内边距）；输入卡会始终比消息列宽 32×该比例的像素。'
                 + '拖动即时预览、松手才存盘；切换会话会让根节点重建，故另有一条 DOM 观察器补写回去。'
               : '未启用：宽度跟随 DSH 自己的响应式 clamp。开关与数值都存进本插件的 settings.json（原来存在底图工坊里，已随本功能一并迁出）。')))
     }
@@ -1644,6 +1670,10 @@ window.__ModuleLoader__.load({
       setPinMaxVh: setPinMaxVh,
       clampPinMaxVh: clampPinMaxVh,
       clampBlur: clampBlur,
+      clampChatWidth: clampChatWidth,
+      CHAT_PCT_MIN: CHAT_PCT_MIN,
+      CHAT_PCT_MAX: CHAT_PCT_MAX,
+      CHAT_PCT_DEFAULT: CHAT_PCT_DEFAULT,
       bubbleMaxEm: function () { return USER_BUBBLE_MAX_EM },
       setBubbleMaxEm: function (v) {
         USER_BUBBLE_MAX_EM = Math.min(120, Math.max(8, Math.round(Number(v) * 10) / 10 || 41))

@@ -275,7 +275,7 @@ const clientSrc = fs.readFileSync(PLUGIN + 'client.js', 'utf8')
 //    先写一份"新 host 全字段 + 对话页宽度开着"的盘，④ 卡里的滑杆才会渲染出来。
 fs.writeFileSync(settingsFile, JSON.stringify({
   enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true,
-  pinLastUser: true, clearBubble: true, pinBlur: 12, chatWidth: 1920, chatWidthEnabled: true,
+  pinLastUser: true, clearBubble: true, pinBlur: 12, chatWidth: 90, chatWidthEnabled: true,
 }))
 c = await bootClient('h' + Date.now())
 const navLabel = c.pageEntry ? String(c.pageEntry.label) : ''
@@ -290,8 +290,11 @@ ok('被钉行自身只留 sticky（不再铺背景/模糊）',
   /position:sticky/.test(pinRule) && !/background/.test(pinRule) && !/backdrop-filter/.test(pinRule), pinRule.slice(0, 120))
 ok('底衬画在 ::before 上', plateRule.includes('::before') && /content:""/.test(plateRule), plateRule.slice(0, 60))
 ok('底衬定长（按会话列宽 ×.55 与 em 上限折算，不写死像素）',
+  // v1.4.2 起宽度是 `var(--cc-pin-w, calc(min(…)))`：JS 量到实测宽就写 --cc-pin-w，
+  // 量不到才落到括号里的 calc 兜底。断言随之更新 —— 原来只认 `width:calc(min(`，
+  // 那层 var 一加进来它就一直假失败（早于 v1.5.0 的单位改动，与本轮无关）。
   plateRule.includes('--dsh-chat-content-width') && plateRule.includes('* .55')
-  && /width:calc\(min\(/.test(plateRule) && plateRule.includes('var(--cc-user-bubble-max,41em)')
+  && /width:var\(--cc-pin-w,\s*calc\(min\(/.test(plateRule) && plateRule.includes('var(--cc-user-bubble-max,41em)')
   && plateRule.includes('max-width:calc(100% + .8em)'),
   plateRule.slice(0, 190))
 ok('底衬圆角/呼吸位是 em（跟随字号缩放）', /border-radius:1\.07em/.test(plateRule) && /right:-\.4em/.test(plateRule), plateRule.slice(0, 120))
@@ -323,9 +326,9 @@ ok('chip 内徽标无背景（面板里的同名徽标不受影响）',
   '基础规则 ' + baseBadgeRules.length + ' 条：' + baseBadgeRules.join(' ').slice(0, 90))
 // ④ 对话页固定宽度：整节已从底图工坊移进本插件，那边不再碰这三个变量
 const pageHtml4 = render(c.page)
-ok('设置页出现「④ 对话页」卡（开关 + 640–3840 滑杆 + 常用宽度快捷键）',
-  pageHtml4.includes('④ 对话页') && /min="640"/.test(pageHtml4) && /max="3840"/.test(pageHtml4)
-  && pageHtml4.includes('1920') && pageHtml4.includes('启用固定对话页宽度'),
+ok('设置页出现「④ 对话页」卡（开关 + 30–100% 滑杆 + 常用百分比快捷键）',
+  pageHtml4.includes('④ 对话页') && /min="30"/.test(pageHtml4) && /max="100"/.test(pageHtml4)
+  && pageHtml4.includes('90%') && pageHtml4.includes('启用固定对话页宽度'),
   'has=' + pageHtml4.includes('④ 对话页'))
 // 对面插件(dsh-bg-atelier)的交叉断言：装了才判，没装就跳过（开源仓库不能硬依赖别人的路径）。
 const bgaPath = process.env.DSH_BGA_CLIENT || 'D:/DeepSeek/dsh-plugins/dsh-desktop-wallpaper/client.js'

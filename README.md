@@ -200,6 +200,50 @@
 此后：改规则 md 立即生效（host 每次组装重读磁盘）；开关与滑杆改动即时写盘；
 压缩参数对之后新建的会话生效；界面与 chip 的改动要重启才可见。
 
+## 换台机器：可迁移性与**必须手动的步骤**
+
+> 给后续在任何一台机器上接手的人或 agent：**本插件装起来不需要任何手工点击**，
+> 但下面几条"换机后不生效 / 得手动做"的事，必须先看清楚，别以为"克隆下来就完事"。
+> （起因：用户 2026-09-12 反馈"工作电脑上传、回家发现可用性很差、必须手动操作"。）
+
+**A. 装（agent 可全自动）**
+
+```powershell
+git clone https://github.com/Raylen-berry/dsh-cache-control.git <你放插件的绝对路径>
+dsh plugin --profile web add link:<同一个绝对路径>
+```
+`link:` 挂载的意义：改完即生效（开发态），不需要每次重装。
+
+**B. 必须重启 DSH Desktop（人工触发，agent 不能替你决定）**
+client 半在**服务启动时**才 compose 进图（依据见上一节），所以"装完刷新页面"是没用的。
+重启会掐断正在跑的会话轮次 —— 让用户自己挑时间。
+
+**C. 设置**不随仓库走**（换机器后四项开关全是默认关）**
+所有状态都在 `$DSH_HOME/dsh-cache-control/`：`settings.json`（四个开关 + 数值）、
+`gate.md`（② 会话守则的自定义覆盖，可选）。**仓库里没有它们**，因此换机器后要重新打开：
+① 省缓存 / ② 会话守则 / ③ 气泡置顶 / ④ 对话页 —— 否则会表现为"插件装了但什么都没发生"。
+
+**D. ① 省缓存改的是 preset，不是插件目录**
+它把参数写进 `$DSH_HOME/profiles/**/standard/agent.yml` 里 `compaction-basic` 那一行
+（带 `# managed by dsh-cache-control` 标记）。换机器/换 profile 后，**必须在新机器上再打开一次总开关**
+才会重新写进去；关闭总开关会移除该 config、恢复 DSH 出厂默认。
+
+**E. 已知的宿主坑：插件会被 generation 迁移搬走（本机踩过）**
+部分 DSH Desktop 版本在启动时会做 `installGeneration` 迁移，会把 `link:` 挂载的插件重新 stage
+一遍，期间把一个**绝对路径当相对路径拼接**⇒ `ENOENT`、迁移被 defer，
+`profiles/web/.install-complete` 永远写不出来的同时插件也可能不加载。
+本机的处置是给应用 bundle 打一个本地补丁（把本插件加进 `KEEP_IN_SHARED_TREE`）——**该补丁不在本仓库里**，
+它属于"每台机器各自的 DSH 应用目录"。识别方法：启动日志出现 `migration deferred` /
+`could not stage`，或 `profiles/web/.generations-deferred.json` 反复生成。
+遇到就按本机 `dsh-local-patches/README.md` 的脚本处理（DSH 每次升级都会覆盖该补丁，升级后要重跑）。
+
+**F. 换机后自查（30 秒）**
+
+```powershell
+node tools/verify-audit.mjs 2>$null; node tools/verify-host-width.mjs   # 期望全绿 / 无 FAIL
+# 设置页应出现「会话策略」四项；④ 对话页默认 80%（百分比，v1.5.0 起）
+```
+
 ## 验证
 
 回归与探针脚本都在本仓库 `tools/` 下（**只用于开发，不进 npm 包**，见 `package.json` 的 `files`）。
@@ -253,6 +297,33 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
 3. 重启应用。插件停用/卸载后不残留任何行为改动（`gate.md` override 与 `settings.json` 是数据，需自行删除）。
 
 ## 版本与变更记录
+
+- **v1.5.0**（④ 对话页：宽度单位 px → **百分比**）
+  - 起因（用户 2026-09-12 原话）："改成百分比，具体的数值不仅会随着全屏或是缩小有变动，
+    还会因为显示器的比例出现不协调。"固定 640–3840px 在全屏/缩窗时不跟着走，换显示器比例就失配。
+  - **改法**：`chatWidth` 语义从 px 变成 **30–100 的百分比**，三个变量写同一个 P% ——
+    `--dsh-chat-content-width` / `--dsh-composer-card-max-width` / `--dsh-chat-user-width`
+    都写 `P%`（`:root` 兜底那条同样写 `%`）；滑杆 30–100、步长 1，快捷键改成 60/70/80/90/100%。
+  - **真浏览器实测**（本机会话区 `clientWidth` 1139，在真会话里量消息列与输入卡）：
+    `80%` ⇒ 消息列 **860px**、输入卡 **886px**；`60%` ⇒ 645 / 664；`100%` ⇒ 1075（满宽）/ 1107。
+    即三个变量都是"**可用内容区的 P%**"（100% 时 1075 = 1139 − 两侧 32px 内边距），
+    而输入卡恰好 = `P% ×(内容区 + 32)` ⇒ **卡片永远比消息列宽 32×P 像素** ——
+    与 px 时代"+32px 出挑"的关系**完全一致**，只是整体按比例缩放。
+    （一度以为会"复合两次"导致卡片过窄：那是在**空会话**页量的，那页的 composer stack 宽度不同；
+    真会话里不复合。这条记在这里，免得下次又被空页面误导。）
+  - **迁移**：盘上的旧 px 值（>100，例如你现在的 900）不再按 px 用，一律落到默认 **80%**
+    —— 900px 在本机 1139px 会话区里正好≈79%，观感等价；由 `normalizeChatWidth()` 在
+    host 与 client **两端**同口径处理（`sanitize` / `clampChatWidth`），
+    底图工坊那次一次性迁移（`migrateFromAtelier`）也一并走这条口径。
+  - 验证：`verify-host-width.mjs` **全绿**（新增"60 原样 / 10→30 / 900 与 3840 旧 px → 80"四条）；
+    `verify-ui-appearance.mjs` **50 passed / 0 failed**（新增"三个变量都是 90%"与"旧 px 1600 → 80%"）；
+    `verify-gate-client.mjs` **67 passed / 0 failed**。
+  - 顺手修了 `verify-gate-client.mjs` 里一条**早就假失败**的断言：它要求底衬规则含
+    `width:calc(min(`，而 v1.4.2 起那层已经是 `width:var(--cc-pin-w, calc(min(…)))`
+    （早于本轮的单位改动，与本轮无关，只是这次跑测试才发现）。
+    另把 `verify-host-width.mjs` 里"删掉文件再看它不存在"的断言改成**哨兵文件**写法 ——
+    本机沙箱会把 `fs.rmSync` 拦成空操作（实测 rmSync 之后 `existsSync` 仍为 true），
+    那种写法会假失败，改成"跑完看哨兵内容有没有被改写"，反而更直接地证明"不写盘"。
 
 - **v1.4.2**（钉顶底衬改"实测宽度" + 长文限高）
   - 底衬宽度不再"定长"：新增 `updatePinPlate()`，在钉住哪一条确定后、以及每次气泡重排

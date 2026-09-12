@@ -180,7 +180,7 @@ deepRow.parentElement = deepWrap
 ok('多套一层透传包装也钉到消息层', it.pinTarget(deepRow) === deepItem, it.pinTarget(deepRow).className)
 
 console.log('\n— 2. 开钉顶 + 透明 + 可调模糊度 —')
-it.applyAppearance({ pinLastUser: true, clearBubble: true, pinBlur: 18, chatWidthEnabled: false, chatWidth: 1920 })
+it.applyAppearance({ pinLastUser: true, clearBubble: true, pinBlur: 18, chatWidthEnabled: false, chatWidth: 90 })
 await sleep(40)
 ok('<html> 上打了 data-cc-pin-last-user', html.attrs['data-cc-pin-last-user'] === '1')
 ok('<html> 上打了 data-cc-clear-bubble', html.attrs['data-cc-clear-bubble'] === '1')
@@ -299,15 +299,23 @@ console.log('\n— 7. 对话页固定宽度（原底图工坊那一节，已移�
 it.STORE.set({ loading: false, loaded: true, appearanceReady: true })
 puts.length = 0
 it.setChatWidthEnabled(true)
-it.commitChatWidth(1600)
+it.commitChatWidth(90)
 await sleep(600)
-ok('三个宽度变量钉在会话根上（绕过宿主响应式 clamp）',
-  chatRoot.style.getPropertyValue('--dsh-chat-content-width') === '1600px'
-  && chatRoot.style.getPropertyValue('--dsh-composer-card-max-width') === '1632px'
-  && chatRoot.style.getPropertyValue('--dsh-chat-user-width') === '1600px',
+ok('三个宽度变量都按**百分比**钉在会话根上（v1.5.0 起；绕过宿主响应式 clamp）',
+  chatRoot.style.getPropertyValue('--dsh-chat-content-width') === '90%'
+  && chatRoot.style.getPropertyValue('--dsh-composer-card-max-width') === '90%'
+  && chatRoot.style.getPropertyValue('--dsh-chat-user-width') === '90%',
   JSON.stringify(chatRoot.style._p))
+// 旧 px 值（>100）必须落到默认 80%，而不是被当成 1600% 或原样写 1600px
+it.commitChatWidth(1600)
+await sleep(50)
+ok('旧 px 值 1600 被归一成 80%（单位换百分比后的迁移口径）',
+  chatRoot.style.getPropertyValue('--dsh-chat-content-width') === '80%',
+  chatRoot.style.getPropertyValue('--dsh-chat-content-width'))
+it.commitChatWidth(90)
+await sleep(600)
 const disk4 = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
-ok('chatWidth / chatWidthEnabled 落盘', disk4.chatWidth === 1600 && disk4.chatWidthEnabled === true, JSON.stringify(disk4))
+ok('chatWidth(%) / chatWidthEnabled 落盘', disk4.chatWidth === 90 && disk4.chatWidthEnabled === true, JSON.stringify(disk4))
 it.setPinBlur(99)
 ok('模糊度上钳 24 并即时写进 CSS 变量',
   it.STORE.state.pinBlur === 24 && html.style.getPropertyValue('--cc-pin-blur') === '24px', String(it.STORE.state.pinBlur))
@@ -330,7 +338,7 @@ ok('旧 host（能力未装载）时这三项都是空操作',
 it.STORE.set({ appearanceReady: true })
 const g2 = await (await nodeFetch(base + '/cc/settings.json')).json()
 ok('host GET 带回全部新字段（刷新页面能原样恢复）',
-  g2.settings.chatWidth === 1600 && g2.settings.chatWidthEnabled === false && g2.settings.pinBlur === 0
+  g2.settings.chatWidth === 90 && g2.settings.chatWidthEnabled === false && g2.settings.pinBlur === 0
   && g2.settings.pinLastUser === true && g2.settings.clearBubble === true, JSON.stringify(g2.settings))
 
 server.close()
