@@ -237,6 +237,20 @@ client 半在**服务启动时**才 compose 进图（依据见上一节），所
 `could not stage`，或 `profiles/web/.generations-deferred.json` 反复生成。
 遇到就按本机 `dsh-local-patches/README.md` 的脚本处理（DSH 每次升级都会覆盖该补丁，升级后要重跑）。
 
+**G. 设置导出/导入（换机器一键搬配置，v1.5.0 新增）**
+
+```powershell
+node tools/settings.mjs export --out D:\cc-settings.json    # 旧机器
+node tools/settings.mjs import D:\cc-settings.json --yes    # 新机器（覆盖前自动备份 settings.json / gate.md）
+```
+`show` 看当前值；不带 `--yes` 演练。它连 **`gate.md`（② 会话守则的自定义规则）一起搬** ——
+这是本插件最不该手抄的东西。导入会按与 host `sanitize` 同口径的规则钳制
+（触发点 5–95、保留尾部 < 触发点、底衬模糊 0–24 且 1 位小数、钉顶上限 12–80vh、
+对话页宽度 30–100% 且旧 px 值归一 80%），未知字段丢弃并列出来；
+**host 读盘时还会再 sanitize 一次**，所以口径即使漂了也不会写坏引擎侧。
+⚠ ① 省缓存**不在这个文件里**：它改的是 `$DSH_HOME` 里 standard preset 的那一行，
+新机器导入后在设置页把总开关关一次再打开即可重新写入。
+
 **F. 换机后自查（30 秒）**
 
 ```powershell
