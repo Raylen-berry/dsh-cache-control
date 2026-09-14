@@ -224,30 +224,45 @@
 
 ## 发布前检查（CI 与本地同一条命令）
 
-push / PR 都会跑 `.github/workflows/ci.yml`，它只做一件事：`npm test`。本地跑的就是同一条命令，
-**不装任何依赖、不联网**：
+push / PR 都会跑 `.github/workflows/ci.yml`，它做两件事：`npm ci`（只装 devDependencies）→ `npm test`。
+本地跑的就是同一条命令：
 
 ```bash
+npm install                    # 只装 devDependencies（就一个 react）；CI 用 npm ci
 npm test                       # = node tools/run-all.mjs
 node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排除、为什么
 ```
 
+**出网边界**：只有 `npm ci` / `npm install` 那一步出网（按 `package-lock.json` 装 devDependencies）。
+`npm test` 本身**不出网** —— 不做真实下载、不调模型、不读 `%APPDATA%` 下的真实 preset / settings.json。
+
 `tools/run-all.mjs` 把每套都跑完再汇总（不用 `&&` 串，避免第一套一失败就看不到后面），
 任一套非 0 退出 ⇒ `npm test` 退出码 1 ⇒ CI 变红。CI 用 Node 20/22/24 三档矩阵、windows-latest。
 
-本机实测（Node 24.9.0）参与门禁的三套：
+干净环境实测（`DSH_HOME` / `APPDATA` / `LOCALAPPDATA` / `USERPROFILE` / `DSH_APP_MODULES` 全指空目录，
+独立下载的 node），三档（Node 20/22/24）结果一致 —— **4/4 套件通过**：
 
-| 套件 | 本机结果 |
+| 套件 | 结果 |
 | --- | --- |
 | `tools/verify-gate-truncation.mjs` | 31 项通过 |
 | `tools/verify-host-width.mjs` | 全部 PASS |
 | `tools/verify-settings-payload.mjs` | 8 项通过 |
+| `tools/verify-panel-and-resizer.mjs` | 19 项通过 |
+
+> `verify-panel-and-resizer.mjs` 原来因为"要本机 DSH 安装目录的 `node_modules/react`"被排除。
+> 现在 `react` 进 `devDependencies`，`run-all.mjs` 把 `DSH_APP_MODULES` 指向**仓库自己的 `node_modules/`**，
+> 于是本地与 CI 都不再依赖任何人的安装路径（反向证据：把 `DSH_APP_MODULES` 指回空目录，
+> 该套件立刻报 `ERR_MODULE_NOT_FOUND: Cannot find module '<空目录>/react/index.js'`）。
 
 **未纳入 CI** 的套件（原因同时写在 `tools/run-all.mjs` 的 `EXCLUDED` 里）：
 `verify-session-gate.mjs`（既有失败：`DEPLOYMENT_PERSONA` TypeError，与本检查无关）、
-`verify-gate-client.mjs` / `verify-ui-appearance.mjs`（要本机 DSH 安装目录的 `react` + `%APPDATA%` 下的真实 preset）、
-`verify-gate-http.mjs`（要 `%APPDATA%` 下的真实 preset/settings.json）、
-`verify-panel-and-resizer.mjs`（要本机 DSH 安装目录的 `react`）。
+`verify-gate-client.mjs` / `verify-ui-appearance.mjs` / `verify-gate-http.mjs`
+（要 `%APPDATA%` 下的真实 preset/settings.json）。
+
+> `verify-gate-http.mjs` **本轮没有做夹具化**：它先把真实 preset 复制到临时 `DSH_HOME`，
+> 然后有几条断言是"逐字节比对**真实** preset 有没有被本次验证改动"
+> （`fs.readFileSync(REAL_PRESET)` + sha256）。换成仓库内夹具就得重写那几条的比对对象，
+> 而那属于**放宽**验证口径 —— 本轮的规矩是只允许"等价或更强"的改动，所以保持排除并在此写明。
 
 ## 换台机器：可迁移性与**必须手动的步骤**
 

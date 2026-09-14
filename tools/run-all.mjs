@@ -18,8 +18,8 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const LIST_ONLY = process.argv.includes('--list')
 
 // ---- 仓库配置 -------------------------------------------------------------
-// 套件里写的是 `import('file:///' + PLUGIN + 'index.js')`，所以在 POSIX 上必须
-// 去掉开头的斜杠（否则拼出 file:////home/...），Windows 上盘符路径原样可用。
+// 套件里写的是 `import('file:///' + PLUGIN + 'index.js')` 与 `import('file:///' + APP + 'react/index.js')`，
+// 所以在 POSIX 上必须去掉开头的斜杠（否则拼出 file:////home/...），Windows 上盘符路径原样可用。
 const urlPath = (p) => {
   const s = p.replace(/\\/g, '/')
   return s.startsWith('/') ? s.slice(1) : s
@@ -31,6 +31,10 @@ const SUITES = [
   'tools/verify-gate-truncation.mjs',
   'tools/verify-host-width.mjs',
   'tools/verify-settings-payload.mjs',
+  // 要一份真 react（它 import(APP+'react/index.js') 把面板纯函数真跑起来）。
+  // react 由 package.json 的 devDependencies 声明，下面的 ENV 把 DSH_APP_MODULES 指向
+  // **仓库自己的 node_modules/**，于是本地与 CI 都不再依赖本机 DSH 安装目录 —— 2026-09 从 EXCLUDED 挪回。
+  'tools/verify-panel-and-resizer.mjs',
 ]
 
 const EXCLUDED = [
@@ -38,20 +42,22 @@ const EXCLUDED = [
   ['tools/verify-session-gate.mjs',
     '既有失败：DEPLOYMENT_PERSONA TypeError（本机复测退出码 1，与本任务无关）；且要读 %APPDATA% 下的真实 DSH 安装目录'],
   ['tools/verify-gate-client.mjs',
-    '要本机 DSH 安装目录的 node_modules/react + %APPDATA% 下的真实 preset/settings.json 才能跑'],
+    '要 %APPDATA% 下的真实 preset/settings.json 才能跑（本机 DSH 安装态的配置，CI 里没有）'],
   ['tools/verify-gate-http.mjs',
-    '要 %APPDATA% 下的真实 preset 与 settings.json（copyFileSync 源文件不存在就抛错）'],
-  ['tools/verify-panel-and-resizer.mjs',
-    '要本机 DSH 安装目录的 node_modules/react（DSH_APP_MODULES 默认指向它）'],
+    '要 %APPDATA% 下的真实 preset（copyFileSync 源文件不存在就抛错）。**未做夹具化**：它的断言里有几条' +
+    '逐字节比对真实 preset 有没有被本次验证改动，换成仓库内夹具就得重写那几条断言口径 —— 本任务只允许' +
+    '"等价或更强"的改动，为省事放宽口径属于作弊，故保持排除并在 README 里写明。'],
   ['tools/verify-ui-appearance.mjs',
-    '要本机 DSH 安装目录的 node_modules/react + %APPDATA% 下的真实 preset'],
+    '要 %APPDATA% 下的真实 preset（同 verify-gate-http）'],
 ]
 
-// 让套件按**本仓库实际位置**解析插件（默认值写死了开发机的 D:/DeepSeek/...），
-// 这样本地与 CI 都不依赖任何人的绝对路径。
+// 让套件按**本仓库实际位置**解析插件与 react，不依赖任何人的绝对路径或本机 DSH 安装目录。
 const ENV = {
   DSH_CC_PLUGIN: urlPath(REPO) + '/',
   DSH_CC_INDEX: urlPath(REPO) + '/index.js',
+  // DSH_APP_MODULES 默认写死了开发机的 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/'，
+  // 指向仓库自己的 node_modules 后，react 由 npm install / npm ci 装出即可。
+  DSH_APP_MODULES: urlPath(REPO) + '/node_modules/',
 }
 
 // ---- 登记完备性 + 已知失败 ------------------------------------------------

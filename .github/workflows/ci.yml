@@ -2,16 +2,22 @@ name: CI
 
 # 发布前检查：push / PR 都跑同一套离线测试，任一环节非 0 退出即整体失败。
 #
-# 为什么是 windows-latest：这 7 个插件跑在 Windows 上的 DSH Desktop 里，7 套件也都在
-#   Windows 上实测通过（本机无 WSL 发行版，Linux/macOS 未实测 ⇒ 不放进 CI 冒红）。
-# 为什么是 20/22/24 矩阵：仓库都没写 engines（只有 codex 写了 >=20），所以按
-#   20 = 最老仍常见的 LTS、22 = 当前 LTS、24 = DSH Desktop 实际内置的运行时
-#   （本机 DSH 自带的 node 就是 v24.9.0）三个都测；三档已用**独立下载的** node 在
-#   干净环境（DSH_HOME/APPDATA/DSH_APP_MODULES 全指空目录）逐套实测通过。
+# 为什么是 windows-latest：套件都在 Windows 上实测通过（本机无 WSL 发行版，Linux/macOS 未实测 ⇒ 不放进 CI 冒红）。
+# 为什么是 20/22/24 矩阵：本仓库原来没写运行时下限，按 20 = 最老仍常见的 LTS、22 = 当前 LTS、
+#   24 = DSH Desktop 实际内置的运行时。三档已用**独立下载的** node 在干净环境各跑一遍。
 #
-# 全程不联网跑测试：不起真浏览器、不做真实下载、不调真实模型。
-# 需要这些或需要本机 DSH 安装目录 / 真实媒体盘的套件已排除，清单与原因见
-#   tools/run-all.mjs 的 EXCLUDED（`node tools/run-all.mjs --list` 可打印）。
+# 【测试执行期间不出网 —— 这条是硬约束，加依赖安装步骤**不**放宽它】
+#   · 允许出网的只有下面 `npm ci` 那一步：它按 package-lock.json 把 devDependencies
+#     （react —— verify-panel-and-resizer.mjs 要用真 React 跑面板纯函数）装下来。
+#   · `npm test` 本身（node tools/run-all.mjs）**不许有任何网络访问**：不做真实下载、不调模型、
+#     不读 %APPDATA% 下的真实 preset / settings.json（那是**用户的**配置，夹具也不许往那写）。
+#   · 依赖是**装出来**的（这一步已经装完），不是测试运行时现下载的 —— 两者的区别就是这条约束的边界。
+#
+# 已排除的套件与原因（详见 tools/run-all.mjs 的 EXCLUDED，`node tools/run-all.mjs --list` 可打印）：
+#   · verify-session-gate —— 既有失败（DEPLOYMENT_PERSONA TypeError），且要读 %APPDATA% 下真实安装目录
+#   · verify-gate-client / verify-gate-http / verify-ui-appearance —— 要 %APPDATA% 下的真实 preset / settings.json
+#     （verify-gate-http 里有几条断言是"逐字节比对真实 preset 有没有被本次验证改动"，
+#      夹具化就得重写那几条口径 ⇒ 本轮**没有**为了变绿而放宽断言，保持排除）
 on:
   push:
   pull_request:
@@ -28,6 +34,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: npm
+      # 只装 devDependencies（package-lock.json 已提交 —— 本仓库 .gitignore 原先把它忽略了，已改）。
+      # .npmrc 里开了 legacy-peer-deps：peerDependencies 是**宿主 DSH 运行时**提供的
+      # （@deepseek-ai/cordis、dsh-host-webserver、react…），测试只需要其中一份 react。
+      # 不关掉的话 npm 7+ 会自动去装那一整套 @deepseek-ai/*，等于把 CI 押在宿主发布状态上。
+      - run: npm ci --no-audit --no-fund
       # npm test = node tools/run-all.mjs：每套都跑完再汇总，任一套失败 ⇒ 退出码 1。
-      # 本仓库测试不需要任何依赖，所以没有 npm install 这一步（离线可跑）。
+      # 这一步**不出网**。
       - run: npm test

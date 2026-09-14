@@ -1,6 +1,8 @@
 node_modules/
 *.log
-package-lock.json
+# 依赖锁：CI 的 `npm ci` 需要它，**必须提交**。
+# （原来这里把 package-lock.json 忽略了 —— 那样 package.json 里加多少 devDependencies，
+#   CI 都无法复现同一套依赖树，npm ci 直接拒绝没有 lock 的仓库。）
 pnpm-lock.yaml
 
 # tools/ 里脚本跑出来的产物与临时 home
