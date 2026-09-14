@@ -153,7 +153,14 @@
 
 | 开关 | 效果 |
 |---|---|
-| `chatWidthEnabled` + `chatWidth` | 关闭 = 跟随 DSH 自适应；打开 = 把会话列宽钉在 640–3840px（含 1280/1600/1920/2560/3840 快捷键） |
+| `chatWidthEnabled` + `chatWidth` | 关闭 = 跟随 DSH 自适应；打开 = 把会话列宽钉在**可用宽度的 30–100%**（含 60/70/80/90/100 快捷键；v1.5.0 起是百分比，之前是 640–3840px） |
+| `hideResizer`（v1.6.0） | 关闭 = 保留 DSH 原生分栏把手；打开 = 把它隐藏。**列宽一旦钉成固定百分比，那条把手拖了就不再改变列宽**，只剩"鼠标扫过去冒出两竖杠、拖了没反应"的误触（用户 2026-09-14 反馈） |
+
+- 隐藏把手**按语义识别、不按类名**：宿主的类名是 CSS-module 哈希（实测 `._1tdjgG_handle`），DSH 一升级就变，
+  而 `cursor` 含 `resize` 才是"这是条把手"的功能特征。实现是给命中的元素打 `data-cc-hide-resizer`，
+  再由插件自己的样式表 `[data-cc-hide-resizer]{display:none!important}` 隐藏；只认**可见**元素、
+  排除自己面板内的元素，并挂一条 MutationObserver（300ms 去抖）—— 宿主重建框架会换掉那条把手。
+  关闭开关或停用插件时把标记撤干净，不给宿主留一条看不见的把手。
 
 - 钉法：先按 `[data-composer-card]` 往上找到内联带 `--dsh-conversation-column-width` 的那个祖先
   （= 会话根，宿主 `publishWidths` 就在它身上标定列宽），再往它身上写
@@ -312,6 +319,23 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
 
 ## 版本与变更记录
 
+- **v1.6.0**（两个独立改动，同一个文件所以同一笔提交：修一个真 bug + 加一个开关）
+  - **修**：滑杆面板 `▾` "点不开"（用户 2026-09-14 反馈）。**不是点击没接上** —— 点了
+    `aria-expanded` 会变 true、DOM 里也有 `.cc-panel`，但它被摆到屏幕外（实测 `rect.y = 33554004`、
+    内联 `bottom: -6.71e7px`）。根因是那次"一次性校正"的 effect **量纲混用**：期望值写成"距视口底部的距离"
+    （`vh - c.top + 6`），实测值 `r.bottom` 却是**视口 Y 坐标**，两者相减恒不为 0；而 patch 又把 dy 累加回
+    `bottom`、依赖数组里还含 `pos.bottom` ⇒ **每帧误差翻倍**，二十来帧就发散到 -6.7e7px。
+    修法：定位数学抽成纯函数 `computePanelPatch()`（两边统一用视口 Y，一次补到位即收敛），
+    并加 **±400px 量级闸门** —— 任何不可信的测量只能被忽略，不可能再把面板丢出屏幕。
+    回归：新增 `tools/verify-panel-and-resizer.mjs`（**19 通过 / 0 失败**），把"已对齐返回 null /
+    有偏移一步到位 / 一步后收敛 / 离谱值被闸门挡掉 / NaN 挡掉 / 翻转分支同量纲"全部锁住。
+  - **增**：④ 对话页新增 `hideResizer`（默认关），可选隐藏 DSH 原生分栏把手，理由与实现见上面 ④ 那节。
+    host 侧 `sanitize` 只负责原样存取；client 侧用一个**独立能力位** `resizerReady` 判断
+    "host 认不认识这个键"，**不并进 `appearanceReady`** —— 否则旧 host 下会把已有几个外观开关一起禁用。
+  - **验证**：本仓库套件全绿（`verify-ui-appearance` 50、`verify-gate-client` 67、`verify-gate-http` 40、
+    `verify-panel-and-resizer` 19、`verify-host-width` 通过；`verify-session-gate` 是**既有失败**，
+    见文末"说明与限制"）。
+  - **顺带**：README ④ 那节的表格还写着 `640–3840px`（v1.5.0 已改成百分比却没同步），一并改正。
 - **v1.5.0**（④ 对话页：宽度单位 px → **百分比**）
   - 起因（用户 2026-09-12 原话）："改成百分比，具体的数值不仅会随着全屏或是缩小有变动，
     还会因为显示器的比例出现不协调。"固定 640–3840px 在全屏/缩窗时不跟着走，换显示器比例就失配。
@@ -412,3 +436,9 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
   但引擎侧是**比例式阈值**，实际触发点仍按窗口同比变化。token 数为 token-meter 的估算口径。
 - v1.2.0 起 chip 固定为三段：`省缓存 [开/关] ｜ 提问 [开/关] ｜ ▾`，前两段点击即切换、
   ▾ 弹滑杆与规则面板；标签不随状态改名（v1.1.0 那套"两个都开就叫会话策略"已去掉）。
+- **`tools/verify-session-gate.mjs` 目前是红的，且是既有问题、与本轮改动无关**
+  （2026-09-14 用 `git worktree` 在改动前的 HEAD 上跑，报同一个
+  `TypeError: Cannot read properties of undefined (reading 'DEPLOYMENT_PERSONA')`，行号相同）。
+  它从宿主包里取 `FIRST_PARTY_SECTION_ORDER` 来断言段序，宿主改过这个导出的形状后它取到 undefined
+  —— 是**测试脚本跟宿主脱节**，不是门禁功能坏了（段序功能本身由 `verify-gate-client` 67 条守着）。
+  按"先取基线再归因"的规矩记在这里，别下次又当成新 bug 查一遍。

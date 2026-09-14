@@ -145,6 +145,10 @@ export const DEFAULTS = Object.freeze({
   pinMaxVh: 38,          // 会话区外观：被钉气泡自身的最高高度（vh；超出的部分在气泡内滚）
   chatWidth: 80,         // 对话页：会话列宽占**可用宽度的百分比**（v1.5.0 起；原为 640–3840px）
   chatWidthEnabled: false, // 对话页：是否启用固定列宽（关 = 跟随 DSH 自适应）
+  // 对话页（v1.6.0）：隐藏 DSH 原生分栏把手。会话列宽一旦钉成固定百分比，那条把手
+  // （`cursor:col-resize`，实测 ._1tdjgG_handle）拖了就不再改变列宽，只剩误触 —— 打开即隐藏。
+  // 默认 false：不动宿主既有行为，想要干净再开。纯界面开关，host 只负责原样存取。
+  hideResizer: false,
 })
 
 /** 钉顶底衬模糊半径的取值区间（与 client 侧 clampBlur 同口径）。 */
@@ -189,7 +193,8 @@ export function sanitize(raw) {
   // v1.5.0：chatWidth 单位从 px 改成百分比；盘上的旧 px 值（>100）由 normalizeChatWidth 落到 80%
   const chatWidth = normalizeChatWidth(src.chatWidth)
   const chatWidthEnabled = src.chatWidthEnabled === true
-  return { enabled, triggerPct, retainPct, auto, gateEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh, chatWidth, chatWidthEnabled }
+  const hideResizer = src.hideResizer === true
+  return { enabled, triggerPct, retainPct, auto, gateEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh, chatWidth, chatWidthEnabled, hideResizer }
 }
 
 /** 由百分比换算成引擎字段与展示数字。 */

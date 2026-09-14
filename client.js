@@ -98,6 +98,9 @@ window.__ModuleLoader__.load({
       '.cc-caret{display:inline-flex;align-items:center;justify-content:center;width:24px;height:22px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:1;border-radius:999px;cursor:pointer;transition:background-color .12s,color .12s}',
       '.cc-caret:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary)}',
       '.cc-caret:disabled{cursor:default;opacity:.55}',
+      // 隐藏 DSH 原生分栏把手（可选开关，用户 2026-09-14）：按语义打标记，见 markResizers()。
+      // 用属性选择器而不是类名 —— 宿主的类名是 CSS-module 哈希（实测 _1tdjgG_handle），一升级就变。
+      '[data-cc-hide-resizer]{display:none!important}',
       '.cc-div{width:1px;height:12px;background:var(--dsw-alias-border-l2,rgba(127,127,127,.3));flex:none}',
       '.cc-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:15px;padding:0 5px;border-radius:4px;font-size:10.5px;line-height:1;border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.08));color:var(--dsw-alias-label-tertiary)}',
       '.cc-badge.on{border-color:var(--dsw-alias-brand-primary,#4d6bfe);background:rgba(77,107,254,.14);color:var(--dsw-alias-brand-primary,#4d6bfe)}',
@@ -358,6 +361,10 @@ window.__ModuleLoader__.load({
         // v1.5.0 起是百分比；盘上的旧 px 值（>100）会被 clampChatWidth 落到默认 80%。
         patch.chatWidth = clampChatWidth(s.chatWidth)
         patch.chatWidthEnabled = s.chatWidthEnabled === true
+        // 隐藏原生拖拽条（v1.6.0）：**单独一个能力位**，不并进上面的 appearanceReady ——
+        // 旧 host 不认识这个键时，只该禁用这一个新开关，不能连带把已有几个外观开关一起禁用。
+        patch.hideResizer = s.hideResizer === true
+        patch.resizerReady = s.hideResizer !== undefined
         // 旧 host 的 sanitize 不认识这些字段，任何一次写盘都会把它们抹掉 ⇒
         // 只有响应里真的带回来才算能力就绪，否则界面禁用这几项并说明原因。
         patch.appearanceReady = s.pinLastUser !== undefined && s.clearBubble !== undefined
@@ -896,6 +903,8 @@ window.__ModuleLoader__.load({
         if (s.chatWidthEnabled && s.appearanceReady) startWidthWatch(); else stopWidthWatch()
         applyChatWidth()
       } catch (e) { warnOnce('widthWatch', e) }
+      // 原生拖拽条的隐藏同样是"开关决定挂不挂"：关掉时必须把标记撤干净，别留一个不可见的把手。
+      try { applyResizerHiding() } catch (e) { warnOnce('resizerWatch', e) }
     }
 
     function setPinLastUser(v) {
@@ -1018,6 +1027,77 @@ window.__ModuleLoader__.load({
       if (widthObserver) { widthObserver.disconnect(); widthObserver = null }
       if (widthTimer) { clearTimeout(widthTimer); widthTimer = 0 }
       pinChatWidth(false, 0)   // 撤销痕迹：把三个变量从会话根上摘掉
+    }
+
+    // ---------------------------------------------- 隐藏原生拖拽条（可选）--
+    // DSH 的框架里有一条 `cursor:col-resize` 的分栏把手（实测 `._1tdjgG_handle`，8px 宽，
+    // 挂在 `._1tdjgG_frame` 的 grid 列缝上）。拖动它改的是**宿主自己的**侧栏/内容区比例；
+    // 本插件把会话列宽钉成固定百分比之后（③ 对话页），拖它不再改变会话列宽 ——
+    // 于是只剩"鼠标扫过去就冒出两竖杠、拖了却什么都不动"的体验（用户 2026-09-14 反馈）。
+    //
+    // **按语义找而不是按类名找**：类名是 CSS-module 哈希，DSH 一升级就变；`cursor` 含
+    // `resize` 才是"这是条把手"的功能特征。排除自己的面板（.cc-panel 里的 textarea 用的是
+    // `resize:vertical` **属性**，不是 cursor，天然不会命中，但留一道 closest 保险）。
+    var resizerObserver = null
+    var resizerTimer = 0
+    // 'col-resize' / 'ew-resize' / 'nwse-resize' … 都是把手；宿主将来换写法（比如 'grab'）也只影响
+    // 这一条正则，不影响其它逻辑。
+    var RESIZER_CURSOR_RE = /resize$/
+    function markResizers() {
+      if (!domReady()) return 0
+      var n = 0
+      try {
+        var all = document.querySelectorAll('*')
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i]
+          if (!el || el.offsetParent === null) continue
+          var cur = ''
+          try { cur = (window.getComputedStyle(el).cursor || '') } catch (e) { continue }
+          if (!RESIZER_CURSOR_RE.test(cur)) continue
+          if (el.closest && el.closest('.cc-panel')) continue
+          if (el.getAttribute('data-cc-hide-resizer') !== '1') el.setAttribute('data-cc-hide-resizer', '1')
+          n++
+        }
+      } catch (e) { warnOnce('markResizers', e) }
+      return n
+    }
+    function clearResizers() {
+      if (!domReady()) return 0
+      var n = 0
+      try {
+        var marked = document.querySelectorAll('[data-cc-hide-resizer]')
+        for (var i = 0; i < marked.length; i++) { marked[i].removeAttribute('data-cc-hide-resizer'); n++ }
+      } catch (e) { warnOnce('clearResizers', e) }
+      return n
+    }
+    /** 挂/拆：开着时标记 + 盯 body（宿主重建框架会换掉那条把手）。 */
+    function applyResizerHiding() {
+      if (!domReady()) return false
+      if (STORE.state.hideResizer === true && STORE.state.resizerReady === true) { startResizerWatch(); return true }
+      stopResizerWatch()
+      return false
+    }
+    function startResizerWatch() {
+      if (!domReady()) return
+      markResizers()
+      if (resizerObserver) return
+      resizerObserver = new MutationObserver(function () {
+        if (resizerTimer) return
+        resizerTimer = setTimeout(function () { resizerTimer = 0; markResizers() }, 300)
+      })
+      resizerObserver.observe(document.body, { childList: true, subtree: true })
+    }
+    function stopResizerWatch() {
+      if (resizerObserver) { resizerObserver.disconnect(); resizerObserver = null }
+      if (resizerTimer) { clearTimeout(resizerTimer); resizerTimer = 0 }
+      clearResizers()
+    }
+    /** 开关：隐藏 / 恢复原生拖拽条。 */
+    function setHideResizer(v) {
+      if (!STORE.state.resizerReady) return
+      STORE.set({ hideResizer: !!v })
+      applyResizerHiding()
+      scheduleSave()
     }
 
     /** 开关：启用 / 停用固定宽度（走 applyAppearance，顺带挂/拆 DOM 观察器）。 */
@@ -1328,6 +1408,12 @@ window.__ModuleLoader__.load({
         Switch('启用固定对话页宽度（关闭 = 跟随 DSH 自适应）', s.chatWidthEnabled,
           setChatWidthEnabled, !s.appearanceReady),
         s.chatWidthEnabled ? h(WidthField) : null,
+        // 宽度一旦固定，宿主那条分栏把手就"拖了没反应"，只剩误触（用户 2026-09-14）。
+        // 默认关：不动 DSH 的既有行为；想要干净就打开。
+        h('div', { style: { marginTop: '10px' } },
+          Switch('隐藏 DSH 原生拖拽条（对话页宽度固定后，拖它不再改变列宽）', s.hideResizer,
+            setHideResizer, !s.resizerReady)),
+        s.resizerReady ? null : h('div', { className: 'cc-err' }, '此项需重启桌面应用后可用（host 半要认识这个键）'),
         h(Fold, { label: '说明' },
           h('div', { className: 'cc-note' },
             s.chatWidthEnabled
@@ -1336,7 +1422,9 @@ window.__ModuleLoader__.load({
                 + '绕过 DSH 的响应式 clamp）。**百分比**，所以全屏/缩窗、换显示器比例都跟着走（v1.5.0 之前是固定 px）。'
                 + '100% = 铺满可用区（两侧各留宿主自己的 32px 内边距）；输入卡会始终比消息列宽 32×该比例的像素。'
                 + '拖动即时预览、松手才存盘；切换会话会让根节点重建，故另有一条 DOM 观察器补写回去。'
-              : '未启用：宽度跟随 DSH 自己的响应式 clamp。开关与数值都存进本插件的 settings.json（原来存在底图工坊里，已随本功能一并迁出）。')))
+              : '未启用：宽度跟随 DSH 自己的响应式 clamp。开关与数值都存进本插件的 settings.json（原来存在底图工坊里，已随本功能一并迁出）。'
+                + ' 拖拽条：DSH 那条分栏把手按 **cursor 含 resize** 的语义识别（宿主的类名是 CSS-module 哈希，'
+                + '升级就变，按类名找迟早失效），打开上面的开关即隐藏；插件被停用时标记会自动撤干净。')))
     }
 
     function CacheControlPage() {
@@ -1376,6 +1464,35 @@ window.__ModuleLoader__.load({
         h('span', { className: 'cc-val' }, value + '%'))
     }
 
+    // ------------------------------------------------ 面板定位数学（纯函数）--
+    /**
+     * 面板定位校正：把"实测的视口位置"与"期望的视口位置"对齐，返回要并入 pos 的补丁或 null。
+     *
+     * 量纲约定（这条就是 2026-09-14 那个 bug 的全部原因）：**两边都必须是视口 Y 坐标**。
+     *   - pos.bottom != null：面板下沿该贴在 chip 上沿之上 ⇒ 期望下沿 Y = chipRect.top − gap
+     *   - pos.top    != null：翻转到下方时上沿该贴在 chip 下沿之下 ⇒ 期望上沿 Y = chipRect.bottom + gap
+     * CSS 的 bottom 表示"距视口底部多远"，与视口 Y 相差一个 vh，**不能拿去和 rect 混用**。
+     *
+     * 收敛性：布局是线性的，一次把差补掉即归零，下一轮 dy ≈ 0 不再 setPos ⇒ 不自激。
+     * 量级闸门 MAX_PANEL_PATCH：超过它说明测量本身不可信（变换矩阵、测量时机不对），
+     * 宁可不校正 —— 也绝不能让一次错误测量把面板推到屏幕外。
+     */
+    var MAX_PANEL_PATCH = 400
+    function computePanelPatch(cur, panelRect, chipRect, gap) {
+      if (!cur || !panelRect || !chipRect) return null
+      if (cur.bottom != null) {
+        var dy = (chipRect.top - gap) - panelRect.bottom
+        if (!Number.isFinite(dy) || Math.abs(dy) <= 1 || Math.abs(dy) > MAX_PANEL_PATCH) return null
+        return { bottom: cur.bottom - dy }
+      }
+      if (cur.top != null) {
+        var dy2 = (chipRect.bottom + gap) - panelRect.top
+        if (!Number.isFinite(dy2) || Math.abs(dy2) <= 1 || Math.abs(dy2) > MAX_PANEL_PATCH) return null
+        return { top: cur.top + dy2 }
+      }
+      return null
+    }
+
     function CacheControlComposerChip() {
       var s = useCache()
       var openPair = React.useState(FORCE_OPEN === true)
@@ -1407,23 +1524,18 @@ window.__ModuleLoader__.load({
 
       // 一次性校正：祖先带 scale/transform 时，getBoundingClientRect 给的是变换后的视口坐标，
       // 而布局用的是变换前坐标，两者会差一截 —— 用"实测 vs 期望"的差补一次。
-      // （用 useEffect 而不是 useLayoutEffect：SSR 下后者会告警，且这帧校正不是首屏前置条件。）
+      // ⚠️ 2026-09-14 事故：这里原来把**两个不同量纲**相减（期望值写成"距视口底部的距离"
+      //    `vh - c.top + 6`，实测值 `r.bottom` 却是**视口 Y 坐标**），于是 dy 恒不为 0；
+      //    而 patch 又把 dy 累加回 bottom 且依赖数组含 pos.bottom ⇒ 每帧误差翻倍，
+      //    二十来帧后 bottom 涨到 -6.7e7px，面板被摆到视口外 3355 万像素处。
+      //    用户看到的现象是"点 ▾ 没反应"——其实 aria-expanded 已 true、DOM 里也有 .cc-panel，
+      //    只是它在屏幕外（实测 rect.y = 33554004）。定位数学抽进 computePanelPatch()，并加了
+      //    ±400px 量级闸门：任何测量异常最多只能微调，不可能再把面板丢出屏幕。
       React.useEffect(function () {
         var p = panelRef.current
-        if (!open || !p || !p.getBoundingClientRect || !btnRef.current) return undefined
-        var r = p.getBoundingClientRect()
-        var c = btnRef.current.getBoundingClientRect()
-        var vh = window.innerHeight || 800
-        var wantBottom = vh - c.top + 6
-        var patch = null
-        if (pos.bottom != null) {
-          var dy = wantBottom - r.bottom
-          if (Math.abs(dy) > 1) patch = { bottom: (vh - r.bottom) + dy }
-        } else {
-          var wantTop = c.top - 6 - r.height
-          var dy2 = wantTop - r.top
-          if (Math.abs(dy2) > 1) patch = { top: r.top + dy2 }
-        }
+        var c = btnRef.current
+        if (!open || !p || !c || !p.getBoundingClientRect || !c.getBoundingClientRect) return undefined
+        var patch = computePanelPatch(pos, p.getBoundingClientRect(), c.getBoundingClientRect(), 6)
         if (patch) setPos(function (cur) { return Object.assign({}, cur, patch) })
         return undefined
       }, [open, pos.left, pos.bottom, pos.top])
@@ -1598,6 +1710,7 @@ window.__ModuleLoader__.load({
           stopPinWatch()
           stopFitWatch()
           stopWidthWatch()
+          stopResizerWatch()   // 不给宿主留一条被隐藏的把手：卸载时把标记撤干净
           if (domReady()) {
             document.documentElement.removeAttribute('data-cc-pin-last-user')
             document.documentElement.removeAttribute('data-cc-clear-bubble')
@@ -1691,6 +1804,14 @@ window.__ModuleLoader__.load({
         applyAppearance(STORE.state)
       },
       applyChatWidth: applyChatWidth,
+      // v1.6.0 缝：面板定位数学（纯函数，离线可断言收敛性）与原生拖拽条隐藏。
+      computePanelPatch: computePanelPatch,
+      MAX_PANEL_PATCH: MAX_PANEL_PATCH,
+      markResizers: markResizers,
+      clearResizers: clearResizers,
+      applyResizerHiding: applyResizerHiding,
+      setHideResizer: setHideResizer,
+      RESIZER_CURSOR_RE: RESIZER_CURSOR_RE,
       pinChatWidth: pinChatWidth,
       findChatRoot: findChatRoot,
       setChatWidthEnabled: setChatWidthEnabled,
