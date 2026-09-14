@@ -349,6 +349,63 @@ ok('提问气泡图标区里的宿主 tooltip 被隐藏（"复制"不再飘远�
   /\[class\*="_userRow"\] \[class\*="_actions"\] \[role="tooltip"\]\{display:none/.test(ALLCSS),
   (ALLCSS.match(/\[role="tooltip"\][^\n]{0,60}/g) || []).join(' ⏎ ').slice(0, 120))
 
+console.log('\n— E2. 规则被截断时界面必须说清"原多少 → 保留多少"—')
+// 缺陷（另一轮只读审计发现）：host 侧"是否截断"原来是 `bytes >= 上限` 猜的，
+// 而截断后长度必然小于上限 ⇒ 规则被砍了界面却显示未截断。修法见 index.js 的 truncateBytes：
+// 截断函数直接返回 truncated/originalBytes/keptBytes，界面读标记、并把两个字节数摆出来。
+// 这里走完整链路：磁盘上的超长 gate.md → host 路由 → STORE → 渲染出的 HTML。
+const gateMd = pathMod.join(ROOT, 'dsh-cache-control', 'gate.md')
+const LONG_RULE = '规'.repeat(6666)          // 19,998 B ⇒ 保留 5,839 B（审计给的数）
+fs.writeFileSync(gateMd, LONG_RULE, 'utf8')
+const cLong = await bootClient('trunc' + Date.now())
+const longHtml = render(cLong.page)
+ok('超长规则 ⇒ 界面标出"已截断：原 19998 B → 保留 5839 B"',
+  longHtml.includes('已截断：原 19998 B → 保留 5839 B'), (longHtml.match(/已截断[^<]*/) || [''])[0])
+ok('超长规则 ⇒ 有一句看得懂的话：你的规则被截断了 + 原文/实际注入两个字节数',
+  longHtml.includes('你的规则被截断了') && longHtml.includes('原文 19998 字节')
+  && longHtml.includes('实际注入 5839 字节') && longHtml.includes('上限 6144 字节'),
+  (longHtml.match(/你的规则被截断了[^<]*/) || [''])[0].slice(0, 120))
+ok('这句提示用警示色类（cc-warn），不是悄悄混在别的文字里',
+  /<p class="cc-warn">你的规则被截断了/.test(longHtml))
+ok('界面上的数字来自 host 响应而不是前端自己再算一遍（与前一条 GET 的 gate 字段一致）',
+  await (async () => {
+    const r = await nodeFetch(base + '/cc/gate.json', { cache: 'no-store' })
+    const g = (await r.json()).gate
+    return g.truncated === true && longHtml.includes('保留 ' + g.keptBytes + ' B')
+      && longHtml.includes('原文 ' + g.originalBytes + ' 字节')
+  })())
+// 反向：没被截断的规则不许出现截断字样（防止标记恒真）
+fs.writeFileSync(gateMd, '# 短规则\n只有一行。', 'utf8')
+const cShort = await bootClient('short' + Date.now())
+const shortHtml = render(cShort.page)
+ok('未截断的规则不出现任何截断字样（标记不是恒真的装饰）',
+  !shortHtml.includes('已截断') && !shortHtml.includes('你的规则被截断了'), '')
+fs.rmSync(gateMd, { force: true })
+
+// 反向兼容：新 client × **旧 host**（v1.6.1 及以前：有 truncated 但它靠长度猜的，
+// 且没有 originalBytes/keptBytes）。界面不许因此显示 NaN 或崩掉 —— 长度字段退化成 bytes。
+const oldGateServer = http.createServer((req, res) => {
+  const p = (req.url || '').split('?')[0]
+  if (p !== '/cc/settings.json') { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{}'); return }
+  const body = JSON.stringify({
+    settings: { enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true },
+    applied: true, hasBackup: false,
+    gate: { enabled: true, source: 'override', builtinPath: 'b.md', overridePath: 'g.md',
+      bytes: 5839, maxBytes: 6144, lines: 3, truncated: true, text: '规则…省略]' },
+  })
+  res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) })
+  res.end(body)
+})
+await new Promise((r) => oldGateServer.listen(0, '127.0.0.1', r))
+base = 'http://127.0.0.1:' + oldGateServer.address().port
+const cOldHost = await bootClient('oldgate' + Date.now())
+const oldHostHtml = render(cOldHost.page)
+ok('旧 host（无 originalBytes/keptBytes）⇒ 界面不出现 NaN，退化成 bytes 显示',
+  !oldHostHtml.includes('NaN') && oldHostHtml.includes('已截断：原 5839 B → 保留 5839 B'),
+  (oldHostHtml.match(/已截断[^<]*/) || [''])[0])
+oldGateServer.closeAllConnections?.()
+await new Promise((r) => oldGateServer.close(r))
+
 console.log('\n— F. 收尾 —')
 gServer.close()
 const realSettingsNow = fs.readFileSync(pathMod.join(REAL_HOME, 'settings.json'), 'utf8')

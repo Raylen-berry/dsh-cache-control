@@ -371,7 +371,18 @@ function sanitizeGateText(raw) {
   return text
 }
 
-const gateCache = { key: '', text: '' }
+const gateCache = { key: '', text: '', record: null }
+
+/**
+ * 一次计算同时给出"注入文本"与"截断元信息"，两者必须**同源**：
+ * 分开算（例如 gateMeta 再截一次）就会出现"文本是这份、标记是那份"的错配。
+ */
+function cacheGate(key, record) {
+  gateCache.key = key
+  gateCache.text = record.text
+  gateCache.record = record
+  return gateCache.text
+}
 
 function loadGateSync() {
   const override = GATE_OVERRIDE_FILE()
@@ -384,16 +395,13 @@ function loadGateSync() {
   if (!st || !st.isFile()) {
     let builtin = ''
     try { builtin = readFileSync(GATE_BUILTIN_FILE, 'utf8') } catch { builtin = '' }
-    gateCache.key = 'missing'
-    gateCache.text = truncateBytes(sanitizeGateText(builtin), GATE_MAX_BYTES)
-    return gateCache.text
+    return cacheGate('missing', truncateBytes(sanitizeGateText(builtin), GATE_MAX_BYTES))
   }
   const key = target + '|' + st.mtimeMs + '|' + st.size
   if (key !== gateCache.key) {
     let raw = ''
     try { raw = readFileSync(target, 'utf8') } catch { raw = '' }
-    gateCache.key = key
-    gateCache.text = truncateBytes(sanitizeGateText(raw), GATE_MAX_BYTES)
+    cacheGate(key, truncateBytes(sanitizeGateText(raw), GATE_MAX_BYTES))
   }
   return gateCache.text
 }
@@ -402,14 +410,30 @@ async function loadGate() {
   try { return loadGateSync() } catch { return '' }
 }
 
+/**
+ * 按字节上限截断，**直接返回一次截断的全部事实**（不返回裸字符串）：
+ *   { text, originalBytes, keptBytes, truncated }
+ * 调用方一律读 `truncated` 判断"有没有被砍过"。
+ *
+ * **不要**改成"拿返回文本的长度跟上限比"来反推（v1.6.2 修掉的缺陷）：
+ * 截断后的长度必然**小于**上限（含末尾那句省略提示也就 5.6–6.1 KB 一档，
+ * 且取决于原文的字节/字符比），所以 `bytes >= max` 这种判据对已截断的文本
+ * 恒为 false —— 界面于是对用户的超长规则显示"未截断"，规则被砍了也没人知道。
+ * 反方向同样会错：原文**恰好**等于上限时文本原样返回、`bytes === max`，
+ * 那个判据又会把没截断的判成截断。两个方向都只能用显式标记，不能用长度猜。
+ */
 function truncateBytes(text, max) {
   const buf = Buffer.from(text, 'utf8')
-  if (buf.length <= max) return text
+  if (buf.length <= max) {
+    // 未超限：原样返回，两个长度相等 —— "标记为假"与"内容没变"必须同时成立。
+    return { text, originalBytes: buf.length, keptBytes: buf.length, truncated: false }
+  }
   let cut = text.slice(0, max)
   while (Buffer.byteLength(cut, 'utf8') > max - 32) cut = cut.slice(0, Math.floor(cut.length * 0.9))
   // 只可能在尾部留下被切开的代理对半字符，剥掉它，避免 HTTP JSON 里出现替换字符。
   cut = cut.replace(/[\uD800-\uDFFF]$/, '')
-  return cut + '\n\n[…规则文本超出字节上限，其余部分已省略]'
+  const kept = cut + '\n\n[…规则文本超出字节上限，其余部分已省略]'
+  return { text: kept, originalBytes: buf.length, keptBytes: Buffer.byteLength(kept, 'utf8'), truncated: true }
 }
 
 /** 注入形态：开关关 / 文本空 ⇒ 空串（renderPrompt 会丢掉空段）。 */
@@ -424,6 +448,10 @@ export async function gateMeta(settings) {
   const sourcePath = usingOverride ? override : GATE_BUILTIN_FILE
   const text = await loadGate()
   const bytes = Buffer.byteLength(text, 'utf8')
+  // 与 text 同源的截断记录（loadGateSync 里一并算出）。truncated 是**显式标记**；
+  // 旧写法 `bytes >= GATE_MAX_BYTES` 既漏判截断（截断后必然短于上限）又误判恰好压线的原文，
+  // 见 truncateBytes 的注释。record 为空只在 loadGate 吞掉异常时出现，退化成"无截断"。
+  const info = gateCache.record || { originalBytes: bytes, keptBytes: bytes, truncated: false }
   return {
     enabled: settings.gateEnabled === true,
     source: usingOverride ? 'override' : 'builtin',
@@ -433,7 +461,9 @@ export async function gateMeta(settings) {
     editablePath: override,
     bytes,
     maxBytes: GATE_MAX_BYTES,
-    truncated: bytes >= GATE_MAX_BYTES,
+    truncated: info.truncated,          // 显式标记：规则原文是否被砍过
+    originalBytes: info.originalBytes,  // 新增：规则原文字节数（未截断时 === bytes）
+    keptBytes: info.keptBytes,          // 新增：实际注入的字节数（=== bytes）
     lines: text ? text.split('\n').length : 0,
     text,
   }
@@ -450,6 +480,7 @@ export async function writeGateOverride(text) {
   }
   gateCache.key = ''
   gateCache.text = ''
+  gateCache.record = null
   return loadGate()
 }
 
@@ -671,14 +702,21 @@ export async function apply(ctx) {
       if (req.method === 'PUT' || req.method === 'POST') {
         try {
           const parsed = JSON.parse(await readBody(req))
-          const text = await writeGateOverride(parsed && parsed.text)
+          await writeGateOverride(parsed && parsed.text)
           const settings = await readSettings()
+          // 响应直接带出截断状态：刚保存完就该知道规则有没有被砍（原 N 字节 → 保留 M 字节）。
+          // 字段与 gateMeta 同源，老字段（bytes / lines / source / enabled）一个不少。
+          const gate = await gateMeta(settings)
           send(res, 200, {
             ok: true,
-            bytes: Buffer.byteLength(text, 'utf8'),
-            lines: text ? text.split('\n').length : 0,
-            source: existsSync(GATE_OVERRIDE_FILE()) ? 'override' : 'builtin',
-            enabled: settings.gateEnabled === true,
+            bytes: gate.bytes,
+            lines: gate.lines,
+            source: gate.source,
+            enabled: gate.enabled,
+            maxBytes: gate.maxBytes,
+            truncated: gate.truncated,
+            originalBytes: gate.originalBytes,
+            keptBytes: gate.keptBytes,
           })
         } catch (err) {
           send(res, 400, { ok: false, error: String((err && err.message) || err) })

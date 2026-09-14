@@ -60,7 +60,17 @@
 - **文本按 mtime+size 缓存并即时重读**：直接编辑 md 存盘，下一个请求就是新内容（无需重启、无需刷新页面）。
 - 注入前把成对花括号 `{{` / `}}` 替换成全角 `｛｛` / `｝｝`：`renderPrompt` 对未知变量引用是
   **抛错**策略，用户编辑规则时写了 `{{...}}` 会让每次请求组装失败 —— 所以宁可改字形也不让会话挂。
-- 上限 6 KB（约 2.5k tokens）；超限自动截断并在界面标「超出上限已截断」，避免规则膨胀悄悄吃掉上下文。
+- 上限 **6,144 字节**（6 KB，约 2.5k tokens）；超限自动截断，避免规则膨胀悄悄吃掉上下文。
+- **怎么知道自己的规则被砍了**：`/cc/gate.json` 与 `/cc/settings.json` 内嵌的 `gate` 里有三个字段 ——
+  `truncated`（**显式布尔标记**）、`originalBytes`（规则**原文**字节数）、`keptBytes`（**实际注入**
+  字节数，与老字段 `bytes` 同值）。**不要**用 `bytes >= maxBytes` 去反推"有没有截断过"：截断后的
+  长度必然**小于**上限（实测 19,998 字节的中文规则 → 保留 5,839 字节；10,000 字节 ASCII → 5,590 字节），
+  那个判据对已截断的规则恒为 false，界面于是显示"未截断"；反过来原文**恰好** 6,144 字节时文本原样
+  返回、`bytes === maxBytes`，它又会误报"已截断"。这正是 v1.6.2 修掉的缺陷，
+  `tools/verify-gate-truncation.mjs` 就是它的回归套件（含"恰好压线"与"上限 -1"两个边界）。
+- 界面上被截断时显示「已截断：原 N B → 保留 M B」标签，卡片里另写一句
+  「你的规则被截断了：原文 N 字节，实际注入 M 字节（超出 X 字节未进入提示词）」；编辑框里草稿
+  超限时也会**提前**提示"保存后会被截断"。老客户端只读 `bytes`/`maxBytes` 照旧可用（字段只增不改）。
 
 ### ③ 气泡置顶（纯界面，与①②独立）
 
@@ -284,6 +294,7 @@ node tools/verify-gate-http.mjs       # host 半真起 http 服务：路由、�
 node tools/verify-gate-client.mjs     # client 半真渲染：磁盘 → 路由 → STORE → DOM（含抽屉展开态）
 node tools/verify-ui-appearance.mjs   # 外观引擎 + 置顶跟随滚动选条 + chip 点击语义 + 对话页宽度钉法
 node tools/verify-host-width.mjs      # host：字段钳制 + 从底图工坊的一次性迁移（临时 DSH_HOME）
+node tools/verify-gate-truncation.mjs # 规则截断：原/留长度 + 显式标记 + 边界与两个 HTTP 响应契约
 ```
 
 浏览器侧（会往 `tools/*-out/` 落 HTML/JSON/PNG，已在 `.gitignore` 里）：
@@ -327,6 +338,41 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
 
 ## 版本与变更记录
 
+- **v1.6.2**（修"**截断标记判错**"：规则被砍了，界面却说没截断）
+  - **症状**：会话守则规则超过 6,144 字节时会被截断，但界面不显示"已截断"，用户以为整份规则都进了
+    提示词 —— 实际超出部分从没被模型看到。
+  - **根因**：host 的截断函数只返回一个**字符串**，界面判断"有没有截断"是**靠结果长度猜**的：
+    `truncated: bytes >= GATE_MAX_BYTES`。而截断后的长度必然**小于**上限（末尾那句省略提示算在内
+    也只有 5.6–6.1 KB 一档，且随原文的字节/字符比浮动）⇒ 该判据对已截断的文本恒为 false。
+    反方向也错：原文**恰好** 6,144 字节时文本原样返回、`bytes === maxBytes`，它又把没截断的判成截断。
+  - **修法**：截断函数 `truncateBytes()` 改为**直接返回全部事实**
+    `{ text, originalBytes, keptBytes, truncated }`，调用方一律读 `truncated`；`gateMeta` 与
+    `PUT /cc/gate.json` 的响应原样带出这三个事实（`bytes`/`maxBytes`/`lines`/`text`/`source`/`enabled`
+    等老字段一个不动，老客户端不受影响）；界面标签与提示改成
+    「已截断：原 N B → 保留 M B」+「你的规则被截断了：原文 N 字节，实际注入 M 字节（超出 X 字节未进入提示词）」。
+  - **同类第二处**：全仓库再找了一遍"靠长度/结果反推状态"的写法，结论是**只有这一处**是缺陷。
+    保留的同类写法都有正当理由，逐条记录在这里：`readBody` 用**显式** `overflow` 布尔标记（正确做法）；
+    `truncateBytes` 里的 `buf.length <= max` 与界面编辑框的 `draftBytes > gateMaxBytes`、
+    `tools/settings.mjs` 的"导入前预警"都是**输入侧**判据（比的是"待处理文本自己 vs 上限"，
+    不是在反推已经发生的截断）；`client.js` 的 `atBottom = scrollTop >= max - 1` 是**位置**判定
+    （滚动几何的即时谓词），与"用产物长度推状态"不是一回事。
+  - **回归**：新增 `tools/verify-gate-truncation.mjs`（**31 通过 / 0 失败**）：① 超长（中文 19,998 B /
+    ASCII 10,000 B）⇒ `truncated:true` 且 `originalBytes`/`keptBytes` 齐备（中文那条正好复现审计给的
+    5,839 B）；② 恰好 6,144 B ⇒ `false` 且内容逐字节原样；③ 6,143 B ⇒ `false`；④ 空/极短 ⇒ `false`
+    且内容原样；⑤ 六种输入的"标记 / 原文长度 / 保留长度 / 实际内容"四者互相对得上（没有"标记为假
+    但内容变短"的样本）；⑥ 老字段名齐全；⑦ 两个 HTTP 响应（GET `/cc/gate.json`、GET
+    `/cc/settings.json`、PUT `/cc/gate.json`）都带标记且与文本一致；⑧ 界面接线（读标记、不自己比长度）。
+    另有两条**照妖镜**断言直接把旧判据钉死：同一个样本上断言"`bytes < maxBytes` 而标记为 true"与
+    "`bytes === maxBytes` 而标记为 false"。`verify-gate-client.mjs` 从 67 条扩到 **72 条**
+    （新增 5 条：真渲染出的 HTML 里出现「已截断：原 19998 B → 保留 5839 B」、那句人话含两个字节数、
+    用警示色类、数字与 host 响应一致、未截断时一个截断字样都不出现）。
+  - **反向验证**：把新套件用 `DSH_CC_INDEX` 指向 `git show HEAD:index.js` 那份**改动前**实现 ⇒
+    **25 失败 / 6 通过**（退出码 1）；指回本仓库这份 ⇒ 31 通过 / 0 失败。这证明断言真的盯着这个缺陷
+    而不是"假绿"。
+  - **验证数字**：本仓库套件全绿 —— `verify-gate-client` 72、`verify-gate-http` 43、
+    `verify-gate-truncation` 31、`verify-host-width` 51、`verify-ui-appearance` 50、
+    `verify-panel-and-resizer` 19、`verify-settings-payload` 8，全部 0 失败；
+    `verify-session-gate` 仍为**既有失败**（见文末"说明与限制"，与本轮无关）。
 - **v1.6.1**（修一个**破坏性配置缺陷**：保存外观开关会抹掉用户自己的压缩配置）
   - **症状**：只改 ③ 气泡置顶 / ④ 对话页的任何一个外观值（钉顶、气泡透明、模糊度、宽度、
     隐藏拖拽条），standard 组装文件就被重写一遍；如果当时总开关是"关"，那一行块里

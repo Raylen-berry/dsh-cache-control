@@ -64,6 +64,7 @@ window.__ModuleLoader__.load({
       '.cc-val{min-width:118px;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:pre}',
       '.cc-note{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.7;border-left:2px solid var(--dsw-alias-brand-primary,#4d6bfe);padding-left:10px}',
       '.cc-err{font-size:12px;color:var(--dsw-alias-label-danger,#e5534b)}',
+      '.cc-warn{font-size:12px;color:var(--dsw-alias-label-warning,#b8860b)}',
       '.cc-ok{font-size:12px;color:var(--dsw-alias-label-success,#2da44e)}',
       '.cc-muted{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
       '.cc-path{font-size:11px;color:var(--dsw-alias-label-tertiary);word-break:break-all;line-height:1.6}',
@@ -241,6 +242,10 @@ window.__ModuleLoader__.load({
         gateMaxBytes: 6144,
         gateLines: 0,
         gateTruncated: false,
+        // 截断明细（v1.6.2）：原文字节数与实际注入字节数。旧 host 不带这两个字段时
+        // 由 applyGate 退化成 gateBytes（见那里的兜底），界面照样有数可显示。
+        gateOriginalBytes: 0,
+        gateKeptBytes: 0,
         gateText: '',
         gateOpen: false,
         gateDraft: null,
@@ -338,6 +343,10 @@ window.__ModuleLoader__.load({
         gateMaxBytes: Number(g.maxBytes) || 6144,
         gateLines: Number(g.lines) || 0,
         gateTruncated: !!g.truncated,
+        // 旧 host（v1.6.1 及以前）只给 bytes/maxBytes，且它的 truncated 是"长度到没到上限"猜的
+        // —— 缺 originalBytes/keptBytes 时退化成 bytes，界面不至于显示 NaN。
+        gateOriginalBytes: Number(g.originalBytes) || Number(g.bytes) || 0,
+        gateKeptBytes: Number(g.keptBytes) || Number(g.bytes) || 0,
         gateText: typeof g.text === 'string' ? g.text : '',
         gateEnabled: g.enabled === undefined ? STORE.state.gateEnabled : !!g.enabled,
       }
@@ -482,6 +491,8 @@ window.__ModuleLoader__.load({
             gateSource: g.source, gateBuiltinPath: g.builtinPath || '', gateOverridePath: g.overridePath || '',
             gateBytes: Number(g.bytes) || 0, gateLines: Number(g.lines) || 0, gateText: g.text || '',
             gateTruncated: !!g.truncated, gateEnabled: g.enabled === true, gateDraft: null, gateError: '',
+            gateOriginalBytes: Number(g.originalBytes) || Number(g.bytes) || 0,
+            gateKeptBytes: Number(g.keptBytes) || Number(g.bytes) || 0,
             gateReady: true,
           })
         })
@@ -1194,7 +1205,12 @@ window.__ModuleLoader__.load({
       var tags = []
       tags.push(h('span', { className: 'cc-tag', key: 'src' }, s.gateSource === 'override' ? '自定义规则' : '内置规则'))
       tags.push(h('span', { className: 'cc-tag', key: 'size' }, kb(s.gateBytes) + ' · ' + s.gateLines + ' 行'))
-      if (s.gateTruncated) tags.push(h('span', { className: 'cc-tag warn', key: 'tr' }, '超出上限已截断'))
+      // 截断标记直接来自 host 的显式字段（不是"体积到了上限"推出来的），并把两头的
+      // 字节数一起摆出来 —— 用户要能看出"被砍了多少"，而不是只知道"被砍了"。
+      if (s.gateTruncated) {
+        tags.push(h('span', { className: 'cc-tag warn', key: 'tr' },
+          '已截断：原 ' + s.gateOriginalBytes + ' B → 保留 ' + s.gateKeptBytes + ' B'))
+      }
       return h('div', { className: 'cc-gateMeta' }, tags)
     }
 
@@ -1248,6 +1264,11 @@ window.__ModuleLoader__.load({
         Switch('启用会话守则（下一个请求即生效，含已打开的会话）', s.gateEnabled, setGateEnabled, !s.gateReady),
         s.gateReady ? GateSummary(s)
           : h('div', { className: 'cc-err' }, '会话守则未装载：旧版 host 半仍在运行，请重启桌面应用后再操作（重启前请不要再动本面板的压缩开关，否则新字段会被旧版写盘逻辑抹掉）。'),
+        // 截断要说人话：原文多少、实际注入多少、超了多少 —— 只说"已截断"用户不知道自己丢了多少内容。
+        s.gateTruncated ? h('p', { className: 'cc-warn' },
+          '你的规则被截断了：原文 ' + s.gateOriginalBytes + ' 字节，实际注入 ' + s.gateKeptBytes +
+          ' 字节（上限 ' + s.gateMaxBytes + ' 字节，超出 ' + Math.max(0, s.gateOriginalBytes - s.gateKeptBytes) +
+          ' 字节未进入提示词）。请精简规则或把大段内容拆到别处。') : null,
         h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           h('button', {
             className: 'cc-btn', type: 'button', disabled: !s.gateReady,
@@ -1271,6 +1292,9 @@ window.__ModuleLoader__.load({
           }),
           h('div', { className: 'cc-muted', style: { marginTop: '6px' } },
             '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(s.gateMaxBytes) +
+            // 这里是**输入侧**的比长度（草稿自己 vs 上限），与"靠结果长度反推截断"是两回事：
+            // 提前告诉用户"存下去会被砍"，而不是存完再猜砍没砍。
+            (draftBytes > s.gateMaxBytes ? '（超出 ' + (draftBytes - s.gateMaxBytes) + ' B，保存后会被截断）' : '') +
             '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。')) : null,
         s.gateError ? h('p', { className: 'cc-err' }, s.gateError) : null,
         h(Fold, { label: '规则说明' },
