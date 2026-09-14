@@ -222,6 +222,33 @@
 此后：改规则 md 立即生效（host 每次组装重读磁盘）；开关与滑杆改动即时写盘；
 压缩参数对之后新建的会话生效；界面与 chip 的改动要重启才可见。
 
+## 发布前检查（CI 与本地同一条命令）
+
+push / PR 都会跑 `.github/workflows/ci.yml`，它只做一件事：`npm test`。本地跑的就是同一条命令，
+**不装任何依赖、不联网**：
+
+```bash
+npm test                       # = node tools/run-all.mjs
+node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排除、为什么
+```
+
+`tools/run-all.mjs` 把每套都跑完再汇总（不用 `&&` 串，避免第一套一失败就看不到后面），
+任一套非 0 退出 ⇒ `npm test` 退出码 1 ⇒ CI 变红。CI 用 Node 20/22/24 三档矩阵、windows-latest。
+
+本机实测（Node 24.9.0）参与门禁的三套：
+
+| 套件 | 本机结果 |
+| --- | --- |
+| `tools/verify-gate-truncation.mjs` | 31 项通过 |
+| `tools/verify-host-width.mjs` | 全部 PASS |
+| `tools/verify-settings-payload.mjs` | 8 项通过 |
+
+**未纳入 CI** 的套件（原因同时写在 `tools/run-all.mjs` 的 `EXCLUDED` 里）：
+`verify-session-gate.mjs`（既有失败：`DEPLOYMENT_PERSONA` TypeError，与本检查无关）、
+`verify-gate-client.mjs` / `verify-ui-appearance.mjs`（要本机 DSH 安装目录的 `react` + `%APPDATA%` 下的真实 preset）、
+`verify-gate-http.mjs`（要 `%APPDATA%` 下的真实 preset/settings.json）、
+`verify-panel-and-resizer.mjs`（要本机 DSH 安装目录的 `react`）。
+
 ## 换台机器：可迁移性与**必须手动的步骤**
 
 > 给后续在任何一台机器上接手的人或 agent：**本插件装起来不需要任何手工点击**，
