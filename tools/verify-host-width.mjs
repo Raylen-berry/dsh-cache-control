@@ -151,10 +151,10 @@ const putJ = async (p, obj) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ① 只改外观字段 ⇒ standard 文件逐字节不变（哈希比对）
-const appearance = { pinLastUser: true, clearBubble: true, pinBlur: 3.5, pinMaxVh: 44, chatWidth: 72, chatWidthEnabled: true, hideResizer: true }
+const appearance = { pinLastUser: true, clearBubble: true, pinBlur: 3.5, pinMaxVh: 44, chatWidth: 72, chatWidthEnabled: true, hideResizer: true, hideDivider: true }
 const a1 = await putJ('/cc/settings.json', appearance)
 const H1 = homeOf()
-t('① 只改外观（7 个字段一次提交）⇒ standard 文件哈希不变',
+t('① 只改外观（8 个字段一次提交）⇒ standard 文件哈希不变',
   a1.status === 200 && a1.body.ok === true && H1 === H0, 'H0=' + H0.slice(0, 12) + ' H1=' + H1.slice(0, 12))
 t('① 响应标明这次保存没碰组装文件', a1.body.touched === false && a1.body.changed === false, J({ touched: a1.body.touched, changed: a1.body.changed }))
 t('① 只改外观时不该凭空造出备份（还没接管过）', (await getJ('/cc/settings.json')).body.hasBackup === false, J((await getJ('/cc/settings.json')).body.hasBackup))
@@ -274,7 +274,7 @@ t('sanitize 把形状不对的备份归 null（text 空 / at 非数字 / 非对�
   && m.sanitize({ compactionBackup: 7 }).compactionBackup === null
   && m.sanitize({}).compactionBackup === null, '')
 t('sanitize 的输出里 key 齐全（旧盘升级后写盘不会丢字段）',
-  'compactionBackup' in m.sanitize({}) && 'hideResizer' in m.sanitize({}), Object.keys(m.sanitize({})).join(','))
+  'compactionBackup' in m.sanitize({}) && 'hideResizer' in m.sanitize({}) && 'hideDivider' in m.sanitize({}), Object.keys(m.sanitize({})).join(','))
 
 // --- 6. 纯函数层：splice 幂等 + 判据只看压缩四字段 --------------------------
 console.log('— splice / compactionFieldsChanged —')
@@ -288,7 +288,7 @@ t('splice(text, null) 摘掉受管 config，但仍保留用户注释与其它键
   (() => { const out = m.spliceCompactionRow(once, null); return !/thresholdRatio/.test(out) && out.includes('# 用户自己写的说明：这一行别动') && out.includes('- id: next-row') })())
 const f = (o) => m.sanitize(o)
 t('compactionFieldsChanged：外观/门禁字段改动 ⇒ false',
-  m.compactionFieldsChanged(f({ enabled: true }), f({ enabled: true, pinLastUser: true, clearBubble: true, pinBlur: 3, pinMaxVh: 50, chatWidth: 90, chatWidthEnabled: true, hideResizer: true, gateEnabled: true })) === false)
+  m.compactionFieldsChanged(f({ enabled: true }), f({ enabled: true, pinLastUser: true, clearBubble: true, pinBlur: 3, pinMaxVh: 50, chatWidth: 90, chatWidthEnabled: true, hideResizer: true, hideDivider: true, gateEnabled: true })) === false)
 t('compactionFieldsChanged：enabled / triggerPct / retainPct / auto 任一改动 ⇒ true',
   m.compactionFieldsChanged(f({ enabled: true }), f({ enabled: false })) === true
   && m.compactionFieldsChanged(f({ enabled: true, triggerPct: 30 }), f({ enabled: true, triggerPct: 45 })) === true

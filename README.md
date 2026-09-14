@@ -169,13 +169,18 @@
 | 开关 | 效果 |
 |---|---|
 | `chatWidthEnabled` + `chatWidth` | 关闭 = 跟随 DSH 自适应；打开 = 把会话列宽钉在**可用宽度的 30–100%**（含 60/70/80/90/100 快捷键；v1.5.0 起是百分比，之前是 640–3840px） |
-| `hideResizer`（v1.6.0） | 关闭 = 保留 DSH 原生分栏把手；打开 = 把它隐藏。**列宽一旦钉成固定百分比，那条把手拖了就不再改变列宽**，只剩"鼠标扫过去冒出两竖杠、拖了没反应"的误触（用户 2026-09-14 反馈） |
+| `hideResizer`（v1.6.0，v1.7.0 起只管两竖杠） | 关闭 = 保留会话区两竖杠（宽度把手）；打开 = 把它们隐藏。**列宽一旦钉成固定百分比，这两条把手拖了就不再改变列宽**，只剩"鼠标扫过去冒出两竖杠、拖了没反应"的误触（用户 2026-09-14 反馈） |
+| `hideDivider`（v1.7.0） | 关闭 = 保留侧栏/详情栏分隔条；打开 = 把它隐藏。分隔条与两竖杠不同，**拖它仍然有效**（改侧栏宽度），所以拆成独立开关、默认不藏 |
 
-- 隐藏把手**按语义识别、不按类名**：宿主的类名是 CSS-module 哈希（实测 `._1tdjgG_handle`），DSH 一升级就变，
-  而 `cursor` 含 `resize` 才是"这是条把手"的功能特征。实现是给命中的元素打 `data-cc-hide-resizer`，
-  再由插件自己的样式表 `[data-cc-hide-resizer]{display:none!important}` 隐藏；只认**可见**元素、
-  排除自己面板内的元素，并挂一条 MutationObserver（300ms 去抖）—— 宿主重建框架会换掉那条把手。
-  关闭开关或停用插件时把标记撤干净，不给宿主留一条看不见的把手。
+- 隐藏把手**按语义识别、不按类名**：宿主的类名是 CSS-module 哈希（实测 `._1tdjgG_handle` / `._8JRpoa_widthHandle`），
+  DSH 一升级就变，而 `cursor` 含 `resize` 才是"这是条把手"的功能特征。两类再用宿主直接写在把手元素上的
+  `data-width-handle` 属性区分（有 = 会话区宽度把手，没有 = 框架分隔条）——数据属性不是哈希，比类名耐升级。
+  实现是给命中的元素分别打 `data-cc-hide-resizer` / `data-cc-hide-divider`，再由插件样式表
+  `[data-cc-hide-*]{display:none!important}` 隐藏；只认**可见**元素、排除自己面板内的元素，
+  并挂一条 MutationObserver（300ms 去抖）—— 宿主重建框架会换掉那些把手。
+  关掉对应开关或停用插件时把标记撤干净，不给宿主留一条看不见的把手。
+  两个开关各有**独立能力位**（`resizerReady` / `dividerReady`）：旧 host 不认识某个键时只禁用那一个开关，
+  不连带其它。
 
 - 钉法：先按 `[data-composer-card]` 往上找到内联带 `--dsh-conversation-column-width` 的那个祖先
   （= 会话根，宿主 `publishWidths` 就在它身上标定列宽），再往它身上写
@@ -246,8 +251,8 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 | --- | --- |
 | `tools/verify-gate-truncation.mjs` | 31 项通过 |
 | `tools/verify-host-width.mjs` | 全部 PASS |
-| `tools/verify-settings-payload.mjs` | 8 项通过 |
-| `tools/verify-panel-and-resizer.mjs` | 19 项通过 |
+| `tools/verify-settings-payload.mjs` | 9 项通过（v1.7.0 起含 hideDivider 对齐断言） |
+| `tools/verify-panel-and-resizer.mjs` | 25 项通过（v1.7.0 起两类把手分开关断言） |
 
 > `verify-panel-and-resizer.mjs` 原来因为"要本机 DSH 安装目录的 `node_modules/react`"被排除。
 > 现在 `react` 进 `devDependencies`，`run-all.mjs` 把 `DSH_APP_MODULES` 指向**仓库自己的 `node_modules/`**，
@@ -380,6 +385,23 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
 
 ## 版本与变更记录
 
+- **v1.7.0**（把"隐藏拖拽条"拆成**两个开关**：两竖杠与侧栏分隔条分开管）
+  - **起因**：v1.6.0 的 `hideResizer` 一条开关按 `cursor:*-resize` 语义标记，实测会同时命中**三类**元素：
+    会话区左右两条宽度把手（`._8JRpoa_widthHandle`，就是"误触冒出两竖杠、拖了没反应"的那两位）
+    与 AppFrame 的侧栏/详情栏分隔条（`._1tdjgG_handle`，8px 宽）。前两位拖了确实没反应，
+    但**分隔条是能用的**（拖它会改侧栏宽度）——一个开关把死控件和活控件一起藏了（用户 2026-09-14 要求拆开）。
+  - **改法**：`hideResizer` 语义**收窄**为只管带 `data-width-handle` 属性的宽度把手（存量盘上值不动，
+    升级后"两竖杠仍被藏、分隔条自动回来"）；新增 `hideDivider`（默认关）管分隔条。
+    两类共用 `cursor 含 resize` 的语义识别，再用宿主写在把手元素上的 `data-width-handle` 数据属性区分
+    （它不是 CSS-module 哈希，耐升级）；两套标记各一个属性（`data-cc-hide-resizer` / `data-cc-hide-divider`），
+    各一条 CSS，互不牵连：关一个开关不会把另一类也撤了。`dividerReady` 与 `resizerReady` 同样是
+    **独立能力位**，旧 host 重启前只禁用新开关，不影响已有的。
+  - **顺带补漏**：`tools/settings.mjs`（导出/导入）的字段名单停在 v1.4.x，`hideResizer` 从来不在里面 ——
+    导入一份开着把手隐藏的设置会被"丢弃未知字段"静默抹掉。现在 `hideResizer` / `hideDivider` 都在名单里。
+  - **验证**：`verify-panel-and-resizer` 从 19 条扩到 **25 通过 / 0 失败**（新增：只开一个开关时另一类
+    不被标记、关一个不撤另一个、能力位单独禁用、`isWidthHandle` 分类、`setHideDivider` no-op 路径）；
+    `verify-settings-payload` 9 通过（新增 hideDivider 载荷对齐断言）；`verify-host-width` 全绿
+    （sanitize 键齐全断言扩到 hideDivider）；`npm test` 套件 **4/4 通过**。
 - **v1.6.2**（修"**截断标记判错**"：规则被砍了，界面却说没截断）
   - **症状**：会话守则规则超过 6,144 字节时会被截断，但界面不显示"已截断"，用户以为整份规则都进了
     提示词 —— 实际超出部分从没被模型看到。

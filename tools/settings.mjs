@@ -23,7 +23,7 @@ const dir = () => path.join(dshHome(), PLUGIN)
 const settingsFile = () => path.join(dir(), 'settings.json')
 const gateFile = () => path.join(dir(), 'gate.md')
 
-const DEFAULTS = { enabled: false, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: false, pinLastUser: false, clearBubble: false, pinBlur: 10, pinMaxVh: 38, chatWidth: 80, chatWidthEnabled: false }
+const DEFAULTS = { enabled: false, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: false, pinLastUser: false, clearBubble: false, pinBlur: 10, pinMaxVh: 38, chatWidth: 80, chatWidthEnabled: false, hideResizer: false, hideDivider: false }
 const CHAT_MIN = 30, CHAT_MAX = 100, GATE_MAX_BYTES = 6144
 
 export function validate(raw) {
@@ -36,6 +36,10 @@ export function validate(raw) {
   out.pinLastUser = src.pinLastUser === true
   out.clearBubble = src.clearBubble === true
   out.chatWidthEnabled = src.chatWidthEnabled === true
+  // v1.6.0 / v1.7.0 的两个把手开关：以前不在名单里，导入一份开着两竖杠隐藏的设置
+  // 会被"丢弃未知字段"静默抹掉 —— 换台机器就得重新手动拨一遍。现在一起带上。
+  out.hideResizer = src.hideResizer === true
+  out.hideDivider = src.hideDivider === true
   out.enabled = src.enabled === true
   let tp = Math.round(Number(src.triggerPct)); if (!Number.isFinite(tp)) tp = DEFAULTS.triggerPct
   out.triggerPct = Math.min(95, Math.max(5, tp))

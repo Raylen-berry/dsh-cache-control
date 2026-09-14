@@ -99,9 +99,11 @@ window.__ModuleLoader__.load({
       '.cc-caret{display:inline-flex;align-items:center;justify-content:center;width:24px;height:22px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:1;border-radius:999px;cursor:pointer;transition:background-color .12s,color .12s}',
       '.cc-caret:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary)}',
       '.cc-caret:disabled{cursor:default;opacity:.55}',
-      // 隐藏 DSH 原生分栏把手（可选开关，用户 2026-09-14）：按语义打标记，见 markResizers()。
+      // 隐藏 DSH 原生拖拽把手（可选开关，用户 2026-09-14）：按语义打标记，见 markResizers()。
       // 用属性选择器而不是类名 —— 宿主的类名是 CSS-module 哈希（实测 _1tdjgG_handle），一升级就变。
+      // v1.7.0 起两个开关两套标记：resizer = 会话区两竖杠（宽度把手），divider = 侧栏/详情栏分隔条。
       '[data-cc-hide-resizer]{display:none!important}',
+      '[data-cc-hide-divider]{display:none!important}',
       '.cc-div{width:1px;height:12px;background:var(--dsw-alias-border-l2,rgba(127,127,127,.3));flex:none}',
       '.cc-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:15px;padding:0 5px;border-radius:4px;font-size:10.5px;line-height:1;border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.08));color:var(--dsw-alias-label-tertiary)}',
       '.cc-badge.on{border-color:var(--dsw-alias-brand-primary,#4d6bfe);background:rgba(77,107,254,.14);color:var(--dsw-alias-brand-primary,#4d6bfe)}',
@@ -370,10 +372,15 @@ window.__ModuleLoader__.load({
         // v1.5.0 起是百分比；盘上的旧 px 值（>100）会被 clampChatWidth 落到默认 80%。
         patch.chatWidth = clampChatWidth(s.chatWidth)
         patch.chatWidthEnabled = s.chatWidthEnabled === true
-        // 隐藏原生拖拽条（v1.6.0）：**单独一个能力位**，不并进上面的 appearanceReady ——
-        // 旧 host 不认识这个键时，只该禁用这一个新开关，不能连带把已有几个外观开关一起禁用。
+        // 隐藏原生拖拽条（v1.6.0，v1.7.0 拆成两个开关）：**每个键单独一个能力位**，
+        // 不并进上面的 appearanceReady —— 旧 host 不认识某个键时，只该禁用对应那一个开关，
+        // 不能连带把其它开关一起禁用。
         patch.hideResizer = s.hideResizer === true
         patch.resizerReady = s.hideResizer !== undefined
+        // v1.7.0：hideResizer 收窄为"只管会话区两竖杠（宽度把手）"；侧栏/详情栏分隔条
+        // 另起 hideDivider（默认关 —— 那条拖了是有反应的，不该被顺手藏掉）。
+        patch.hideDivider = s.hideDivider === true
+        patch.dividerReady = s.hideDivider !== undefined
         // 旧 host 的 sanitize 不认识这些字段，任何一次写盘都会把它们抹掉 ⇒
         // 只有响应里真的带回来才算能力就绪，否则界面禁用这几项并说明原因。
         patch.appearanceReady = s.pinLastUser !== undefined && s.clearBubble !== undefined
@@ -435,6 +442,8 @@ window.__ModuleLoader__.load({
           // 刷新就回到默认。由 tools/verify-settings-payload.mjs 这类"载荷与 DEFAULTS 对齐"的
           // 结构断言兜住（2026-09-14 审计附带发现）。
           hideResizer: s.hideResizer,
+          // v1.7.0 拆出的第二个开关（侧栏/详情栏分隔条），别再犯同样的漏。
+          hideDivider: s.hideDivider,
         }),
       })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
@@ -1044,23 +1053,43 @@ window.__ModuleLoader__.load({
       pinChatWidth(false, 0)   // 撤销痕迹：把三个变量从会话根上摘掉
     }
 
-    // ---------------------------------------------- 隐藏原生拖拽条（可选）--
-    // DSH 的框架里有一条 `cursor:col-resize` 的分栏把手（实测 `._1tdjgG_handle`，8px 宽，
-    // 挂在 `._1tdjgG_frame` 的 grid 列缝上）。拖动它改的是**宿主自己的**侧栏/内容区比例；
-    // 本插件把会话列宽钉成固定百分比之后（③ 对话页），拖它不再改变会话列宽 ——
-    // 于是只剩"鼠标扫过去就冒出两竖杠、拖了却什么都不动"的体验（用户 2026-09-14 反馈）。
+    // ---------------------------------------------- 隐藏原生拖拽条（两个开关）--
+    // DSH 的框架里有两类 `cursor:*-resize` 的把手，v1.7.0 起**各归一个开关**：
+    //   ① 会话区两竖杠（宽度把手，实测 ._8JRpoa_widthHandle，左右各一条，hover 才亮发光条）
+    //      —— 本插件把会话列宽钉成固定百分比之后（④ 对话页），拖它不再改变列宽，
+    //      只剩"鼠标扫过去冒出两竖杠、拖了却什么都不动"的体验（用户 2026-09-14 反馈）。
+    //      键名沿用 v1.6.0 的 hideResizer（盘上已有 true 的存量，语义收窄为只管这两条）。
+    //   ② 侧栏/详情栏分隔条（实测 ._1tdjgG_handle，8px 宽，挂在 AppFrame 的 grid 列缝上）
+    //      —— 拖它**仍然有效**（改侧栏宽度），所以另起 hideDivider 键、默认关；
+    //      想一并藏干净的用户自己拨开。
     //
     // **按语义找而不是按类名找**：类名是 CSS-module 哈希，DSH 一升级就变；`cursor` 含
-    // `resize` 才是"这是条把手"的功能特征。排除自己的面板（.cc-panel 里的 textarea 用的是
-    // `resize:vertical` **属性**，不是 cursor，天然不会命中，但留一道 closest 保险）。
+    // `resize` 才是"这是条把手"的功能特征。两类再用 `data-width-handle` 属性区分 ——
+    // 它是宿主 React 代码直接写的数据属性（不是哈希），比类名耐升级。
+    // 排除自己的面板（.cc-panel 里的 textarea 用的是 `resize:vertical` **属性**，不是 cursor，
+    // 天然不会命中，但留一道 closest 保险）。
     var resizerObserver = null
     var resizerTimer = 0
     // 'col-resize' / 'ew-resize' / 'nwse-resize' … 都是把手；宿主将来换写法（比如 'grab'）也只影响
     // 这一条正则，不影响其它逻辑。
     var RESIZER_CURSOR_RE = /resize$/
+    /** 宽度把手（两竖杠）自己的稳定数据属性；分隔条没有这个。 */
+    var WIDTH_HANDLE_ATTR = 'data-width-handle'
+    function isWidthHandle(el) {
+      try { return !!(el.getAttribute && el.getAttribute(WIDTH_HANDLE_ATTR) !== null) } catch (e) { return false }
+    }
+    /** 两个开关各自的生效条件（能力位缺失 = 旧 host 不认识这个键 ⇒ 这个开关不生效）。 */
+    function widthWanted() {
+      return STORE.state.hideResizer === true && STORE.state.resizerReady === true
+    }
+    function dividerWanted() {
+      return STORE.state.hideDivider === true && STORE.state.dividerReady === true
+    }
     function markResizers() {
       if (!domReady()) return 0
       var n = 0
+      var wantW = widthWanted()
+      var wantD = dividerWanted()
       try {
         var all = document.querySelectorAll('*')
         for (var i = 0; i < all.length; i++) {
@@ -1070,8 +1099,19 @@ window.__ModuleLoader__.load({
           try { cur = (window.getComputedStyle(el).cursor || '') } catch (e) { continue }
           if (!RESIZER_CURSOR_RE.test(cur)) continue
           if (el.closest && el.closest('.cc-panel')) continue
-          if (el.getAttribute('data-cc-hide-resizer') !== '1') el.setAttribute('data-cc-hide-resizer', '1')
-          n++
+          var attr = isWidthHandle(el) ? (wantW ? 'data-cc-hide-resizer' : null)
+            : (wantD ? 'data-cc-hide-divider' : null)
+          if (attr) {
+            if (el.getAttribute(attr) !== '1') el.setAttribute(attr, '1')
+            // 宿主若把某元素从一类挪到另一类（升级后 data-width-handle 增减），别留旧标记。
+            el.removeAttribute(attr === 'data-cc-hide-resizer' ? 'data-cc-hide-divider' : 'data-cc-hide-resizer')
+            n++
+          } else {
+            // 该元素所属开关此刻是关的：顺手清掉可能残留的标记，
+            // 保证"关掉一个开关"不会把另一类元素也留着藏。
+            el.removeAttribute('data-cc-hide-resizer')
+            el.removeAttribute('data-cc-hide-divider')
+          }
         }
       } catch (e) { warnOnce('markResizers', e) }
       return n
@@ -1080,15 +1120,19 @@ window.__ModuleLoader__.load({
       if (!domReady()) return 0
       var n = 0
       try {
-        var marked = document.querySelectorAll('[data-cc-hide-resizer]')
-        for (var i = 0; i < marked.length; i++) { marked[i].removeAttribute('data-cc-hide-resizer'); n++ }
+        var marked = document.querySelectorAll('[data-cc-hide-resizer],[data-cc-hide-divider]')
+        for (var i = 0; i < marked.length; i++) {
+          marked[i].removeAttribute('data-cc-hide-resizer')
+          marked[i].removeAttribute('data-cc-hide-divider')
+          n++
+        }
       } catch (e) { warnOnce('clearResizers', e) }
       return n
     }
-    /** 挂/拆：开着时标记 + 盯 body（宿主重建框架会换掉那条把手）。 */
+    /** 挂/拆：任一开关开着就盯 body（宿主重建框架会换掉把手，重建后要重新标记）。 */
     function applyResizerHiding() {
       if (!domReady()) return false
-      if (STORE.state.hideResizer === true && STORE.state.resizerReady === true) { startResizerWatch(); return true }
+      if (widthWanted() || dividerWanted()) { startResizerWatch(); return true }
       stopResizerWatch()
       return false
     }
@@ -1107,10 +1151,17 @@ window.__ModuleLoader__.load({
       if (resizerTimer) { clearTimeout(resizerTimer); resizerTimer = 0 }
       clearResizers()
     }
-    /** 开关：隐藏 / 恢复原生拖拽条。 */
+    /** 开关①：隐藏 / 恢复会话区两竖杠（宽度把手）。 */
     function setHideResizer(v) {
       if (!STORE.state.resizerReady) return
       STORE.set({ hideResizer: !!v })
+      applyResizerHiding()
+      scheduleSave()
+    }
+    /** 开关②：隐藏 / 恢复侧栏与详情栏的分隔条（拖它仍能改侧栏宽，默认保留）。 */
+    function setHideDivider(v) {
+      if (!STORE.state.dividerReady) return
+      STORE.set({ hideDivider: !!v })
       applyResizerHiding()
       scheduleSave()
     }
@@ -1436,12 +1487,17 @@ window.__ModuleLoader__.load({
         Switch('启用固定对话页宽度（关闭 = 跟随 DSH 自适应）', s.chatWidthEnabled,
           setChatWidthEnabled, !s.appearanceReady),
         s.chatWidthEnabled ? h(WidthField) : null,
-        // 宽度一旦固定，宿主那条分栏把手就"拖了没反应"，只剩误触（用户 2026-09-14）。
-        // 默认关：不动 DSH 的既有行为；想要干净就打开。
+        // 宽度一旦固定，会话区那两条宽度把手就"拖了没反应"，只剩误触（用户 2026-09-14）。
+        // v1.7.0 拆成两个开关：两竖杠（没反应的）与侧栏分隔条（有反应的）分开管，
+        // 免得想藏死控件的人顺手把能干活的也藏了。都默认关：不动 DSH 的既有行为。
         h('div', { style: { marginTop: '10px' } },
-          Switch('隐藏 DSH 原生拖拽条（对话页宽度固定后，拖它不再改变列宽）', s.hideResizer,
+          Switch('隐藏会话区两竖杠（宽度把手：对话页宽度固定后，拖它不再改变列宽）', s.hideResizer,
             setHideResizer, !s.resizerReady)),
-        s.resizerReady ? null : h('div', { className: 'cc-err' }, '此项需重启桌面应用后可用（host 半要认识这个键）'),
+        h('div', { style: { marginTop: '6px' } },
+          Switch('隐藏侧栏分隔条（拖它仍能改侧栏宽度，默认保留）', s.hideDivider,
+            setHideDivider, !s.dividerReady)),
+        s.resizerReady ? null : h('div', { className: 'cc-err' }, '「隐藏会话区两竖杠」需重启桌面应用后可用（host 半要认识 hideResizer 键）'),
+        s.dividerReady ? null : h('div', { className: 'cc-err' }, '「隐藏侧栏分隔条」需重启桌面应用后可用（host 半要认识 hideDivider 键）'),
         h(Fold, { label: '说明' },
           h('div', { className: 'cc-note' },
             s.chatWidthEnabled
@@ -1450,9 +1506,11 @@ window.__ModuleLoader__.load({
                 + '绕过 DSH 的响应式 clamp）。**百分比**，所以全屏/缩窗、换显示器比例都跟着走（v1.5.0 之前是固定 px）。'
                 + '100% = 铺满可用区（两侧各留宿主自己的 32px 内边距）；输入卡会始终比消息列宽 32×该比例的像素。'
                 + '拖动即时预览、松手才存盘；切换会话会让根节点重建，故另有一条 DOM 观察器补写回去。'
-              : '未启用：宽度跟随 DSH 自己的响应式 clamp。开关与数值都存进本插件的 settings.json（原来存在底图工坊里，已随本功能一并迁出）。'
-                + ' 拖拽条：DSH 那条分栏把手按 **cursor 含 resize** 的语义识别（宿主的类名是 CSS-module 哈希，'
-                + '升级就变，按类名找迟早失效），打开上面的开关即隐藏；插件被停用时标记会自动撤干净。')))
+              : '未启用：宽度跟随 DSH 自己的响应式 clamp。开关与数值都存进本插件的 settings.json（原来存在底图工坊里，已随本功能一并迁出）。')
+            + ' 拖拽把手分两类、各一个开关：会话区两竖杠（宽度把手，宽度钉死后拖了没反应）与'
+              + '侧栏/详情栏分隔条（拖它仍能改侧栏宽）。两类都按 **cursor 含 resize** 的语义识别'
+              + '（宿主的类名是 CSS-module 哈希，升级就变），再用宿主写在把手上的 data-width-handle'
+              + ' 属性区分是哪一类；各自的开关拨开即隐藏，插件被停用时标记会自动撤干净。'))
     }
 
     function CacheControlPage() {
@@ -1839,6 +1897,9 @@ window.__ModuleLoader__.load({
       clearResizers: clearResizers,
       applyResizerHiding: applyResizerHiding,
       setHideResizer: setHideResizer,
+      setHideDivider: setHideDivider,
+      isWidthHandle: isWidthHandle,
+      WIDTH_HANDLE_ATTR: WIDTH_HANDLE_ATTR,
       RESIZER_CURSOR_RE: RESIZER_CURSOR_RE,
       pinChatWidth: pinChatWidth,
       findChatRoot: findChatRoot,

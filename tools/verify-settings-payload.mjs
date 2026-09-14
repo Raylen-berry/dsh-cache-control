@@ -59,6 +59,7 @@ console.log('\n— 2. 对齐 —')
 ok('DEFAULTS 每个字段都在保存载荷里（漏了 = 拨了不落盘）', missing.length === 0, missing.length ? '缺: ' + missing.join(',') : wanted.length + ' 个全在')
 ok('载荷里没有 host 不认识的字段（多了会被静默丢弃）', extra.length === 0, extra.length ? '多: ' + extra.join(',') : '无多余')
 ok('hideResizer 这个具体回归已堵住（v1.6.0 漏的就是它）', payload.includes('hideResizer'))
+ok('hideDivider 同样在载荷里（v1.7.0 拆出的第二个开关，别再犯同样的漏）', payload.includes('hideDivider'))
 ok('白名单只排除了 host 自维护字段', wanted.length === defaults.length - defaults.filter((k) => EXCLUDE.has(k)).length,
   'DEFAULTS=' + defaults.length + ' 其中被排除=' + defaults.filter((k) => EXCLUDE.has(k)).length + ' 待对齐=' + wanted.length)
 
