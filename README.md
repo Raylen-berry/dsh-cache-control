@@ -19,7 +19,12 @@
 设置页（设置 → “会话策略”）与对话区快捷面板里各有一条独立开关：
 
 - **总开关**：启用 → 把下列参数写进 standard preset 的 compaction-basic 行；
-  关闭 → 移除该行的 config，恢复 DSH 出厂默认（压力到窗口 80% 自动压缩、逐字保留 16%）。
+  关闭 → **还原**首次接管前那一行块的原文（v1.6.1 起；原文存在
+  `$DSH_HOME/dsh-cache-control/settings.json` 的 `compactionBackup` 字段里，逐字节回写）。
+  没有备份可还原时（例如手工删过 settings.json）才回落到"移除受管 config、恢复 DSH 出厂默认"。
+- **只有压缩字段会碰那个文件**（v1.6.1 起）：`enabled` / `triggerPct` / `retainPct` / `auto`
+  没变时，保存设置**完全不触碰** standard 组装文件 —— 只改 ③④ 的外观开关不会再把你
+  自己写在那一行里的压缩配置抹掉（旧版每次保存都无条件重写，这是破坏性缺陷）。
 - **压缩触发点**：占路由模型上下文窗口的百分比，默认 25%（deepseek-v4-flash 窗口 1,000,000
   tokens ⇒ 约 250k 触发）。
 - **保留原文尾部**：逐字保留最近内容的窗口百分比（必须小于触发点），默认 5%（⇒ 约 50k）。
@@ -233,7 +238,9 @@ client 半在**服务启动时**才 compose 进图（依据见上一节），所
 **D. ① 省缓存改的是 preset，不是插件目录**
 它把参数写进 `$DSH_HOME/profiles/**/standard/agent.yml` 里 `compaction-basic` 那一行
 （带 `# managed by dsh-cache-control` 标记）。换机器/换 profile 后，**必须在新机器上再打开一次总开关**
-才会重新写进去；关闭总开关会移除该 config、恢复 DSH 出厂默认。
+才会重新写进去；关闭总开关会把该文件**还原**成上次接管前的原文（v1.6.1 起；
+备份在 `$DSH_HOME/dsh-cache-control/settings.json` 的 `compactionBackup` 里，不随仓库走，
+所以换机器后新机器上关一次开关只回到它自己那份原文）。
 
 **E. 已知的宿主坑：插件会被 generation 迁移搬走（本机踩过）**
 部分 DSH Desktop 版本在启动时会做 `installGeneration` 迁移，会把 `link:` 挂载的插件重新 stage
@@ -312,13 +319,47 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
 
 ## 卸载 / 回退
 
-1. 关闭省缓存总开关（把 standard 还原为出厂默认），或手动删除组装文件里带
-   `# managed by dsh-cache-control` 的 config 块；关闭会话守则开关即可让规则段消失。
+1. 关闭省缓存总开关（把 standard 组装文件**还原**成接管前的原文 —— v1.6.1 起是逐字节还原，
+   不是删掉那一行）；没有备份时手动删除组装文件里带 `# managed by dsh-cache-control` 的 config 块。
+   关闭会话守则开关即可让规则段消失。
 2. 在 profile 移除依赖与 bundle 项、删除 junction；或 `dsh plugin --profile web remove dsh-cache-control`。
 3. 重启应用。插件停用/卸载后不残留任何行为改动（`gate.md` override 与 `settings.json` 是数据，需自行删除）。
 
 ## 版本与变更记录
 
+- **v1.6.1**（修一个**破坏性配置缺陷**：保存外观开关会抹掉用户自己的压缩配置）
+  - **症状**：只改 ③ 气泡置顶 / ④ 对话页的任何一个外观值（钉顶、气泡透明、模糊度、宽度、
+    隐藏拖拽条），standard 组装文件就被重写一遍；如果当时总开关是"关"，那一行块里
+    **用户自己写的压缩配置会直接消失**（回落到 DSH 出厂默认 0.8 / 0.16）。
+  - **根因**：保存入口 `PUT /cc/settings.json` 无条件 `applyToStandard(settings)`，而
+    `applyToStandard` 在 `enabled === false` 时执行 `spliceCompactionRow(text, null)` ——
+    也就是"删掉那一行块里的 config"。链路与 `tools/verify-host-width.mjs` 里的断言一一对应。
+  - **修法**（三条，全部有断言）：
+    1. **只有压缩字段变化才碰那个文件**：`compactionFieldsChanged()` 只看
+       `enabled / triggerPct / retainPct / auto`；外观/门禁字段的保存完全不触碰组装文件
+       （响应里 `touched:false` 即"这次没碰"）。
+    2. **接管前先备份、关闭时还原**：首次接管时把**接管前的整篇原文**存进
+       `settings.json.compactionBackup = { text, at }`；关闭开关时优先逐字节还原这份原文，
+       还原后清掉备份（下次再开 = 重新接管、重新采备份）。只有**没有备份**可还原时才回落到
+       旧的"摘掉受管 config"。受管行的识别沿用原有 `# managed by dsh-cache-control` 标记，没新造标记。
+    3. **幂等**：保留 `next === text` 早退 —— 重复保存同一份设置不会产生第二次写盘；
+       重写行块时只替换"标记 + 其后的 config 块"，`name:` 与用户手写的注释原样保留。
+  - **修的过程中被断言抓出来的两个次生问题**（都已修，都有断言）：
+    - **CRLF**：原来 `split('\n')` 把 `\r` 留在行尾，`config:` 的整行比较会失败 ⇒ 旧 config 不被替换、
+      反而是**又追加一份**（YAML 重复键）。改成 `split(/\r?\n/)`。
+    - **未受管时也追加**：首次接管（文件里本来就有用户的 `config:` 块）时，旧 config 没被摘掉 ⇒
+      `thresholdRatio` 出现两次。现在"行块末尾的 config 块"一律整段替换。
+  - **回归**：`tools/verify-host-width.mjs` 从 17 条扩到 **51 条**（本次新增 34 条，走真 HTTP 路由，
+    DSH_HOME 指临时目录）：① 只改外观（7 个字段一次提交）⇒ 该文件**哈希与 mtime 都不变**；
+    ② 改压缩字段 ⇒ 确实被改（哈希变化、`thresholdRatio` 只出现一次、用户注释仍在、备份 === 接管前原文）；
+    ③ 重复保存同一份设置 ⇒ `changed:false` + 哈希/mtime 不动；④ 关闭 ⇒ 逐字节还原、
+    用户原有的 0.66/0.11 回来、备份被清、再关一次不再写盘；④b 无备份回落路径；
+    启动对账（开关=开但文件无受管行 / 开关=关但文件有受管行）两条路径同样受这套语义约束；
+    ⑤ `sanitize` 带出 `compactionBackup`（任何一次写盘都不许吃掉它）；⑥ `splice` 幂等与纯函数性。
+  - **验证数字**：`verify-host-width` **51** 通过 / 0 失败、`verify-gate-http` **43**（新增 3 条：
+    备份===接管前原文、只动门禁的保存 `touched:false`、关压缩逐字节还原 + 真实 preset 逐字节未变）、
+    `verify-gate-client` 67、`verify-ui-appearance` 50、`verify-panel-and-resizer` 19，
+    全部 0 失败；`verify-session-gate` 为**既有失败**（见文末"说明与限制"）。
 - **v1.6.0**（两个独立改动，同一个文件所以同一笔提交：修一个真 bug + 加一个开关）
   - **修**：滑杆面板 `▾` "点不开"（用户 2026-09-14 反馈）。**不是点击没接上** —— 点了
     `aria-expanded` 会变 true、DOM 里也有 `.cc-panel`，但它被摆到屏幕外（实测 `rect.y = 33554004`、

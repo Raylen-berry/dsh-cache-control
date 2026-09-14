@@ -10,6 +10,7 @@ const REAL_PRESET = process.env.APPDATA + '/dsh-desktop/harness/profiles/node_mo
 const fs = await import('node:fs')
 const pathMod = await import('node:path')
 const http = await import('node:http')
+const crypto = await import('node:crypto')
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => {
@@ -82,7 +83,10 @@ ok('未注册路径 404（由宿主决定，本插件不吞）', g404.status ===
 
 console.log('\n— 3. 开关独立：门禁 PUT 不碰压缩 —')
 const presetFile = pathMod.join(presetDir, 'agent.cordis.yml')
+const realPresetBefore = fs.readFileSync(REAL_PRESET)          // §8 用：整场验证不许动到真实 preset
 const presetBefore = fs.readFileSync(presetFile, 'utf8')
+const shaOfFile = () => crypto.createHash('sha256').update(fs.readFileSync(presetFile)).digest('hex')
+const shaBefore = shaOfFile()                                  // 启动对账之后的盘面（§4 还原回这里）
 const p1 = await put('/cc/settings.json', { enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true })
 ok('PUT 成功', p1.status === 200 && p1.body.ok === true)
 ok('门禁立即反映到已注册的段（同一进程内，无重启）', section.text({}).startsWith('# 会话守则'),
@@ -92,18 +96,27 @@ ok('磁盘设置含 gateEnabled=true 且压缩参数未变',
   disk1.gateEnabled === true && disk1.enabled === true && disk1.triggerPct === 30 && disk1.retainPct === 4)
 const presetAfterEnable = fs.readFileSync(presetFile, 'utf8')
 ok('开压缩确实写入了 config（对照组）', presetAfterEnable.includes('thresholdRatio: 0.30'))
+ok('接管时把接管前的原文存成备份（v1.6.1：关闭才能还原回去）',
+  (disk1.compactionBackup || {}).text === presetBefore, JSON.stringify(Object.keys(disk1)))
 const pOnly = await put('/cc/settings.json', { gateEnabled: false })
 const presetAfterGateOnly = fs.readFileSync(presetFile, 'utf8')
 ok('只动门禁不碰压缩 config 文件（两开关正交）', presetAfterGateOnly === presetAfterEnable && pOnly.body.ok === true)
+ok('只动门禁的保存响应标明没碰组装文件', pOnly.body.touched === false && pOnly.body.changed === false,
+  JSON.stringify({ touched: pOnly.body.touched, changed: pOnly.body.changed }))
 await put('/cc/settings.json', { gateEnabled: true })
 
 console.log('\n— 4. 反向：压缩 PUT 不覆盖门禁（部分字段合并）—')
 const p2 = await put('/cc/settings.json', { enabled: false, triggerPct: 30, retainPct: 4, auto: true })
 const disk2 = JSON.parse(fs.readFileSync(pathMod.join(ROOT, 'dsh-cache-control', 'settings.json'), 'utf8'))
 ok('未带 gateEnabled 的 PUT 不会关掉门禁', disk2.gateEnabled === true, JSON.stringify(disk2))
-ok('压缩关有效：组装文件里的 managed config 被移除',
-  !fs.readFileSync(presetFile, 'utf8').includes('thresholdRatio') && p2.body.ok === true)
+// v1.6.1：关闭不再是"删掉受管的 config 行"，而是把 standard 组装文件**还原**成接管前那样。
+// 用哈希判（不是判"文件里没有 thresholdRatio"——那在用户原本就写过 thresholdRatio 的机器上是假判定）。
+ok('压缩关有效：standard 组装文件逐字节还原到接管前（哈希一致）',
+  p2.body.changed === true && shaOfFile() === shaBefore,
+  'shaBefore=' + shaBefore.slice(0, 12) + ' now=' + shaOfFile().slice(0, 12))
+ok('还原后文件里不再有插件写过的受管标记', !fs.readFileSync(presetFile, 'utf8').includes('managed by dsh-cache-control'))
 ok('压缩关 ⇒ 门禁段仍注入（两开关正交）', section.text({}).startsWith('# 会话守则'))
+await put('/cc/settings.json', { enabled: true, triggerPct: 30, retainPct: 4, auto: true })   // §8 之前回到"开"
 
 console.log('\n— 5. 关掉门禁 —')
 await put('/cc/settings.json', { gateEnabled: false })
@@ -150,7 +163,8 @@ const g7 = await get('/cc/settings.json')
 ok('临时目录未污染真实 DSH_HOME：真实 settings.json 未被写入过',
   fs.statSync(process.env.APPDATA + '/dsh-desktop/harness/dsh-cache-control/settings.json').size > 0
   && !fs.existsSync(process.env.APPDATA + '/dsh-desktop/harness/dsh-cache-control/gate.md'))
-ok('真实 preset 未被本次验证改动', fs.readFileSync(REAL_PRESET, 'utf8').includes('thresholdRatio: 0.30'))
+ok('真实 preset 未被本次验证改动（逐字节比对，与用户 compression 配置长什么样无关）',
+  fs.readFileSync(REAL_PRESET).equals(realPresetBefore), '')
 server.close()
 fs.rmSync(ROOT, { recursive: true, force: true })
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n')

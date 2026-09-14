@@ -5,7 +5,11 @@
 //   1. 动态改写 standard agent preset 组装文件（agent.cordis.yml）中
 //      @deepseek-ai/dsh-compaction-basic 那一行的 config：
 //      - 开启(enabled=true)时写入 thresholdRatio / retainRatio / auto；
-//      - 关闭时移除该行上的 config（回到出厂默认 0.8 / 0.16 / auto:true）。
+//      - 关闭时**还原**首次接管前存下的那一行原文（见 compactionBackup）；
+//        没有备份可还原（用户手工删过 settings.json 等）时才回落到"移除受管行"。
+//      接管只在压缩字段（enabled/triggerPct/retainPct/auto）真的变了时才发生：
+//      只改外观/门禁字段不会触碰组装文件 —— 那个文件里可能有用户自己写的压缩配置，
+//      每次保存都无条件重写它会把用户的原配置抹掉（v1.6.1 修掉的破坏性缺陷）。
 //   2. 会话门禁（session gate）：把插件内的长期规则文件 session-gate.md 作为
 //      一段 system prompt 常驻注入（通过 ctx.systemPrompt.section，宿主全局层，
 //      与 dsh-web-app 注入 "app:web-surface" 段同一条路）。开关只决定这段文本
@@ -97,20 +101,26 @@ export async function resolveStandardFile() {
 // 行块 = `- id: compaction-basic` 起到（其后缩进属性行/注释行的末尾）为止，
 // 遇到空行或下一个 `- id:` 行即结束。
 // values === null 时输出“无 config”的出厂形态（引擎默认 0.8/0.16/auto）。
+//
+// 非 null 时的展开规则（v1.6.1）：保留原行块里用户自己写的东西 —— 标记插在 `name:` 之后，
+// 用户手写的注释原样跟在后面。**不要**改成"整块丢弃重写"：那等于顺手删掉用户的注释。
+// 上一次接管留下的部分（标记 + 其后的 config: 与更深的键）整段替换掉再重新生成一份；
+// 同一份设置算出的文本与上一代逐字节相同，调用方便能靠 next === text 早退、不写盘。
 // ---------------------------------------------------------------------------
-export function compactionConfigLines(values) {
-  const out = []
-  if (!values) return out
-  out.push('      ' + MANAGER_MARK)
-  out.push('      config:')
-  out.push('        thresholdRatio: ' + values.thresholdRatio.toFixed(2))
-  out.push('        retainRatio: ' + values.retainRatio.toFixed(2))
-  out.push('        auto: ' + (values.auto ? 'true' : 'false'))
-  return out
+export function compactionConfigLines(indent, values) {
+  const pad = indent + '  '
+  return [
+    pad + MANAGER_MARK,
+    pad + 'config:',
+    pad + '  thresholdRatio: ' + values.thresholdRatio.toFixed(2),
+    pad + '  retainRatio: ' + values.retainRatio.toFixed(2),
+    pad + '  auto: ' + (values.auto ? 'true' : 'false'),
+  ]
 }
 
 export function spliceCompactionRow(text, values) {
-  const lines = String(text).split('\n')
+  const lines = String(text).split(/\r?\n/)   // 按 CRLF/LF 统一切行（`\r` 绝不能留在行尾，
+  // 否则 `config:` / 标记行的整行比较会失败 ⇒ 旧 config 没被替换掉、反而又追加一份）
   const start = lines.findIndex((l) => /^\s*- id: compaction-basic\s*$/.test(l))
   if (start < 0) throw new Error('compaction-basic row not found in composition')
   let end = start + 1
@@ -121,9 +131,49 @@ export function spliceCompactionRow(text, values) {
     if (!/^\s/.test(l)) break
     end += 1
   }
-  const row = ['    - id: compaction-basic', "      name: '@deepseek-ai/dsh-compaction-basic'"]
-  row.push(...compactionConfigLines(values))
-  return lines.slice(0, start).concat(row, lines.slice(end)).join('\n')
+  const raw = lines[start]
+  const indent = raw.slice(0, raw.length - raw.trimStart().length)   // `- id:` 前面的缩进（真实文件里是 6 空格）
+  const attrIndent = indent.length + 4                               // name: / config: 这一层的缩进
+  const block = lines.slice(start + 1, end)
+  // 行块分两段：前面是 name 与用户手写的注释（留下），最后一段是 config: 及其更深的键
+  // （那就是本插件要接管/替换的东西，整段摘掉再按当前设置重新生成一份）。
+  // 这一段必须"整段换"，不能只摘标记行：否则用户原有的 config 会和新写的并存、
+  // thresholdRatio 出现两次（YAML 里就是重复键）。
+  const keep = []
+  let managed = -1
+  for (let i = 0; i < block.length; i++) {
+    if (block[i].trim() === MANAGER_MARK) { managed = i; break }
+    keep.push(block[i])
+  }
+  if (managed >= 0) {
+    let i = managed + 1
+    while (i < block.length && indentWidth(block[i]) > attrIndent) i += 1   // 标记之后更深的行：旧 config
+    keep.push(...block.slice(i))
+  }
+  for (let i = keep.length - 1; i >= 0; i--) {                 // 末段 config:（含其更深的键）
+    if (keep[i].trim() === '') continue
+    if (keep[i].trim() !== 'config:' || indentWidth(keep[i]) > attrIndent) continue
+    let j = i + 1
+    while (j < keep.length && indentWidth(keep[j]) > indentWidth(keep[i])) j += 1
+    keep.splice(i, j - i)
+    break
+  }
+  const cfg = values === null ? [] : compactionConfigLines(indent, values)
+  const out = values === null
+    ? [raw, ...keep]                         // 关：回到"无 config"的出厂形态，用户自己的行留下
+    : (() => {                               // 开：标记插在 `name:` 之后，受管 config 放最后
+        const nameAt = keep.findIndex((l) => /^\s*name:/.test(l))
+        const head = nameAt >= 0 ? keep.slice(0, nameAt + 1) : keep
+        const tail = nameAt >= 0 ? keep.slice(nameAt + 1) : []
+        return [raw, ...head, cfg[0], ...tail, ...cfg.slice(1)]
+      })()
+  return lines.slice(0, start).concat(out, lines.slice(end)).join('\n')
+}
+
+/** 一行前导空白的宽度。 */
+function indentWidth(line) {
+  const m = /^[ \t]*/.exec(String(line))
+  return m ? m[0].length : 0
 }
 
 export function hasManagedMarker(text) {
@@ -194,7 +244,29 @@ export function sanitize(raw) {
   const chatWidth = normalizeChatWidth(src.chatWidth)
   const chatWidthEnabled = src.chatWidthEnabled === true
   const hideResizer = src.hideResizer === true
-  return { enabled, triggerPct, retainPct, auto, gateEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh, chatWidth, chatWidthEnabled, hideResizer }
+  // v1.6.1：接管前的压缩行原文。必须原样带出去 —— 任何一次写盘（含改外观）都不许把它吃掉，
+  // 否则"关闭省缓存还原原状"就失去了依据。形状不合法时归 null（当作没有备份）。
+  const compactionBackup = readBackup(src)
+  return {
+    enabled, triggerPct, retainPct, auto, gateEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
+    chatWidth, chatWidthEnabled, hideResizer, compactionBackup,
+  }
+}
+
+/** 取出（并校验）settings.json 里的压缩行备份；形状不对一律当没有。 */
+export function readBackup(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {}
+  const b = src.compactionBackup
+  if (!b || typeof b !== 'object') return null
+  if (typeof b.text !== 'string' || b.text === '') return null
+  const at = Number(b.at)
+  if (!Number.isFinite(at)) return null
+  return { text: b.text, at }
+}
+
+/** 保存入口只在**压缩字段真的变了**时才允许碰标准组装文件（见 applyToStandard 注释）。 */
+export function compactionFieldsChanged(prev, next) {
+  return ['enabled', 'triggerPct', 'retainPct', 'auto'].some((k) => prev[k] !== next[k])
 }
 
 /** 由百分比换算成引擎字段与展示数字。 */
@@ -386,15 +458,56 @@ async function readComposition() {
   return { file, text: await fs.readFile(file, 'utf8') }
 }
 
-/** 把当前设置写到 standard 组装文件（幂等：无变化则不写盘）。 */
+/**
+ * 把当前设置写到 standard 组装文件（幂等：无变化则不写盘）。
+ *
+ * **接管语义（v1.6.1 起）**：
+ *   * 开：把受管 config 写进 compaction-basic 那一行块。写之前若本插件还没存过备份，
+ *     先把**接管前的整个组装文件原文**存进 settings.json.compactionBackup —— 那个文件
+ *     是用户自己的 preset，里面可能有他手写的压缩配置，删掉就找不回来了。
+ *   * 关：优先把备份**还原**回去（逐字节回到接管前）；只有没有备份可还原时，才回落到
+ *     旧的"摘掉受管行"行为。
+ *   * 备份只在"首次接管"时采集：受管行已经在文件里时再取备份会把插件自己写的东西
+ *     当成用户原状存下来，那就永远还原不回原样了。
+ *
+ * 调用方（HTTP 保存入口 / 启动对账）应当只在压缩字段变化时调用本函数；本函数本身对
+ * 入参是幂等的（next === text 即早退），所以多调一次不会造成重复写盘。
+ */
 export async function applyToStandard(settings) {
   const clean = sanitize(settings)
   const values = resolveValues(clean)
   const { file, text } = await readComposition()
-  const next = clean.enabled ? spliceCompactionRow(text, values) : spliceCompactionRow(text, null)
-  if (next === text) return { file, changed: false, ...values }
-  await fs.writeFile(file, next, 'utf8')
-  return { file, changed: true, ...values }
+  let next = text
+  const saved = clean.compactionBackup
+  let backup = saved
+  let freshBackup = false
+  if (clean.enabled) {
+    // 受管行已在文件里 ⇒ 这不是首次接管，不能拿它当"用户原状"存备份。
+    const alreadyManaged = hasManagedMarker(text)
+    if (backup === null && !alreadyManaged) {
+      backup = { text, at: Date.now() }   // 存接管前的整篇原文，还原时逐字节回写
+      freshBackup = true
+    }
+    const base = alreadyManaged
+      ? text.split(/\r?\n/).filter((l) => l.trim() !== MANAGER_MARK).join('\n')
+      : text
+    next = spliceCompactionRow(base, values)
+  } else if (backup !== null) {
+    // 关且有备份：还原接管前的原文，并清掉备份（下次开 = 重新接管、重新采备份）。
+    next = backup.text
+    backup = null
+  } else {
+    next = spliceCompactionRow(text, null)
+  }
+  const changed = next !== text
+  if (changed) await fs.writeFile(file, next, 'utf8')
+  // 备份有新采（freshBackup）或刚被还原用掉（saved 有而 backup 变 null）时都要落盘，
+  // 否则下一次启动会读到一枚已经用过的旧备份。
+  if (freshBackup || (saved !== null && backup === null)) {
+    clean.compactionBackup = backup
+    await writeSettings(clean)
+  }
+  return { file, changed, restored: !clean.enabled && changed, ...values }
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +553,8 @@ export async function apply(ctx) {
     const { text } = await readComposition()
     const wantsMarker = current.enabled
     const hasMarker = hasManagedMarker(text)
+    // 开关与文件不一致 ⇒ 走一遍（与保存入口同一条路，也就同样受备份/还原语义约束：
+    // enabled 而文件里没有受管行 = 首次接管，这一次会顺手把接管前的原文存成备份）。
     if (wantsMarker !== hasMarker) await applyToStandard(current)
   } catch (err) {
     console.warn('[dsh-cache-control] boot reconcile skipped: ' + String((err && err.message) || err))
@@ -501,6 +616,10 @@ export async function apply(ctx) {
             triggerTokens: values.triggerTokens,
             retainTokens: values.retainTokens,
             applied: settings.enabled ? hasManagedMarker(text) : !hasManagedMarker(text),
+            // 备份在位 = 关掉开关能把 standard 组装文件还原成接管前那样。界面上只报元信息，
+            // 不回吐备份正文（那个文件十几 KB，没必要进每次开面板的响应）。
+            backupAt: settings.compactionBackup ? settings.compactionBackup.at : null,
+            hasBackup: settings.compactionBackup !== null,
             gate,
           })
         } catch (err) {
@@ -511,10 +630,22 @@ export async function apply(ctx) {
       if (req.method === 'PUT' || req.method === 'POST') {
         try {
           const parsed = JSON.parse(await readBody(req))
-          const settings = sanitize({ ...(await readSettings()), ...parsed })
+          const before = await readSettings()
+          const settings = sanitize({ ...before, ...parsed })
           await writeSettings(settings)
-          const result = await applyToStandard(settings)
-          send(res, 200, { ok: true, changed: result.changed, ...resolveValues(settings), gateEnabled: settings.gateEnabled })
+          // 只有压缩字段真的变了才去动 standard 组装文件：那个文件是用户的 preset，
+          // 里面有他自己的压缩配置。旧实现无条件 applyToStandard ⇒ 只改外观开关
+          // （钉顶 / 气泡 / 宽度 / 拖拽条）或门禁，也会把用户原有的压缩配置抹成插件这一套。
+          const touched = compactionFieldsChanged(before, settings)
+          const result = touched ? await applyToStandard(settings) : null
+          send(res, 200, {
+            ok: true,
+            // result !== null 即"这次保存动到了 standard 组装文件"（外观/门禁单独保存时为 null）
+            touched,
+            changed: result ? result.changed : false,
+            ...resolveValues(settings),
+            gateEnabled: settings.gateEnabled,
+          })
         } catch (err) {
           send(res, 400, { ok: false, error: String((err && err.message) || err) })
         }
