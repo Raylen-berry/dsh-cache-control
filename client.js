@@ -422,6 +422,10 @@ window.__ModuleLoader__.load({
           pinMaxVh: s.pinMaxVh,
           chatWidth: s.chatWidth,
           chatWidthEnabled: s.chatWidthEnabled,
+          // v1.6.0 加这个开关时漏了它：界面上拨得动、PUT 里却不带，于是**永远不落盘**，
+          // 刷新就回到默认。由 tools/verify-settings-payload.mjs 这类"载荷与 DEFAULTS 对齐"的
+          // 结构断言兜住（2026-09-14 审计附带发现）。
+          hideResizer: s.hideResizer,
         }),
       })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
