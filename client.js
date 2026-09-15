@@ -801,7 +801,17 @@ window.__ModuleLoader__.load({
     }
     function requestFit() {
       if (fitTimer) return
-      fitTimer = setTimeout(function () { fitTimer = 0; fitSafe() }, 90)
+      // 90ms → **两帧**（2026-09-15，与宽度那个"切会话闪一下"同一类排查）：
+      // fitUserBubbles() 要量元素几何，而换会话瞬间新消息还没排版，**同步量到的是空/旧值**
+      // —— 这正是它当初要延迟的原因，所以不能像宽度那样改同步。
+      // 但 90ms 明显长于"排版完成"所需：两帧（rAF→rAF）足够等到布局稳定，
+      // 又把可见的"晚一拍重排"压到最小。第一帧等样式/布局，第二帧量。
+      fitTimer = requestAnimationFrame(function () {
+        fitTimer = requestAnimationFrame(function () {
+          fitTimer = 0
+          fitSafe()
+        })
+      })
     }
     /**
      * 滚轮到边后把滚动"还给"会话（2026-09-10 用户反馈"滚轮会把对话框划上去"实测后加）。
@@ -881,7 +891,7 @@ window.__ModuleLoader__.load({
     }
     function stopFitWatch() {
       if (fitObserver) { fitObserver.disconnect(); fitObserver = null }
-      if (fitTimer) { clearTimeout(fitTimer); fitTimer = 0 }
+      if (fitTimer) { cancelAnimationFrame(fitTimer); fitTimer = 0 }   // fitTimer 现在是 rAF 句柄，不是定时器
       if (typeof document !== 'undefined' && fitScrollHandler && document.removeEventListener) {
         document.removeEventListener('scroll', fitScrollHandler, true)
       }
