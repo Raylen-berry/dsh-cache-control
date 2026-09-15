@@ -1010,10 +1010,16 @@ window.__ModuleLoader__.load({
     // :root 兜底：宿主把 --dsh-chat-content-width 写成 var(--dsh-chat-user-width, clamp(…))
     // 声明在会话根自己身上，所以在 <html> 上给 --dsh-chat-user-width 赋值就能顺着继承链
     // 生效 —— 覆盖 findChatRoot() 暂时找不到根节点的窗口（首屏 / 换会话 / composer 未挂）。
+    // 2026-09-15：三个变量**全写**（原来只有 --dsh-chat-user-width）。这样即便宿主某个版本
+    // 的根声明不引用 user-width，换会话重建根的那几帧也不会掉回自适应 —— 与 30ms 去抖双保险。
     var widthStyleEl = null
     function syncWidthStyle(pct) {
       if (!domReady()) return
-      var css = pct > 0 ? ':root{--dsh-chat-user-width:' + pct + '% !important}' : ''
+      var css = pct > 0
+        ? ':root{--dsh-chat-user-width:' + pct + '% !important;'
+          + '--dsh-chat-content-width:' + pct + '% !important;'
+          + '--dsh-composer-card-max-width:' + pct + '% !important}'
+        : ''
       if (!css) {
         if (widthStyleEl && widthStyleEl.parentNode) widthStyleEl.parentNode.removeChild(widthStyleEl)
         widthStyleEl = null
@@ -1036,20 +1042,33 @@ window.__ModuleLoader__.load({
 
     // 会话根随切换会话 / 导航会重建，钉上去的内联变量跟着没了 ⇒ 观察 DOM 变动补回去。
     // 与 pin 观察器分开的理由：两者各自的开关决定挂不挂，关着的那条不该为 body 变动买单。
+    //
+    // **不再用定时器去抖**（2026-09-15 用户报"切会话时宽度先从默认跳到固定值、每次都出现、
+    // <0.3 秒、切标签不出现"）。300ms 那版一眼可见；降到 30ms 后用户仍说"微微能看出来"——
+    // 因为只要经过一次绘制，肉眼看的就是"默认宽度的一帧"。
+    // 现在改成**按需同步**：观察器回调里先做一个 O(1) 判断 —— 缓存的会话根还连着吗？
+    //   连着（绝大多数变动：流式输出、消息追加）⇒ 什么都不做，连 querySelector 都不跑；
+    //   断了（换会话/导航重建根）⇒ 立刻重钉。回调是微任务，**早于本次绘制**，
+    //   所以新根第一次上屏时就已经带着钉好的宽度 —— 没有"默认宽度的那一帧"。
     var widthObserver = null
-    var widthTimer = 0
+    var widthRoot = null
     function startWidthWatch() {
       if (!domReady() || widthObserver) return
       widthObserver = new MutationObserver(function () {
-        if (widthTimer) return
-        widthTimer = setTimeout(function () { widthTimer = 0; applyChatWidth() }, 300)
+        // 旧根还在（含"从未找到过"）⇒ 无事发生，直接返回（热路径上只有一次属性读取）
+        if (widthRoot !== null && widthRoot.isConnected) return
+        var next = findChatRoot()
+        if (next === null) return
+        widthRoot = next
+        applyChatWidth()   // 同步重钉：赶在绘制之前
       })
       widthObserver.observe(document.body, { childList: true, subtree: true })
+      widthRoot = findChatRoot()
       applyChatWidth()
     }
     function stopWidthWatch() {
       if (widthObserver) { widthObserver.disconnect(); widthObserver = null }
-      if (widthTimer) { clearTimeout(widthTimer); widthTimer = 0 }
+      widthRoot = null
       pinChatWidth(false, 0)   // 撤销痕迹：把三个变量从会话根上摘掉
     }
 
