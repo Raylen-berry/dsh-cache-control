@@ -295,5 +295,48 @@ t('compactionFieldsChanged：enabled / triggerPct / retainPct / auto 任一改�
   && m.compactionFieldsChanged(f({ enabled: true, retainPct: 4 }), f({ enabled: true, retainPct: 2 })) === true
   && m.compactionFieldsChanged(f({ enabled: true, auto: true }), f({ enabled: true, auto: false })) === true)
 
+// --- 7. 存储用量与清理（v1.8.0）：只读统计 + 白名单回收 ----------------------
+console.log('— storage：统计 / 候选 / 白名单回收 —')
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-storage-'))
+  const mk = (rel, bytes) => {
+    const f = path.join(tmp, rel)
+    fs.mkdirSync(path.dirname(f), { recursive: true })
+    fs.writeFileSync(f, 'x'.repeat(bytes))
+  }
+  mk('sessions/s1.jsonl', 1000)
+  mk('dsh-browser-live/shots/a.png', 500)
+  mk('dsh-browser-live/shots/b.png', 700)
+  mk('dsh-browser-live/chrome-profile-plugin/Default/Cache/c1', 300)
+  mk('dsh-browser-live/chrome-profile-plugin/Default/Cookies', 999)   // 登录态：绝不能进候选
+
+  const rep = await m.storageReport(tmp)
+  const byId = Object.fromEntries(rep.categories.map((c) => [c.id, c]))
+  const bl = byId['browser-live']
+  t('browser-live 分类统计全部文件', bl.bytes === 500 + 700 + 300 + 999, bl.bytes)
+  t('sessions 分类独立统计', byId.sessions.bytes === 1000, byId.sessions.bytes)
+  t('总计 = 各类之和', rep.total.bytes === 3499, rep.total.bytes)
+  t('不存在的目录标 exists=false 且不报错', byId.bill.exists === false)
+  t('统计带 truncated 标记（大树防呆）', rep.categories.every((c) => typeof c.truncated === 'boolean'))
+
+  const cands = await m.cleanCandidates(tmp)
+  const paths = cands.map((c) => c.path)
+  t('候选含观察窗截图', paths.some((p) => p.endsWith(path.join('dsh-browser-live', 'shots'))))
+  t('候选含浏览器 Cache（明确可再生成）', paths.some((p) => p.endsWith(path.join('Default', 'Cache'))))
+  t('候选**不含**登录态（Cookies 不进去）', !paths.some((p) => p.includes('Cookies')))
+  t('候选**不含**会话记录（聊天历史不许被清）', !paths.some((p) => p.endsWith('sessions')))
+  t('候选按占用从大到小排', cands.every((c, i) => i === 0 || cands[i - 1].bytes >= c.bytes))
+
+  const res = await m.recyclePaths([path.join(tmp, 'sessions'), path.join(tmp, 'dsh-browser-live', 'shots')], tmp, paths)
+  t('只搬白名单内的那一项', res.moved.length === 1, JSON.stringify(res.moved.map((x) => x.path)))
+  t('白名单外的被跳过并说明原因', res.skipped.length === 1 && res.skipped[0].reason === '不在候选清单内', JSON.stringify(res.skipped))
+  t('会话记录仍在原地（没被搬走）', fs.existsSync(path.join(tmp, 'sessions', 's1.jsonl')))
+  t('观察窗截图已移出原位置', !fs.existsSync(path.join(tmp, 'dsh-browser-live', 'shots')))
+  t('回收目录里能找到它（可回溯）', fs.existsSync(res.recycleDir) && fs.readdirSync(res.recycleDir).length === 1)
+  t('释放字节 = 被搬走目录的大小', res.freed === 1200, res.freed)
+
+  fs.rmSync(tmp, { recursive: true, force: true })
+}
+
 fs.rmSync(HOME2, { recursive: true, force: true })
 

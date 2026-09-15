@@ -49,6 +49,115 @@ const SETTINGS_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'settings.
 const GET_PATH = '/cc/settings.json'
 const GATE_PATH = '/cc/gate.json'
 
+// ── 存储用量与清理（v1.8.0）──────────────────────────────────────────────────
+// 用户要求：分开显示各类占用，清理要**先给候选清单**（文件、原因、预计释放），别一键乱删。
+// 本版更进一步：**移到回收目录**而不是直接删 —— 不可逆操作先从"可回溯"开始，
+// 回收目录本身再单独清（purge），清不清由用户点。
+const STORAGE_PATH = '/cc/storage'
+const CLEAN_PATH = '/cc/storage/clean'
+const PURGE_PATH = '/cc/storage/purge'
+const RECYCLE_DIR = () => path.join(dshHome(), 'dsh-cache-control', 'recycle')
+
+/** 分类（相对 $DSH_HOME）：给人看的名字 + 一句话说明 + 清理建议。 */
+export const STORAGE_CATEGORIES = [
+  { id: 'sessions', rel: 'sessions', label: '会话记录', note: '每个会话的 JSONL 全文，删了等于丢历史，**不建议清**' },
+  { id: 'storages', rel: 'storages', label: '会话投影缓存', note: '会话列表/检索的派生缓存，可再生成' },
+  { id: 'attachments', rel: 'attachments', label: '附件副本', note: '你拖进对话的图片/文件副本，删了旧消息里的图会失效' },
+  { id: 'browser-live', rel: 'dsh-browser-live', label: '浏览器观察窗', note: '自带浏览器实例的 profile、截图、下载' },
+  { id: 'video-prompt', rel: 'dsh-video-prompt', label: '生图插件', note: '媒体清单、提示词产物、过程目录（抽帧等中间产物）' },
+  { id: 'bill', rel: 'dsh-bill', label: '费用记录', note: '每次模型调用的记账环，删了看不了历史花费' },
+  { id: 'cache-control', rel: 'dsh-cache-control', label: '本插件数据', note: '设置、规则 override、回收目录' },
+]
+
+/** 递归量一个目录：文件数 / 总字节 / 最新与最旧 mtime。上限防呆（超大树不拖死宿主）。 */
+export async function dirUsage(dir, limit = 40000) {
+  const out = { files: 0, bytes: 0, newest: 0, oldest: 0, truncated: false }
+  const stack = [dir]
+  while (stack.length > 0) {
+    const cur = stack.pop()
+    let entries = []
+    try { entries = await fs.readdir(cur, { withFileTypes: true }) } catch { continue }
+    for (const e of entries) {
+      const full = path.join(cur, e.name)
+      if (e.isDirectory()) { stack.push(full); continue }
+      if (!e.isFile()) continue
+      try {
+        const st = await fs.stat(full)
+        out.files += 1
+        out.bytes += st.size
+        const t = st.mtimeMs
+        if (out.newest === 0 || t > out.newest) out.newest = t
+        if (out.oldest === 0 || t < out.oldest) out.oldest = t
+      } catch { /* 单个文件读不到就跳过 */ }
+      if (out.files >= limit) { out.truncated = true; return out }
+    }
+  }
+  return out
+}
+
+/** 各类占用汇总（只读，不删任何东西）。 */
+export async function storageReport(home) {
+  const categories = []
+  for (const c of STORAGE_CATEGORIES) {
+    const dir = path.join(home, c.rel)
+    const exists = existsSync(dir)
+    const usage = exists ? await dirUsage(dir) : { files: 0, bytes: 0, newest: 0, oldest: 0, truncated: false }
+    categories.push({ id: c.id, label: c.label, note: c.note, dir, exists, ...usage })
+  }
+  const total = categories.reduce((a, c) => ({ files: a.files + c.files, bytes: a.bytes + c.bytes }), { files: 0, bytes: 0 })
+  return { home, categories, total, recycle: await dirUsage(RECYCLE_DIR()) }
+}
+
+/** 可回收候选：只收**明确可再生成**的东西，每条都写清"为什么能清"与风险。 */
+export async function cleanCandidates(home) {
+  const out = []
+  const push = async (dir, label, why, risk) => {
+    if (!existsSync(dir)) return
+    const u = await dirUsage(dir)
+    if (u.files === 0) return
+    out.push({ path: dir, label, why, risk, files: u.files, bytes: u.bytes, newest: u.newest })
+  }
+  const shots = path.join(home, 'dsh-browser-live', 'shots')
+  await push(shots, '观察窗截图', '每次截图存一张，纯粹是调试留痕，删了不影响任何功能', '无')
+  // 只动缓存子目录，不碰 profile 根（那里有登录态与 Cookie）
+  for (const name of ['Default/Cache', 'Default/Code Cache', 'Default/GPUCache', 'GrShaderCache', 'ShaderCache']) {
+    for (const prof of ['chrome-profile-plugin', 'chrome-profile-chrome', 'chrome-profile-edge']) {
+      await push(path.join(home, 'dsh-browser-live', prof, name), '浏览器缓存 · ' + name.split('/').pop(), 'CDP 浏览器的磁盘缓存，重建即可（**不含登录态**：那是 Cookies/Login Data，没在候选里）', '下次访问会慢一点')
+    }
+  }
+  await push(path.join(home, 'dsh-video-prompt', 'runs'), '生图产物（提示词 md）', '提示词产物文件；要留就把整个产物目录复制走再清', '旧批次的提示词会没')
+  await push(RECYCLE_DIR(), '回收目录', '之前清掉的文件的暂存处，确认不需要了再清', '清掉就没法还原了')
+  return out.sort((a, b) => b.bytes - a.bytes)
+}
+
+/** 把候选**移进回收目录**（保留相对层级，避免重名互撞），返回释放字节与目标目录。 */
+export async function recyclePaths(paths, home, allowed, now = Date.now()) {
+  const ok = []
+  const skipped = []
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const dest = path.join(RECYCLE_DIR(), stamp)
+  let freed = 0
+  for (const raw of Array.isArray(paths) ? paths : []) {
+    const target = path.resolve(String(raw || ''))
+    // 只允许移**候选清单里出现过**的路径：路径来自请求体，必须对着白名单校验
+    if (!allowed.includes(target)) { skipped.push({ path: target, reason: '不在候选清单内' }); continue }
+    if (target === path.resolve(home) || target.length < path.resolve(home).length + 1) { skipped.push({ path: target, reason: '越界' }); continue }
+    if (!existsSync(target)) { skipped.push({ path: target, reason: '已不存在' }); continue }
+    const u = await dirUsage(target)
+    const rel = path.relative(home, target).replace(/[\\/]+/g, '__')
+    try {
+      await fs.mkdir(dest, { recursive: true })
+      await fs.rename(target, path.join(dest, rel))
+      freed += u.bytes
+      ok.push({ path: target, bytes: u.bytes })
+    } catch (err) {
+      // 跨盘或占用中：退回"复制后删"太重，直接如实报错，让用户自己关掉浏览器再试
+      skipped.push({ path: target, reason: '移动失败：' + String((err && err.message) || err) })
+    }
+  }
+  return { moved: ok, skipped, freed, recycleDir: dest }
+}
+
 /** 规则 override 落盘位置（用户在界面上编辑后写入；删除它即回到插件内置文本）。 */
 const GATE_OVERRIDE_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'gate.md')
 
@@ -633,6 +742,57 @@ export async function apply(ctx) {
       res.end(body)
     } catch { /* socket gone */ }
   }
+
+  // ---- 存储用量 / 清理（v1.8.0）：GET 只读汇总，POST 移到回收目录，PURGE 清回收目录 ----
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: STORAGE_PATH,
+    handler: async (req, res) => {
+      try {
+        if (req.method !== 'GET') { send(res, 405, { ok: false, error: 'method not allowed' }); return }
+        const home = dshHome()
+        const report = await storageReport(home)
+        const candidates = await cleanCandidates(home)
+        send(res, 200, { ok: true, ...report, candidates })
+      } catch (err) {
+        send(res, 500, { ok: false, error: String((err && err.message) || err) })
+      }
+    },
+  }))
+
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: CLEAN_PATH,
+    handler: async (req, res) => {
+      try {
+        if (req.method !== 'POST') { send(res, 405, { ok: false, error: 'method not allowed' }); return }
+        const body = JSON.parse(await readBody(req))
+        const home = dshHome()
+        const allowed = (await cleanCandidates(home)).map((c) => path.resolve(c.path))
+        const wants = Array.isArray(body.paths) && body.paths.length > 0 ? body.paths : allowed
+        const result = await recyclePaths(wants, home, allowed)
+        send(res, 200, { ok: true, ...result })
+      } catch (err) {
+        send(res, 500, { ok: false, error: String((err && err.message) || err) })
+      }
+    },
+  }))
+
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: PURGE_PATH,
+    handler: async (req, res) => {
+      try {
+        if (req.method !== 'POST') { send(res, 405, { ok: false, error: 'method not allowed' }); return }
+        const dir = RECYCLE_DIR()
+        const before = await dirUsage(dir)
+        if (existsSync(dir)) await fs.rm(dir, { recursive: true, force: true })
+        send(res, 200, { ok: true, freed: before.bytes, files: before.files })
+      } catch (err) {
+        send(res, 500, { ok: false, error: String((err && err.message) || err) })
+      }
+    },
+  }))
 
   ctx.effect(() => webServer.register({
     kind: 'exact',
