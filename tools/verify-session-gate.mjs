@@ -70,7 +70,7 @@ ok('段序常量落在 FIRST_PARTY 稀疏区间内',
   'gate=' + gateOrder + ' persona=' + FIRST_PARTY_SECTION_ORDER.DEPLOYMENT_PERSONA + ' plan=' + FIRST_PARTY_SECTION_ORDER.PLAN_POLICY)
 ok('段名唯一且带插件前缀', host.GATE_SECTION === 'dsh-cache-control:session-gate')
 const bytes = Buffer.byteLength(on, 'utf8')
-ok('规则体积在上限内', bytes > 0 && bytes <= 6144, bytes + ' B ≈ ' + Math.round(bytes / 2.6) + ' tokens/请求')
+ok('规则体积在上限内', bytes > 0 && bytes <= host.GATE_MAX_BYTES, bytes + ' B ≈ ' + Math.round(bytes / 2.6) + ' tokens/请求')
 ok('内置规则不含成对花括号（无需中和即安全）', !/\{\{|\}\}/.test(on))
 
 console.log('\n— 2. 花括号 / 提示词注入防御 —')
@@ -99,7 +99,7 @@ ok('开关关时 gateMeta.enabled=false', (await host.gateMeta({ gateEnabled: fa
 console.log('\n— 4. 截断上限 —')
 fs.writeFileSync(overrideFile, 'x'.repeat(40000), 'utf8')
 const big = host.gatePromptText({ gateEnabled: true })
-ok('超长文本被截到 ≤ 上限', Buffer.byteLength(big, 'utf8') <= 6144, Buffer.byteLength(big, 'utf8') + ' B')
+ok('超长文本被截到 ≤ 上限', Buffer.byteLength(big, 'utf8') <= host.GATE_MAX_BYTES, Buffer.byteLength(big, 'utf8') + ' B')
 ok('截断带可见提示', big.includes('省略'))
 await host.writeGateOverride('')
 

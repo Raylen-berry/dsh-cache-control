@@ -24,7 +24,8 @@ const settingsFile = () => path.join(dir(), 'settings.json')
 const gateFile = () => path.join(dir(), 'gate.md')
 
 const DEFAULTS = { enabled: false, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: false, pinLastUser: false, clearBubble: false, pinBlur: 10, pinMaxVh: 38, chatWidth: 80, chatWidthEnabled: false, hideResizer: false, hideDivider: false }
-const CHAT_MIN = 30, CHAT_MAX = 100, GATE_MAX_BYTES = 6144
+// GATE_MAX_BYTES 与 index.js 的同名常量保持一致（本脚本不 import 宿主模块，故手工同步）。
+const CHAT_MIN = 30, CHAT_MAX = 100, GATE_MAX_BYTES = 16 * 1024
 
 export function validate(raw) {
   const src = raw && typeof raw === 'object' ? raw : {}

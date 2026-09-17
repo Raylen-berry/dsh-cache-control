@@ -2,6 +2,45 @@
 
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
 
+## 1.9.1 — 2026-09-16 · ② 会话守则：R4 输出形状摘出，交给 dsh-output-shape
+
+**需求**（用户 2026-09-16）：给 ADHD 规则做了独立插件 `dsh-output-shape`（含 chip 与设置页），并要求它**默认常驻开启**。此时若 R4 还留在本文件，同一套规则会在每个请求注入两遍（约 3.4 KB + 4.9 KB）。
+
+**做法**：
+
+- `session-gate.md` 的 `## R4 输出形状` 整节删除，改留一段**归属声明**（真源在哪、别在这里再抄一份、如何收回）——留声明是因为"删干净"的下一种结局是有人照着 CHANGELOG 又抄回来，变成两处同时注入。
+- 原文备份到同目录 `session-gate.R4-backup-2026-09-16.md`（不参与注入，仅供回退）。
+- README / package.json description 同步说明 R4 已迁出。
+- **16 KB 上限保留不动**：摘出后余量回到宽裕，但那是刹车不是装饰，不因暂时用不满就收紧。
+
+**验证**：`verify-gate-truncation.mjs` **30/30**；`verify-session-gate.mjs` 在 `DEPLOYMENT_PERSONA` 处崩是既有问题（该套件早已排除于 CI，非本次引入），其前面几条断言含「开：R1/R2/R3 三条都在」全通过。
+
+## 1.9.0 — 2026-09-15 · ② 会话守则：加「R4 输出形状」一节，上限 6 KB → 16 KB
+
+**需求**（用户 2026-09-15）：把 [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd)（MIT）的
+输出形状 10 条蒸进会话守则。加完后发现 6,144 B 上限只剩 92 B 余量，遂问"这条硬约束有必要吗"。
+
+**判断**：上限**保留**（这段文本每请求重复计费，且会在每个子代理、每个 workflow 子会话里重复注入，
+误粘一个十万字节的文件会把成本乘上去），但 6 KB 这个值过紧 ⇒ 放宽到 **16 KB**。
+
+**做法**：
+- `session-gate.md` 新增 `## R4 输出形状`：P1 首行即可行动 … P10 无开场白、无客套，含 6 条破例条款
+  与发送前自检；中文重写、压成与 R1–R3 同格式（上游原文另存
+  `D:\DeepSeek\github-plugins\i-have-adhd\UPSTREAM-SKILL.md`）。
+- `index.js`：`GATE_MAX_BYTES` 由 `6 * 1024` 提到 `16 * 1024`，并 **export** 出来（原先没导出，
+  测试只能各自写死 6144）。
+- `tools/verify-gate-truncation.mjs`：样本长度与期望值一律**相对 `ON_LIMIT` 生成**，不再写死
+  19,998 / 5,839 / 10,000 / 5,590 这些"6 KB 年代"的数字；`tools/verify-session-gate.mjs` 的两条
+  上限断言改用 `host.GATE_MAX_BYTES`。
+- `tools/settings.mjs`：导入前预警阈值手工同步到 16 KB（该脚本不 import 宿主模块）。
+
+**验证**：`npm test` ⇒ 套件 **4/4 通过**，其中 `verify-gate-truncation` **30 通过 / 0 失败**
+（比 v1.6.2 的 31 条少 1 条：原「① 保留长度不超上限」已并入新的区间断言）。
+`verify-session-gate` 仍因既有的 `DEPLOYMENT_PERSONA TypeError`（与本改动无关）留在 CI 之外。
+
+**生效范围**：`index.js` 的改动要**重启 DSH**（host 半在服务启动时入图）；`session-gate.md` 本身
+仍是存盘即生效，无需重启。
+
 ## 1.8.0 — 2026-09-14 · ⑤ 存储：各类占用分开看，清理先给候选清单（且只"移入回收"）
 
 **需求**（用户 2026-09-14）：分开显示原始素材 / 预览缓存 / 浏览器缓存 / 任务产物的占用，

@@ -164,8 +164,8 @@ const GATE_OVERRIDE_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'gate
 /** 插件自带、随包分发的长期规则。 */
 const GATE_BUILTIN_FILE = fileURLToPath(new URL('./session-gate.md', import.meta.url))
 
-/** 注入提示词的字节上限：这段文本每请求重复计费，必须留硬闸。 */
-const GATE_MAX_BYTES = 6 * 1024
+/** 注入提示词的字节上限：这段文本每请求重复计费，必须留硬闸（防误粘大文件把成本乘上每个子代理）。 */
+export const GATE_MAX_BYTES = 16 * 1024
 
 /** 门禁段的提示词位置：persona(0) 之后、plan 政策(500) 之前，越靠前权重越稳。 */
 export const GATE_SECTION = 'dsh-cache-control:session-gate'

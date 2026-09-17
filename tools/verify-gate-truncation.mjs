@@ -3,10 +3,11 @@
 // 缺陷（另一轮只读审计发现，本套件就是它的回归）：
 //   host 侧的截断函数只返回一个字符串，界面上"是否截断"是**靠长度猜**的 ——
 //   `truncated: bytes >= GATE_MAX_BYTES`。但截断后的长度必然**小于**上限
-//   （实测：19,998 字节的中文规则 → 保留 5,839 字节；10,000 字节 ASCII → 保留 5,590 字节），
+//   （当年按 6 KB 上限实测：19,998 字节的中文规则 → 保留 5,839 字节；10,000 字节 ASCII → 保留 5,590 字节。
+//   上限现已提到 16 KB，故本套件的样本与期望值一律相对上限生成，不再写死字节数），
 //   于是 `bytes >= max` 恒为 false ⇒ 规则被砍了，界面却显示"未截断"，用户不知道自己的规则少了内容。
-//   反方向同样错：原文**恰好** 6,144 字节时文本原样返回、`bytes === max`，那个判据又会
-//   把没被截断的判成截断。
+//   反方向同样错：原文**恰好**等于上限时文本原样返回、`bytes === max`，那个判据又会
+//   把没被截断的判成截断。（当年那批审计数字取自 6,144 B 上限，仅作历史记录。）
 //
 // 修法：截断函数改为**直接返回** `{ text, originalBytes, keptBytes, truncated }`，
 //   gateMeta 与两个 HTTP 响应原样带出这三个事实；调用方与界面一律读标记，不再比长度。
@@ -58,31 +59,35 @@ const putRule = async (text) => {
   fs.writeFileSync(gateFile, text, 'utf8')
   return m.gateMeta(settingsOn)
 }
-const ON_LIMIT = m.GATE_MAX_BYTES ?? 6144
+const ON_LIMIT = m.GATE_MAX_BYTES ?? 16 * 1024
 
 // ---- ① 超长规则：标记必须为真，并带上原始长度与保留长度 ----
-console.log('— ① 超长规则 10,000 字节量级 —')
-const cnRule = '规'.repeat(6666)                      // 19,998 B：审计实测那一条（保留 5,839 B）
+console.log('— ① 超长规则（上限 + 若干 KB）—')
+// 样本长度全部相对 ON_LIMIT 生成：上限本身可调（见 index.js GATE_MAX_BYTES），
+// 写死字节数的样本会在上限变化时失效（6 KB → 16 KB 时踩过：19,998 B 的样本
+// 原先"超长"，上限提到 16 KB 后 keptBytes 不再是 5,839）。
+const cnRule = '规'.repeat(Math.ceil((ON_LIMIT + 3000) / 3))   // 中文，约 上限 + 3 KB
 const cn = await putRule(cnRule)
-ok('① 中文 19,998 B ⇒ truncated === true', cn.truncated === true, J({ flag: cn.truncated, bytes: cn.bytes }))
-ok('① 中文 19,998 B ⇒ originalBytes 是规则原文长度',
-  cn.originalBytes === 19998, J({ originalBytes: cn.originalBytes }))
-ok('① 中文 19,998 B ⇒ keptBytes = 5,839 B（审计给的数）',
-  cn.keptBytes === 5839 && cn.bytes === 5839, J({ keptBytes: cn.keptBytes, bytes: cn.bytes }))
+ok('① 超长中文 ⇒ truncated === true', cn.truncated === true, J({ flag: cn.truncated, bytes: cn.bytes }))
+ok('① 超长中文 ⇒ originalBytes 是规则原文长度',
+  cn.originalBytes === B(cnRule), J({ originalBytes: cn.originalBytes, expect: B(cnRule) }))
+ok('① 超长中文 ⇒ keptBytes 落在 (0.85×上限, 上限]、且与 bytes 恒等',
+  cn.keptBytes <= ON_LIMIT && cn.keptBytes > ON_LIMIT * 0.85 && cn.bytes === cn.keptBytes,
+  J({ keptBytes: cn.keptBytes, max: ON_LIMIT }))
 ok('① 保留长度确有缩水（不是"标了截断但内容没动"）',
   cn.keptBytes < cn.originalBytes && B(cn.text) === cn.keptBytes && cn.text.includes('其余部分已省略'),
   J({ kept: cn.keptBytes, orig: cn.originalBytes }))
-ok('① 保留长度不超上限', cn.keptBytes <= ON_LIMIT, cn.keptBytes + ' <= ' + ON_LIMIT)
 // 这条是**假绿的照妖镜**：旧判据（bytes >= max）在同一个样本上会给出 false。
 ok('① 该样本正是旧判据会漏判的那类：bytes < maxBytes 而标记为 true',
   cn.bytes < cn.maxBytes && cn.truncated === true, J({ bytes: cn.bytes, max: cn.maxBytes, flag: cn.truncated }))
 
-const ascii = await putRule('a'.repeat(10000))
-ok('① ASCII 10,000 B ⇒ truncated === true 且原始/保留长度都带出',
-  ascii.truncated === true && ascii.originalBytes === 10000 && ascii.keptBytes === 5590 && ascii.bytes === ascii.keptBytes,
+const asciiRaw = 'a'.repeat(ON_LIMIT + 4096)
+const ascii = await putRule(asciiRaw)
+ok('① 超长 ASCII ⇒ truncated === true 且原始/保留长度都带出',
+  ascii.truncated === true && ascii.originalBytes === B(asciiRaw) && ascii.bytes === ascii.keptBytes,
   J({ flag: ascii.truncated, orig: ascii.originalBytes, kept: ascii.keptBytes }))
-ok('① ASCII 该样本同样会让旧判据漏判（bytes 5,590 < 6,144）',
-  ascii.bytes < ascii.maxBytes && ascii.truncated === true, J({ bytes: ascii.bytes }))
+ok('① ASCII 该样本同样会让旧判据漏判（bytes 必然小于上限）',
+  ascii.bytes < ascii.maxBytes && ascii.truncated === true, J({ bytes: ascii.bytes, max: ascii.maxBytes }))
 
 // ---- ② 恰好等于上限：不能截断，标记必须为假 ----
 console.log('— ② 边界：恰好等于上限 —')
@@ -121,7 +126,7 @@ ok('④ 极短规则 ⇒ truncated === false 且内容逐字节原样',
 // ---- ⑤ 标记与内容一致（把"标记 false 但内容明显变短"直接堵死）----
 console.log('— ⑤ 标记 ⟺ 内容 —')
 const cases = [
-  ['超长中文', cnRule, cn], ['超长 ASCII', 'a'.repeat(10000), ascii],
+  ['超长中文', cnRule, cn], ['超长 ASCII', asciiRaw, ascii],
   ['恰好上限', exactText, exact], ['上限-1', 'y'.repeat(ON_LIMIT - 1), justUnder],
   ['全空白', '   \n\t\n', blank], ['极短', short, tiny],
 ]
@@ -177,7 +182,8 @@ const putJ = async (p, obj) => {
 
 const putRes = await putJ('/cc/gate.json', { text: cnRule })
 ok('⑦ PUT /cc/gate.json 响应里就有截断标记与原/留长度',
-  putRes.status === 200 && putRes.body.truncated === true && putRes.body.originalBytes === 19998 && putRes.body.keptBytes === 5839,
+  putRes.status === 200 && putRes.body.truncated === true
+  && putRes.body.originalBytes === B(cnRule) && putRes.body.keptBytes === cn.keptBytes,
   J(putRes.body))
 ok('⑦ PUT 响应的老字段未动（bytes / lines / source / enabled 都在且自洽）',
   putRes.body.bytes === putRes.body.keptBytes && putRes.body.source === 'override'
@@ -186,7 +192,7 @@ ok('⑦ PUT 响应的老字段未动（bytes / lines / source / enabled 都在�
 const g1 = await getJ('/cc/gate.json')
 const gg = g1.body.gate
 ok('⑦ GET /cc/gate.json 的标记与内容一致（truncated=true 且 text 长度 === keptBytes）',
-  g1.status === 200 && gg.truncated === true && gg.originalBytes === 19998 && gg.keptBytes === 5839
+  g1.status === 200 && gg.truncated === true && gg.originalBytes === B(cnRule) && gg.keptBytes === cn.keptBytes
   && Buffer.byteLength(gg.text, 'utf8') === gg.keptBytes && gg.bytes === gg.keptBytes, J(gg))
 const s1 = await getJ('/cc/settings.json')
 const sg = s1.body.gate || {}
@@ -194,7 +200,7 @@ ok('⑦ GET /cc/settings.json 内嵌的 gate 同样是显式标记（与 gate.js
   s1.status === 200 && sg.truncated === true && sg.originalBytes === gg.originalBytes && sg.keptBytes === gg.keptBytes
   && sg.bytes === gg.bytes && sg.text === gg.text, J({ s: sg.truncated, g: gg.truncated }))
 ok('⑦ 老客户端读到的 bytes 仍是"实际注入字节数"，没被换成原文长度',
-  sg.bytes === 5839 && sg.maxBytes === ON_LIMIT, J({ bytes: sg.bytes, max: sg.maxBytes }))
+  sg.bytes === cn.keptBytes && sg.maxBytes === ON_LIMIT, J({ bytes: sg.bytes, max: sg.maxBytes }))
 
 // 短规则经 HTTP 往返：标记为假，且内容原样
 await putJ('/cc/gate.json', { text: short })
