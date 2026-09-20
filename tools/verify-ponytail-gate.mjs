@@ -41,8 +41,8 @@ const gateOn = host.gatePromptText({ gateEnabled: true })
 ok('门禁段不含 ponytail 内容（两段各读各的文件）', !gateOn.includes('Ponytail') && !gateOn.includes('七级梯子'))
 ok('ponytail 段不是门禁段的别名', on !== gateOn)
 ok('段名唯一且带插件前缀', host.PONY_SECTION === 'dsh-cache-control:ponytail-gate' && host.PONY_SECTION !== host.GATE_SECTION)
-ok('段序落在守则(400)/形状(405) 之后、plan 政策(500) 之前',
-  host.PONY_SECTION_ORDER > 405 && host.PONY_SECTION_ORDER < 500, 'order=' + host.PONY_SECTION_ORDER)
+ok('段序紧接守则之后、plan 政策(500) 之前（v1.10.1 定稿：守则400→ponytail405→形状410）',
+  host.PONY_SECTION_ORDER > host.GATE_SECTION_ORDER && host.PONY_SECTION_ORDER < 500, 'order=' + host.PONY_SECTION_ORDER)
 
 console.log('\n— 2. 缓存独立（两段的回归核心）—')
 fs.writeFileSync(gateFile, '门禁自定义 A', 'utf8')

@@ -2,6 +2,11 @@
 
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
 
+## 1.10.1 — 2026-09-21 · 改段序：守则(400) → ponytail(405) → 输出形状(410)
+
+**需求**（用户）：ponytail 不该排在 ADHD 形状规则之后——编码纪律与守则 R5 同源，应贴着守则走。
+**改动**：`PONY_SECTION_ORDER` 410→405；对偶改动在 dsh-output-shape v0.3.1（`SHAPE_SECTION_ORDER` 405→410）。verify-shape 里三处写死的 405 改为读常量/新契约值，⑥ 组把"必须 >405"钉进断言。**跨插件顺序约定第一次成为事实**：以后动这两个 order 要同时查两边的套件。
+
 ## 1.10.0 — 2026-09-21 · 加 ponytail 编码纪律段：与会话守则同构的第二段常驻规则 + 独立开关
 
 **需求**（用户 2026-09-21）：把 GitHub [DietrichGebert/ponytail](https://github.com/dietrichgebert/ponytail)（MIT）蒸馏进会话策略插件，做成一个开关 —— 开 = 全文常驻注入 system prompt，关 = 不注入。落点选本插件（而非 dsh-output-shape），与会话守则 R1–R7 同住一处；chip 上第三段「懒码」一键切换。

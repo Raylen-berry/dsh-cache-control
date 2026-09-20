@@ -178,9 +178,9 @@ export const GATE_MAX_BYTES = 16 * 1024
 export const GATE_SECTION = 'dsh-cache-control:session-gate'
 export const GATE_SECTION_ORDER = 400
 
-/** ponytail 段紧跟会话守则（400）与输出形状（405）之后，仍在 plan 政策(500) 之前。 */
+/** 段序（v1.10.1 定稿）：守则 400 → ponytail 405 → 输出形状(dsh-output-shape) 410，都在 plan 政策(500) 之前。 */
 export const PONY_SECTION = 'dsh-cache-control:ponytail-gate'
-export const PONY_SECTION_ORDER = 410
+export const PONY_SECTION_ORDER = 405
 
 /** 写入 config 时的标记注释：既便于用户识别，也让插件能识别“这是我写过的行”。 */
 const MANAGER_MARK = '# managed by dsh-cache-control (auto-rewritten)'
