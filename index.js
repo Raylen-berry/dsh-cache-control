@@ -50,6 +50,8 @@ const GET_PATH = '/cc/settings.json'
 const GATE_PATH = '/cc/gate.json'
 // ponytail 编码纪律的规则文本路由（v1.10.0），与 /cc/gate.json 同构。
 const PONY_PATH = '/cc/ponytail.json'
+// 自动代码审查（v1.11.0）：GET 回"技能注册状态 + ocr 是否可用"，PUT 切开关。
+const REVIEW_PATH = '/cc/review.json'
 
 // ── 存储用量与清理（v1.8.0）──────────────────────────────────────────────────
 // 用户要求：分开显示各类占用，清理要**先给候选清单**（文件、原因、预计释放），别一键乱删。
@@ -181,6 +183,126 @@ export const GATE_SECTION_ORDER = 400
 /** 段序（v1.10.1 定稿）：守则 400 → ponytail 405 → 输出形状(dsh-output-shape) 410，都在 plan 政策(500) 之前。 */
 export const PONY_SECTION = 'dsh-cache-control:ponytail-gate'
 export const PONY_SECTION_ORDER = 405
+
+// ── 自动代码审查（v1.11.0）───────────────────────────────────────────────────
+// **不注入常驻规则**：上游 alibaba/open-code-review 的 README 把"通用 agent + 自然语言 skill
+// 做审查"列为反面教材（漏审 / 行号漂移 / 质量不稳），并给出基准 —— 同模型下它的 F1 更高、
+// token 只用通用 agent 的约 1/9。所以这里只注册一个按需技能（skills/auto-code-review/SKILL.md），
+// 由 ocr 的 delegate 模式现取"该审哪些文件 + 这些文件命中哪些规则"，判断仍交给当前模型。
+// 零常驻 token；规则文本跟着上游升级，不在本仓库里腐烂。许可证见 NOTICE。
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.')
+export const SKILLS_ROOT = path.join(PACKAGE_ROOT, 'skills')
+export const REVIEW_SKILL_NAME = 'auto-code-review'
+
+/**
+ * 从 SKILL.md 顶部 frontmatter 取 name / description / whenToUse（与 dsh-output-shape 同一口径）。
+ * 只支持 `key: value` 与 `key: >` 折叠块两种写法 —— 我们的技能文件就这一份，不做 YAML 全家桶。
+ */
+export function parseSkillFrontmatter(text) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(String(text || ''))
+  if (!m) return { attrs: {}, body: String(text || '') }
+  const attrs = {}
+  const lines = m[1].split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const kv = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(lines[i])
+    if (!kv) continue
+    const key = kv[1]
+    let val = kv[2].trim()
+    if (val === '>' || val === '|' || val === '') {
+      // 折叠块：吃掉后续缩进行，压成一行
+      const buf = []
+      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) { buf.push(lines[++i].trim()) }
+      val = buf.join(' ')
+    }
+    attrs[key] = val.replace(/^["']|["']$/g, '')
+  }
+  return { attrs, body: String(text).slice(m[0].length) }
+}
+
+/**
+ * 探测 ocr 是否可用。**不出网、不装东西**：只按候选名试跑一次 `--version`。
+ * 返回 { found, version, command }。找不到是正常状态（换机器没装），界面据此提示。
+ */
+/**
+ * ocr 可执行文件的探测顺序。**不能只靠 PATH**：DSH Desktop 的宿主进程用的是自己那份
+ * `.desktop-bin` 环境，npm 全局 bin（%APPDATA%\Roaming\npm）常常不在里面 —— 本机实测就是
+ * 这样（命令行里 `ocr` 能跑、插件里 spawn 'ocr' 报 ENOENT）。所以显式补一条 npm 全局路径。
+ */
+export function ocrCandidates(env = process.env) {
+  const list = ['ocr']
+  const appdata = env.APPDATA || (env.USERPROFILE ? path.join(env.USERPROFILE, 'AppData', 'Roaming') : '')
+  if (appdata) list.push(path.join(appdata, 'npm', 'ocr.cmd'))
+  return list
+}
+
+/**
+ * 探测 ocr 是否可用。**不出网、不装东西**：只按候选名试跑一次 `--version`。
+ * 返回 { found, version, command }。找不到是正常状态（换机器没装），界面据此提示。
+ *
+ * ⚠ Node ≥ 18.20/20.12/24 起，`execFile` 直接 spawn `.cmd`/`.bat` 会抛 **EINVAL**（CVE-2024-27980
+ * 的修复），不是 ENOENT —— 而 npm 在 Windows 上装的全局 CLI 恰恰就是 `.cmd` shim。所以命中
+ * `.cmd` 后缀时必须走 `{ shell: true }`；否则探测会永远假失败，界面上一直显示"未安装"。
+ */
+export async function detectOcr(runner, candidates) {
+  const run = runner || (async (cmd) => {
+    const { execFileSync } = await import('node:child_process')
+    // 参数是固定的 '--version'、无任何外部输入 ⇒ shell 拼接面为零。DEP0190 只在"args + shell:true"
+    // 同时出现时才告警，所以 .cmd 这一路改成**整条命令进 shell、不传 args**。
+    const opts = { timeout: 8000, windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    try { return String(execFileSync(cmd, ['--version'], opts)) } catch { /* 换下一条 */ }
+    if (/\.cmd$/i.test(cmd)) {
+      try { return String(execFileSync(`"${cmd}" --version`, { ...opts, shell: true })) } catch { return null }
+    }
+    return null
+  })
+  for (const cmd of (candidates || ocrCandidates())) {
+    let out = null
+    try { out = await run(cmd) } catch { out = null }
+    if (typeof out === 'string' && out.trim() !== '') {
+      const v = /v?(\d+\.\d+\.\d+)/.exec(out)
+      return { found: true, version: v ? v[1] : '', command: cmd }
+    }
+  }
+  return { found: false, version: '', command: '' }
+}
+
+/** ocr 探测结果按 TTL 记忆：这是子进程调用，不能每次 GET 都 spawn 一遍。 */
+const OCR_PROBE_TTL_MS = 60_000
+let ocrProbe = { at: 0, value: null }
+
+export async function probeOcr(now = Date.now(), runner) {
+  if (ocrProbe.value && now - ocrProbe.at < OCR_PROBE_TTL_MS) return ocrProbe.value
+  const value = await detectOcr(runner)
+  ocrProbe = { at: now, value }
+  return value
+}
+
+/** 审查卡要展示的全部事实：技能文件在不在、注册了没、ocr 装没装。前端不再自己猜。 */
+export async function reviewMeta(settings, state, registeredOverride) {
+  const skillPath = path.join(SKILLS_ROOT, REVIEW_SKILL_NAME, 'SKILL.md')
+  let bytes = 0
+  let description = ''
+  try {
+    const raw = readFileSync(skillPath, 'utf8')
+    bytes = Buffer.byteLength(raw, 'utf8')
+    description = (parseSkillFrontmatter(raw).attrs.description || '').replace(/\s+/g, ' ').trim()
+  } catch { bytes = 0 }
+  const ocr = await probeOcr()
+  return {
+    enabled: settings.reviewSkillEnabled === true,
+    skillName: REVIEW_SKILL_NAME,
+    skillPath,
+    skillBytes: bytes,
+    description,
+    registered: (registeredOverride || state.registered).includes(REVIEW_SKILL_NAME),
+    skillsService: state.serviceAvailable !== false,
+    ocrFound: ocr.found,
+    ocrVersion: ocr.version,
+    ocrCommand: ocr.command,
+    // 常驻成本恒为 0 —— 这条是这张卡与 ponytail 卡的根本区别，界面要写出来。
+    residentBytes: 0,
+  }
+}
 
 /** 写入 config 时的标记注释：既便于用户识别，也让插件能识别“这是我写过的行”。 */
 const MANAGER_MARK = '# managed by dsh-cache-control (auto-rewritten)'
@@ -322,6 +444,9 @@ export const DEFAULTS = Object.freeze({
   // 都默认 false：不动宿主既有行为，想要干净再开。纯界面开关，host 只负责原样存取。
   hideResizer: false,
   hideDivider: false,
+  // 自动代码审查（v1.11.0）：注册按需技能 auto-code-review。默认**开** —— 技能不占常驻 token，
+  // 只在目录里多一行说明；关掉它连目录条目都没有。ocr 没装也照样注册（技能正文里有前置检查）。
+  reviewSkillEnabled: true,
 })
 
 /** 钉顶底衬模糊半径的取值区间（与 client 侧 clampBlur 同口径）。 */
@@ -369,12 +494,15 @@ export function sanitize(raw) {
   const chatWidthEnabled = src.chatWidthEnabled === true
   const hideResizer = src.hideResizer === true
   const hideDivider = src.hideDivider === true
+  // v1.11.0：审查技能开关。默认开，所以判据是 `!== false`（与 auto 同族），
+  // 不能写 `=== true` —— 那样旧 host / 旧盘上没这个字段时会被判成关，用户一升级就丢技能。
+  const reviewSkillEnabled = src.reviewSkillEnabled !== false
   // v1.6.1：接管前的压缩行原文。必须原样带出去 —— 任何一次写盘（含改外观）都不许把它吃掉，
   // 否则"关闭省缓存还原原状"就失去了依据。形状不合法时归 null（当作没有备份）。
   const compactionBackup = readBackup(src)
   return {
     enabled, triggerPct, retainPct, auto, gateEnabled, ponytailEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
-    chatWidth, chatWidthEnabled, hideResizer, hideDivider, compactionBackup,
+    chatWidth, chatWidthEnabled, hideResizer, hideDivider, reviewSkillEnabled, compactionBackup,
   }
 }
 
@@ -749,6 +877,8 @@ export async function apply(ctx) {
   }
   let gateSectionActive = false
   let ponySectionActive = false
+  // v1.11.0：审查技能。注册状态与 dispose 都记在这里，卸载时必须撤干净。
+  const reviewState = { registered: [], disposers: [], serviceAvailable: false }
 
   // 启动自检：与本机磁盘状态对账（例如 app 升级重置了组装文件之后）。
   try {
@@ -818,6 +948,69 @@ export async function apply(ctx) {
   } catch (err) {
     console.warn('[dsh-cache-control] systemPrompt unavailable, ponytail disabled: ' + String((err && err.message) || err))
   }
+
+  // ---- 自动代码审查（v1.11.0）：注册**按需技能**，不注入常驻段 ----
+  // 与上面两段的根本区别：这里一个字都不进 system prompt。技能装了只在目录里多一行说明，
+  // 正文由模型真正要用时才加载 ⇒ 零常驻 token；审什么文件、按哪条规则，每次现向 ocr 取。
+  // 开关关掉 ⇒ dispose 并清空目录条目（不是"留着但不用"）。
+  async function syncReviewSkill() {
+    const skillsService = ctx.get('skills')
+    reviewState.serviceAvailable = skillsService !== undefined
+    if (skillsService === undefined) return reviewState.registered.slice()
+    const want = readSettingsSync().reviewSkillEnabled === true
+    const have = reviewState.registered.length > 0
+    if (!want && !have) return reviewState.registered.slice()
+    if (!want && have) {
+      for (const d of reviewState.disposers) { try { d() } catch { /* 已撤 */ } }
+      reviewState.disposers = []
+      reviewState.registered = []
+      console.log('[dsh-cache-control] 审查技能已注销（开关关）')
+      return reviewState.registered.slice()
+    }
+    if (want && have) return reviewState.registered.slice()
+    let text = ''
+    try {
+      const { readFile } = await import('node:fs/promises')
+      text = await readFile(path.join(SKILLS_ROOT, REVIEW_SKILL_NAME, 'SKILL.md'), 'utf8')
+    } catch (err) {
+      console.warn('[dsh-cache-control] 审查技能正文读取失败：' + String((err && err.message) || err))
+      return reviewState.registered.slice()
+    }
+    const { attrs, body } = parseSkillFrontmatter(text)
+    const name = (attrs.name || REVIEW_SKILL_NAME).trim()
+    const description = (attrs.description || '').replace(/\s+/g, ' ').trim()
+    if (description === '') {
+      console.warn('[dsh-cache-control] 审查技能缺 description，未注册（目录里躺一个没说明的技能比少一个更糟）')
+      return reviewState.registered.slice()
+    }
+    try {
+      const dispose = skillsService.register({
+        name,
+        description,
+        ...(attrs.whenToUse ? { whenToUse: attrs.whenToUse } : {}),
+        content: body.trim(),
+        source: 'custom',
+        provider: 'dsh-cache-control',
+        invocation: { modelInvocable: true, userInvocable: true },
+        resourceBase: { kind: 'directory', path: path.join(SKILLS_ROOT, REVIEW_SKILL_NAME) },
+        path: path.join(SKILLS_ROOT, REVIEW_SKILL_NAME, 'SKILL.md'),
+      })
+      reviewState.disposers.push(dispose)
+      reviewState.registered.push(name)
+      console.log('[dsh-cache-control] 审查技能已注册：' + name)
+    } catch (err) {
+      console.warn('[dsh-cache-control] 审查技能注册失败：' + String((err && err.message) || err))
+    }
+    return reviewState.registered.slice()
+  }
+  await syncReviewSkill().catch((err) => {
+    console.warn('[dsh-cache-control] 审查技能初始化失败：' + String((err && err.message) || err))
+  })
+  ctx.effect(() => () => {
+    for (const d of reviewState.disposers) { try { d() } catch { /* 已撤 */ } }
+    reviewState.disposers = []
+    reviewState.registered = []
+  })
 
   const send = (res, status, obj) => {
     try {
@@ -1018,6 +1211,38 @@ export async function apply(ctx) {
       send(res, 405, { ok: false, error: 'method not allowed' })
     },
   }), 'dsh-cache-control: ponytail route')
+
+  // ---- 自动代码审查（v1.11.0）：状态查询 + 开关切换 ----
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: REVIEW_PATH,
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        try {
+          const s = await readSettings()
+          send(res, 200, { ok: true, review: await reviewMeta(s, reviewState) })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String((err && err.message) || err) })
+        }
+        return
+      }
+      if (req.method === 'PUT' || req.method === 'POST') {
+        try {
+          const parsed = JSON.parse(await readBody(req))
+          const next = sanitize(Object.assign({}, await readSettings(), {
+            reviewSkillEnabled: !(parsed && parsed.enabled === false),
+          }))
+          await writeSettings(next)
+          const registered = await syncReviewSkill()
+          send(res, 200, { ok: true, review: await reviewMeta(next, reviewState, registered) })
+        } catch (err) {
+          send(res, 400, { ok: false, error: String((err && err.message) || err) })
+        }
+        return
+      }
+      send(res, 405, { ok: false, error: 'method not allowed' })
+    },
+  }), 'dsh-cache-control: review route')
 
   const settings = await readSettings()
   const gateText = await loadGate()

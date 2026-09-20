@@ -1,14 +1,20 @@
 // ============================================================================
 // dsh-cache-control · Client half
 //
-// 设置页四块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里）：
-//   * 省缓存 —— 改写 standard preset 的 compaction 参数
+// 设置页七块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里）：
+//   * ① 省缓存 —— 改写 standard preset 的 compaction 参数
 //     （保存后作用于"之后新建的会话"）。
-//   * 会话守则 —— 把 session-gate.md 常驻注入 system prompt
+//   * ② 会话守则 —— 把 session-gate.md 常驻注入 system prompt
 //     （每个 model step 重新组装，故对已打开的会话下一步即生效，且不被压缩稀释）。
-//   * 气泡置顶 —— 最近一条「我的提问」钉顶（圆角矩形毛玻璃底衬随这条提问的实际长度
+//   * ③ ponytail —— 第二段常驻规则（编码纪律），与守则互不影响。
+//   * ④ 自动审查 —— 注册**按需技能** auto-code-review：一个字都不进 system prompt；
+//     审什么文件、按哪条规则，每次现向外部 ocr（open-code-review）的 delegate 模式取。
+//   * ⑤ 气泡置顶 —— 最近一条「我的提问」钉顶（圆角矩形毛玻璃底衬随这条提问的实际长度
 //     伸缩，长文限高 38vh、滚轮在气泡内滚，模糊度可调）、我的气泡透明。
-//   * 对话页 —— 固定会话宽度（原 bg-atelier「底图工坊 · 对话页」区，2026-09-07 移入）。
+//   * ⑥ 对话页 —— 固定会话列宽（原 bg-atelier「底图工坊 · 对话页」区，2026-09-07 移入）。
+//   * ⑦ 存储 —— 各用途占盘统计与清理。
+// 分区编号 v1.10.2 起重排为连续圈符（ponytail 曾是 "②b"，导致页面上出现两个 ②）；
+// v1.11.0 在 ponytail 之后插入「④ 自动审查」，后面依次顺延。
 // 各块互不隶属：面板里各自一条开关，各说各的生效语义。
 //
 // 仿 dsh-bg-atelier 的 __ModuleLoader__ 封装；状态经 host HTTP 接口读写。
@@ -81,7 +87,7 @@ window.__ModuleLoader__.load({
       '.cc-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);height:26px;padding:0 10px;border-radius:7px;font-size:12px;cursor:pointer}',
       '.cc-btn:hover{border-color:var(--dsw-alias-border-l3)}',
       '.cc-btn:disabled{opacity:.55;cursor:default}',
-      // 常用宽度快捷按钮（④ 对话页）：与 cc-btn 同族但更矮更轻，选中态用品牌色描边
+      // 常用宽度快捷按钮（⑥ 对话页）：与 cc-btn 同族但更矮更轻，选中态用品牌色描边
       '.cc-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}',
       '.cc-mini{border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));background:transparent;color:var(--dsw-alias-label-secondary);height:22px;padding:0 8px;border-radius:6px;font-size:11.5px;line-height:1;cursor:pointer;transition:border-color .12s,color .12s}',
       '.cc-mini:hover{border-color:var(--dsw-alias-border-l3)}',
@@ -280,6 +286,18 @@ window.__ModuleLoader__.load({
         ponytailSaving: false,
         ponytailError: '',
         ponytailReady: true,
+        // 自动代码审查（v1.11.0）：**按需技能**，不注入常驻段 ⇒ residentBytes 恒 0。
+        reviewEnabled: true,
+        reviewRegistered: false,
+        reviewSkillPath: '',
+        reviewSkillBytes: 0,
+        reviewOcrFound: false,
+        reviewOcrVersion: '',
+        reviewOcrCommand: '',
+        reviewSaving: false,
+        reviewError: '',
+        reviewReady: true,   // false = 当前运行的 host 还没有 /cc/review.json
+        reviewOcrBusy: false,
         // 会话区外观
         pinLastUser: false,
         clearBubble: false,
@@ -448,6 +466,18 @@ window.__ModuleLoader__.load({
         if (res.gate === undefined) patch.gateReady = false
         // 同理：ponytail 字段缺失 = host 半还是 v1.9.x，界面禁用并提示重启
         if (res.ponytail === undefined) patch.ponytailReady = false
+        // v1.11.0：review 字段缺失 = host 半还没有 /cc/review.json，卡片禁用并提示重启
+        if (res.review === undefined) patch.reviewReady = false
+        else {
+          var rv = res.review
+          patch.reviewEnabled = rv.enabled !== false
+          patch.reviewRegistered = !!rv.registered
+          patch.reviewSkillPath = rv.skillPath || ''
+          patch.reviewSkillBytes = Number(rv.skillBytes) || 0
+          patch.reviewOcrFound = !!rv.ocrFound
+          patch.reviewOcrVersion = rv.ocrVersion || ''
+          patch.reviewOcrCommand = rv.ocrCommand || ''
+        }
       }
       STORE.set(patch)
       applyAppearance(STORE.state)
@@ -460,6 +490,55 @@ window.__ModuleLoader__.load({
         .catch(function (e) {
           STORE.set({ loading: false, error: '加载失败: ' + String(e) })
         })
+      // 审查卡的状态（ocr 装没装、技能注册了没）在另一条路由上：settings.json 里没有它，
+      // 所以单独拉一次。旧 host 返回 404 ⇒ reviewReady=false，卡片自己会提示重启。
+      reloadReview()
+    }
+
+    /** v1.11.0：拉审查卡状态。enabled 与 registered 都以 host 为准，前端不自己判。 */
+    function reloadReview() {
+      fetch('/cc/review.json', { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) { STORE.set({ reviewReady: false }); return null }
+          return r.json()
+        })
+        .then(function (res) {
+          var rv = res && res.review
+          if (!rv) return
+          STORE.set({
+            reviewReady: true,
+            reviewEnabled: rv.enabled !== false,
+            reviewRegistered: !!rv.registered,
+            reviewSkillPath: rv.skillPath || '',
+            reviewSkillBytes: Number(rv.skillBytes) || 0,
+            reviewOcrFound: !!rv.ocrFound,
+            reviewOcrVersion: rv.ocrVersion || '',
+            reviewOcrCommand: rv.ocrCommand || '',
+            reviewError: '',
+          })
+        })
+        .catch(function () { STORE.set({ reviewReady: false }) })
+    }
+
+    /** 切审查技能开关：走 /cc/review.json，host 侧负责注册/注销，不等主设置那条防抖保存。 */
+    function setReviewEnabled(v) {
+      STORE.set({ reviewSaving: true, reviewError: '', reviewEnabled: v })
+      fetch('/cc/review.json', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: v === true }),
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+        .then(function (res) {
+          if (!res.ok || !res.j || res.j.ok !== true) throw new Error((res.j && res.j.error) || ('http ' + res.j.status))
+          var rv = res.j.review || {}
+          STORE.set({
+            reviewSaving: false, reviewError: '',
+            reviewRegistered: !!rv.registered,
+            reviewEnabled: rv.enabled !== false,
+          })
+        })
+        .catch(function (e) { STORE.set({ reviewSaving: false, reviewError: '保存失败: ' + String(e) }) })
     }
 
     var saveTimer = null
@@ -499,6 +578,8 @@ window.__ModuleLoader__.load({
           hideResizer: s.hideResizer,
           // v1.7.0 拆出的第二个开关（侧栏/详情栏分隔条），别再犯同样的漏。
           hideDivider: s.hideDivider,
+          // v1.11.0：审查技能开关。同样必须出现在载荷里，否则拨得动、不落盘。
+          reviewSkillEnabled: s.reviewEnabled,
         }),
       })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
@@ -1141,7 +1222,7 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------- 隐藏原生拖拽条（两个开关）--
     // DSH 的框架里有两类 `cursor:*-resize` 的把手，v1.7.0 起**各归一个开关**：
     //   ① 会话区两竖杠（宽度把手，实测 ._8JRpoa_widthHandle，左右各一条，hover 才亮发光条）
-    //      —— 本插件把会话列宽钉成固定百分比之后（④ 对话页），拖它不再改变列宽，
+    //      —— 本插件把会话列宽钉成固定百分比之后（⑥ 对话页），拖它不再改变列宽，
     //      只剩"鼠标扫过去冒出两竖杠、拖了却什么都不动"的体验（用户 2026-09-14 反馈）。
     //      键名沿用 v1.6.0 的 hideResizer（盘上已有 true 的存量，语义收窄为只管这两条）。
     //   ② 侧栏/详情栏分隔条（实测 ._1tdjgG_handle，8px 宽，挂在 AppFrame 的 grid 列缝上）
@@ -1531,6 +1612,38 @@ window.__ModuleLoader__.load({
             '会话守则是"必须遵守的规则"，不是"模型无法违反"——它约束行为，不产生技术硬拦截。')))
     }
 
+    // ---------------------------------------- 设置页：自动代码审查卡（④） --
+    function ReviewCard() {
+      var s = useCache()
+      return h('div', { className: 'cc-card' },
+        Switch('注册 auto-code-review 技能（按需加载，不占常驻 token）', s.reviewEnabled, setReviewEnabled,
+          !s.reviewReady || s.reviewSaving),
+        !s.reviewReady
+          ? h('div', { className: 'cc-err' }, '未装载：当前运行的 host 还没有 /cc/review.json，请重启桌面应用后再操作。')
+          : h('div', { className: 'cc-muted' },
+            '技能文件 ' + kb(s.reviewSkillBytes) + ' · ' + (s.reviewSkillPath || '（未知路径）') +
+            ' · 常驻注入 ' + (s.reviewRegistered ? '0 B（只进目录，用到才加载正文）' : '未注册')),
+        h('div', { className: s.reviewOcrFound ? 'cc-ok' : 'cc-warn' },
+          s.reviewOcrFound
+            ? 'ocr 已就绪：v' + (s.reviewOcrVersion || '?') + '（' + (s.reviewOcrCommand || '') + '）'
+            : '没找到 ocr 可执行文件 —— 技能会照常注册，但跑到第一步就会停下说明。装一个：npm install -g @alibaba-group/open-code-review'),
+        h('div', { style: { display: 'flex', gap: '8px' } },
+          h(Btn, { onClick: reloadReview }, '重新检测')),
+        s.reviewError ? h('p', { className: 'cc-err' }, s.reviewError) : null,
+        h(Fold, { label: '为什么不是常驻规则' },
+          h('div', { className: 'cc-note' },
+            '上游 alibaba/open-code-review（Apache-2.0）的 README 把"通用 agent + 自然语言 skill 做审查"' +
+            '列为反面教材：大 changeset 选择性漏审、报出的位置与真实行号漂移、prompt 微调就质量大幅波动' +
+            '——根因是纯语言驱动对审查过程没有硬约束。它的基准（AACR-bench：200 个真实 PR、1,505 条标注）' +
+            '显示同模型下 F1 更高而 token 只用通用 agent 的约 1/9。所以这里一个字都不进 system prompt：' +
+            '每次现向 ocr 取「该审哪些文件」（delegate preview）与「这些文件命中哪些规则」（delegate rule），' +
+            '判断仍由当前模型做，不需要 API key。规则跟着上游升级，不在本仓库里腐烂。'),
+          h('div', { className: 'cc-note' },
+            '与 ponytail / 会话守则 R5 的分工：那两个管"少写、写最小实现"，这张卡管"写出来的东西对不对"。' +
+            '重叠处（死代码、过度抽象）以 ponytail 的判断为准。'),
+          h('div', { className: 'cc-path' }, '技能正文：' + (s.reviewSkillPath || '（未就绪）'))))
+    }
+
     // ---------------------------------------------- 设置页：ponytail 编码纪律卡 --
     function PonytailCard() {
       var s = useCache()
@@ -1656,7 +1769,7 @@ window.__ModuleLoader__.load({
             + '写内联 width），复制/时间行再绝对定位到最后一行的字尾，所以框贴文字、键贴文末。')))
     }
 
-    // ------------------------------------------------ 设置页：对话页卡（④） --
+    // ------------------------------------------------ 设置页：对话页卡（⑥） --
     // 常用宽度快捷键（bg-atelier 原样搬来）
     var WIDTH_PRESETS = [60, 70, 80, 90, 100]   // v1.5.0: 原 px 快捷键(1280/1600/1920/2560/3840) → 百分比
 
@@ -1704,7 +1817,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * ⑤ 存储（v1.8.0）：各用途分别占多少盘；清理**先给候选清单**再动手。
+     * ⑦ 存储（v1.8.0；v1.10.2 起编号 ⑥，v1.11.0 插入「④ 自动审查」后顺延为 ⑦）：各用途分别占多少盘；清理**先给候选清单**再动手。
      * 清理走"移到回收目录"而不是删（不可逆操作先从可回溯开始），回收目录自己再单独清。
      */
     function fmtBytes(bytes) {
@@ -1834,7 +1947,7 @@ window.__ModuleLoader__.load({
         h('section', null,
           h('h3', { className: 'cc-h' }, '会话策略'),
           h(Fold, { label: '总述' },
-            h('p', { className: 'cc-sub' }, '四块互相独立的开关：① 压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；② 会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；③ 气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；④ 对话页只管会话列宽（原底图工坊里的同名区块）。'))),
+            h('p', { className: 'cc-sub' }, '七块互相独立的开关：① 压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；② 会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；③ ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；④ 自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；⑤ 气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；⑥ 对话页只管会话列宽（原底图工坊里的同名区块）；⑦ 存储管各用途占盘与清理。'))),
         h('section', null,
           h('h3', { className: 'cc-h' }, '① 省缓存'),
           CacheCard()),
@@ -1842,20 +1955,23 @@ window.__ModuleLoader__.load({
           h('h3', { className: 'cc-h' }, '② 会话守则'),
           GateCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '②b ponytail'),
+          h('h3', { className: 'cc-h' }, '③ ponytail'),
           PonytailCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '③ 气泡置顶'),
+          h('h3', { className: 'cc-h' }, '④ 自动审查'),
+          ReviewCard()),
+        h('section', null,
+          h('h3', { className: 'cc-h' }, '⑤ 气泡置顶'),
           AppearanceCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '④ 对话页'),
+          h('h3', { className: 'cc-h' }, '⑥ 对话页'),
           ChatPageCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '⑤ 存储'),
+          h('h3', { className: 'cc-h' }, '⑦ 存储'),
           StorageCard()),
         h('section', null,
           h(Fold, { label: '关于本页' },
-            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则开关只决定规则段是否为空（空段在提示词渲染时被丢弃）；③④ 两项纯界面，只改样式与 CSS 变量。规则文本见上列路径。'))))
+            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则开关只决定规则段是否为空（空段在提示词渲染时被丢弃）；⑤⑥ 两项纯界面，只改样式与 CSS 变量。规则文本见上列路径。'))))
     }
 
     // ------------------------------------------ 输入工具条 chip + 弹出面板 --
@@ -2012,10 +2128,10 @@ window.__ModuleLoader__.load({
           s.gateSaving ? h('span', { className: 'cc-muted', key: 'hint' }, '规则处理中…') : null),
       ]
 
-      // ②b ponytail —— 独立开关，与门禁同族（v1.10.0）
+      // ③ ponytail —— 独立开关，与门禁同族（v1.10.0；v1.10.2 起编号从 ②b 改为 ③，见 CHANGELOG）
       var ponySection = [
         h('div', { className: 'cc-sect', key: 'h' },
-          h('span', { className: 'cc-sectTitle' }, '②b ponytail'),
+          h('span', { className: 'cc-sectTitle' }, '③ ponytail'),
           h('span', { className: 'cc-sectHint' }, '下一步即生效')),
         h(React.Fragment, { key: 'on' }, Switch('启用编码纪律（YAGNI / 梯子 / 修根因）', s.ponytailEnabled, setPonytailEnabled, !s.ponytailReady)),
         s.ponytailReady ? h('div', { key: 'meta' }, RuleSummary(s, 'ponytail'))

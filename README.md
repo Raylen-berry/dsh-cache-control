@@ -1,17 +1,19 @@
-# dsh-cache-control（会话策略：省缓存 / 会话守则 / 气泡置顶 / 对话页）
+# dsh-cache-control（会话策略：省缓存 / 会话守则 / ponytail / 自动审查 / 气泡置顶 / 对话页 / 存储）
 
-给 DSH Desktop（dsh 0.7.2-alpha，web profile）加**四个互相独立的开关**，设置页名称就叫
-**会话策略**（4 字，四个分区标题 ① 省缓存 / ② 会话守则 / ③ 气泡置顶 / ④ 对话页 一律 2–4 字）：
-① ② 在输入框右下角的 chip 上各自可点，③ ④ 在设置页里。
+给 DSH Desktop（dsh 0.7.2-alpha，web profile）加**七个互相独立的开关**，设置页名称就叫
+**会话策略**（4 字，七个分区标题 ① 省缓存 / ② 会话守则 / ③ ponytail / ④ 自动审查 /
+⑤ 气泡置顶 / ⑥ 对话页 / ⑦ 存储 一律 2–4 字；编号 v1.10.2 起重排为连续圈符、v1.11.0 插入 ④ 后顺延）：
+chip 上只有 ① 省缓存 / ② 提问 / ③ 懒码 三段各自可点，④⑤⑥⑦ 全部走设置页。
 
-| | ① 省缓存 · 压缩策略 | ② 会话守则 · 长期规则 |
-|---|---|---|
-| 动的是什么 | standard preset 里 `@deepseek-ai/dsh-compaction-basic` 的 config | system prompt 里一个常驻段（规则文本） |
-| 生效时机 | **之后新建的会话**（preset 按组装文件 mtime 分代） | **所有会话的下一个 model step**（含当前会话，无需重启） |
-| 会被压缩冲掉吗 | — | 不会：压缩只折叠对话历史，system prompt 每请求重发 |
-| 代价 | 无额外 token | 规则体积 × 每请求（含子代理/工作流子会话） |
+| | ① 省缓存 · 压缩策略 | ② 会话守则 · 长期规则 | ③ ponytail · 编码纪律 | ④ 自动审查 · 按需技能 |
+|---|---|---|---|---|
+| 动的是什么 | standard preset 里 `@deepseek-ai/dsh-compaction-basic` 的 config | system prompt 里一个常驻段（规则文本） | system prompt 里的第二个常驻段（与守则同构、独立开关） | 宿主 `skills` 目录里的一个条目（**不进 system prompt**） |
+| 生效时机 | **之后新建的会话**（preset 按组装文件 mtime 分代） | **所有会话的下一个 model step**（含当前会话，无需重启） | 同 ② | 模型/用户调用技能那一刻 |
+| 会被压缩冲掉吗 | — | 不会：压缩只折叠对话历史，system prompt 每请求重发 | 同 ② | 不适用（压根不在 prompt 里） |
+| 代价 | 无额外 token | 规则体积 × 每请求（含子代理/工作流子会话） | 约 1.3K token/请求 × 所有会话 | **注册零 token**；成本只在真调用时 |
 
-③ 气泡置顶与 ④ 对话页是纯界面开关，只改样式与 CSS 变量，不动消息数据、不动宿主代码。
+⑤ 气泡置顶与 ⑥ 对话页是纯界面开关，只改样式与 CSS 变量，不动消息数据、不动宿主代码；
+⑦ 存储只做各用途占盘统计与"移入回收"式清理。
 只影响 `standard` 之外的说明：会话守则走宿主全局提示词层，对**所有 preset、子代理、workflow 子会话**都生效。
 
 ## ① 省缓存 · 压缩策略
@@ -23,7 +25,7 @@
   `$DSH_HOME/dsh-cache-control/settings.json` 的 `compactionBackup` 字段里，逐字节回写）。
   没有备份可还原时（例如手工删过 settings.json）才回落到"移除受管 config、恢复 DSH 出厂默认"。
 - **只有压缩字段会碰那个文件**（v1.6.1 起）：`enabled` / `triggerPct` / `retainPct` / `auto`
-  没变时，保存设置**完全不触碰** standard 组装文件 —— 只改 ③④ 的外观开关不会再把你
+  没变时，保存设置**完全不触碰** standard 组装文件 —— 只改 ⑤⑥ 的外观开关不会再把你
   自己写在那一行里的压缩配置抹掉（旧版每次保存都无条件重写，这是破坏性缺陷）。
 - **压缩触发点**：占路由模型上下文窗口的百分比，默认 25%（deepseek-v4-flash 窗口 1,000,000
   tokens ⇒ 约 250k 触发）。
@@ -94,7 +96,71 @@
   「你的规则被截断了：原文 N 字节，实际注入 M 字节（超出 X 字节未进入提示词）」；编辑框里草稿
   超限时也会**提前**提示"保存后会被截断"。老客户端只读 `bytes`/`maxBytes` 照旧可用（字段只增不改）。
 
-### ③ 气泡置顶（纯界面，与①②独立）
+## ③ ponytail · 编码纪律（v1.10.0）
+
+与 ② 会话守则**同构的第二段常驻规则**：蒸馏自 GitHub [DietrichGebert/ponytail](https://github.com/dietrichgebert/ponytail)（MIT），
+最懒资深工程师的七级梯子与硬约束。独立开关 `ponytailEnabled`（默认关），提示词段
+`dsh-cache-control:ponytail-gate`（order 405，紧挨守则 400、在输出形状 410 之前）。
+两段各读各的文件（`session-gate.md` / `ponytail.md`）、各有独立的 mtime+size 缓存，互不顶掉；
+自定义覆盖走 `/cc/ponytail.json`（GET 预览 / PUT 写 override / 空文删回内置）。
+代价：开着约 1.3K token/请求 × **所有**会话（含子代理与非编码会话），正文里写明"只对编码任务生效"兜底行为。
+
+## ④ 自动审查 · 按需技能（v1.11.0）
+
+注册宿主 `skills` 服务里的 **auto-code-review**（正文 `skills/auto-code-review/SKILL.md`）。
+**这张卡与 ②③ 的根本区别：一个字都不进 system prompt** —— 注册状态零 token，正文只在模型或用户
+真调用那一刻加载。开关关掉 ⇒ dispose，目录里连条目都不留。
+
+### 为什么不蒸成常驻规则（这是本卡存在的理由）
+
+上游 [alibaba/open-code-review](https://github.com/alibaba/open-code-review)（Apache-2.0，阿里内部官方
+AI 审查助手开源化）的 README 把"通用 agent + 自然语言 skill 做审查"**列为反面教材**：
+
+| 通病 | 机制原因 |
+|---|---|
+| 覆盖不全 | 大 changeset 上 agent"抄近路"，选择性只审几个文件 |
+| 位置漂移 | 报出的问题与实际行号/文件对不上 |
+| 质量不稳 | 自然语言 skill 难调试，prompt 微调就大幅波动 |
+
+根因一句话：**纯语言驱动对审查过程没有硬约束**。它的解法是「确定性工程 × agent 混合」——
+选文件、分组、按文件特征匹配规则、评论定位、反思复核全部由代码保证；基准 AACR-bench
+（50 仓库 / 200 真实 PR / 1,505 条标注，80+ 资深工程师交叉验证）显示同模型下 F1 更高、
+**token 只用通用 agent 的约 1/9**，而 recall 有意更低（偏精确率、压噪声）。
+
+⇒ 抄规则文本进常驻段 = 只拿走它论证过会失败的那一半。ponytail 能常驻是因为它是风格取向
+（YAGNI、梯子），没有"覆盖率""定位准确率"这类可度量指标；审查有。所以本插件**不存规则正文**，
+每次现向 ocr 取，规则跟着上游升级、不在本仓库里腐烂。署名见 `NOTICE`。
+
+### 三步（技能正文就是照这个契约写的，本机 v1.12.7 实测）
+
+```bash
+ocr delegate preview --format json          # 该审哪些文件（reviewable_files[] / excluded_count）
+ocr delegate rule --format json <path>...   # 这些文件命中哪些规则（groups[].rule + files[]）
+# 然后逐组对着 diff 出结论：文件:行 + 违反哪条 + 一句为什么
+```
+
+范围不对时用 `--from main --to feat` 或 `-c <commit>` 重取，而不是手工挑文件。
+
+### 运行期依赖（本插件不打包、不下载、不自动安装）
+
+需要用户自行 `npm install -g @alibaba-group/open-code-review`（前置 Git ≥ 2.41）。
+卡的第三行直接显示探测结果：装了 ⇒ `ocr 已就绪：v1.12.7（<命令路径>）`；没装 ⇒ 黄字给安装命令。
+**探测不到不影响注册** —— 技能照常可用，只是跑到第一步就会停下说明，不会瞎猜。
+
+⚠ 两个 Windows 坑（都踩过，别再改回去）：
+1. `execFile('…ocr.cmd')` 在 Node ≥18.20/20.12/24 抛 **EINVAL**（CVE-2024-27980 修复），不是 ENOENT
+   —— npm 在 Windows 上装的全局 CLI 恰恰就是 `.cmd` shim。所以 `.cmd` 那一路走 `shell:true`
+   且**整条命令进 shell、不传 args**（传 args + shell 会刷 DEP0190 告警）。
+2. **DSH Desktop 宿主进程的 PATH 里没有 npm 全局 bin**：命令行里 `ocr` 能跑、插件里 spawn `'ocr'`
+   报 ENOENT。故 `ocrCandidates()` 显式补 `%APPDATA%\npm\ocr.cmd`。探测结果按 TTL 60s 记忆化，
+   不每次 GET 都 spawn 一遍子进程。
+
+### 与会话守则 R5 / ponytail 的分工
+
+那两个管"少写、写最小实现"，这张卡管"写出来的东西对不对"。重叠处（死代码、过度抽象）
+以 ponytail 的判断为准，技能正文里已写明不要重复提。
+
+## ⑤ 气泡置顶（纯界面，与①②③④独立）
 
 | 开关 | 效果 | 实现 |
 |---|---|---|
@@ -128,7 +194,7 @@
   ② `applyAppearance()` 里任何一步抛错（例如常量改名）会连带把后面的观察器全跳过 ⇒ 被钉元素
      不出现，看起来就是"模糊度失效"。现在每段各自 `try/catch` + `warnOnce`，首屏再补量两次，并在
      `document.fonts.ready` 后清签名重算（字体切换会改行宽，一次量错会被签名锁住）。
-- 设置页 ③ 气泡置顶 卡里带一行**底衬实测读数**：被钉元素有/无、`--cc-pin-blur`、
+- 设置页 ⑤ 气泡置顶 卡里带一行**底衬实测读数**：被钉元素有/无、`--cc-pin-blur`、
   `getComputedStyle(el,'::before').backdropFilter`、底衬宽、会话字号 +「重读」按钮 ⇒
   以后"看起来失效"能当场分辨是哪一种成因。
 - 只处理纯文字气泡；`data-cc-fit` 记签名，流式输出不会每帧重排；停用插件时 `stopFitWatch()`
@@ -186,7 +252,7 @@
 未装载=警示黄）。面板与分区头里的同名徽标**保持原样**（那里有底色对比的需要），所以规则限定在
 `.cc-chip` 作用域内。
 
-### ④ 对话页（固定会话列宽，v1.3.0 从 dsh-bg-atelier 移入）
+## ⑥ 对话页（固定会话列宽，v1.3.0 从 dsh-bg-atelier 移入）
 
 | 开关 | 效果 |
 |---|---|
@@ -213,12 +279,19 @@
   根节点一重建就把变量补写回去。
 - 滑杆拖动过程中只做即时预览（局部 state + 直接钉 CSS 变量），松手/失焦/方向键才 `STORE.set` → 存盘：
   否则每拖一格都会把设置页整页重渲染一遍，手感发涩。
-- 与 ③ 的联动：底衬宽度 v1.4.2 起跟随**这条提问的实测宽度**（`--cc-pin-w`），读不到几何时才退回
+- 与 ⑤ 的联动：底衬宽度 v1.4.2 起跟随**这条提问的实测宽度**（`--cc-pin-w`），读不到几何时才退回
   `--dsh-chat-content-width × .55` 的旧上限；所以这里改列宽，只在"兜底路径"下才会等比影响钉顶底衬。
 - **一次性迁移**：这两项原先存在 `$DSH_HOME/dsh-bg-atelier/settings.json`。host 启动时若发现自家
   `settings.json` 缺 `chatWidth` / `chatWidthEnabled`，就读底图工坊那份搬过来并写盘
   （`migrateFromAtelier()`，日志 `对话页宽度已从 dsh-bg-atelier 迁入`）；搬完之后自家有字段就不再读对方，
   你之后改的值不会被对方旧值盖回。bg-atelier v1.3.0 起客户端不再声明这两个字段，也就不会再 PUT 回去。
+
+## ⑦ 存储（v1.8.0）
+
+按**用途**分别统计各目录占了多少盘（会话记录 / 投影缓存 / 附件副本 / 浏览器观察窗 / 生图产物 /
+费用记录 / 本插件数据），给出文件数·字节·最新最旧时间与总计。清理只收"明确可再生成"的东西，
+且**先给候选清单再动手**、动作是**移入回收**而非删除；`purge` 才清空回收目录。
+host 三条路由：`GET /cc/storage`、`POST /cc/storage/clean`、`POST /cc/storage/purge`。
 
 ## 安装
 
@@ -273,9 +346,13 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 | --- | --- |
 | `tools/verify-gate-truncation.mjs` | 31 项通过 |
 | `tools/verify-host-width.mjs` | 全部 PASS |
-| `tools/verify-settings-payload.mjs` | 9 项通过（v1.7.0 起含 hideDivider 对齐断言） |
+| `tools/verify-settings-payload.mjs` | 9 项通过（v1.7.0 起含 hideDivider 对齐断言；v1.11.0 起含 reviewSkillEnabled 与"载荷锚点定位"两条） |
 | `tools/verify-panel-and-resizer.mjs` | 25 项通过（v1.7.0 起两类把手分开关断言） |
 | `tools/verify-session-gate.mjs` | 39 项通过（v1.9.4 起纳入；本机跑时另加真实 home 对照 3 条） |
+
+> 上表是 v1.9.x 那次"干净机器实测"的记录，当时确实只有 5 套。**v1.10.2 起进 CI 的是 7 套**：
+> 多出 `verify-ponytail-gate.mjs`（23 项，v1.10.0 纳入）与 `verify-gate-client.mjs`
+> （v1.11.0 起本机 76 项 / 无真实 home 时 74 项 + SKIP，夹具化见下面那条）。
 
 > `verify-panel-and-resizer.mjs` 原来因为"要本机 DSH 安装目录的 `node_modules/react`"被排除。
 > 现在 `react` 进 `devDependencies`，`run-all.mjs` 把 `DSH_APP_MODULES` 指向**仓库自己的 `node_modules/`**，
@@ -288,9 +365,16 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 > `@deepseek-ai/dsh-system-prompt` 走**自己 devDependencies** 里那份（createRequire 从仓库 package.json
 > 解析，版本与本安装宿主一致），所以把 `DSH_APP_MODULES` 指到空目录仍 39/39。
 
+> `verify-gate-client.mjs` 同样在 v1.10.2 挪回 CI，消除的是三条本机依赖：① preset 从 `%APPDATA%`
+> 复制 ⇒ 换成与 verify-session-gate 同款的最小夹具；② 收尾"真实 settings.json/gate.md 未被改动"
+> 两条硬读真实 home ⇒ 真实 home 不存在时 SKIP 并如实打印（本机跑仍是 76 条，CI 上 74 条 + SKIP）；
+> ③ primitives 桩原来要求"能读到宿主真包源码"才装载 ⇒ 改为始终按签名复刻桩，读不到只打一行 NOTE。
+> `react-dom` 随之补进 `devDependencies`（钉到与 react 同版本 18.3.1，原来只有 `react`、server.js 靠宿主目录）。
+> 反向证据（本轮实测）：`APPDATA` 指空目录后跑 `npm test` ⇒ **7/7 套件通过**，该套件 74 passed / 0 failed + SKIP；
+> verify-session-gate 同步退化为 36 项（它自己的真实 home 对照 3 条也走 SKIP）。
+
 **未纳入 CI** 的套件（原因同时写在 `tools/run-all.mjs` 的 `EXCLUDED` 里）：
-`verify-gate-client.mjs` / `verify-ui-appearance.mjs` / `verify-gate-http.mjs`
-（要 `%APPDATA%` 下的真实 preset/settings.json）。
+`verify-ui-appearance.mjs` / `verify-gate-http.mjs`（要 `%APPDATA%` 下的真实 preset）。
 
 > `verify-gate-http.mjs` **本轮没有做夹具化**：它先把真实 preset 复制到临时 `DSH_HOME`，
 > 然后有几条断言是"逐字节比对**真实** preset 有没有被本次验证改动"
@@ -315,10 +399,12 @@ dsh plugin --profile web add link:<同一个绝对路径>
 client 半在**服务启动时**才 compose 进图（依据见上一节），所以"装完刷新页面"是没用的。
 重启会掐断正在跑的会话轮次 —— 让用户自己挑时间。
 
-**C. 设置**不随仓库走**（换机器后四项开关全是默认关）**
-所有状态都在 `$DSH_HOME/dsh-cache-control/`：`settings.json`（四个开关 + 数值）、
-`gate.md`（② 会话守则的自定义覆盖，可选）。**仓库里没有它们**，因此换机器后要重新打开：
-① 省缓存 / ② 会话守则 / ③ 气泡置顶 / ④ 对话页 —— 否则会表现为"插件装了但什么都没发生"。
+**C. 设置**不随仓库走**（换机器后各开关全是默认关）**
+所有状态都在 `$DSH_HOME/dsh-cache-control/`：`settings.json`（各开关 + 数值）、
+`gate.md`（② 会话守则的自定义覆盖，可选）、`ponytail.md`（③ ponytail 的自定义覆盖，可选）。
+**仓库里没有它们**，因此换机器后要重新打开：
+① 省缓存 / ② 会话守则 / ③ ponytail / ⑤ 气泡置顶 / ⑥ 对话页 —— 否则会表现为"插件装了但什么都没发生"。
+（④ 自动审查按 DEFAULTS **默认开**，换机器不用拨；它只注册一个技能，ocr 没装也不报错，只是用到时第一步会停下说明。）
 
 **D. ① 省缓存改的是 preset，不是插件目录**
 它把参数写进 `$DSH_HOME/profiles/**/standard/agent.yml` 里 `compaction-basic` 那一行
@@ -354,7 +440,7 @@ node tools/settings.mjs import D:\cc-settings.json --yes    # 新机器（覆盖
 
 ```powershell
 node tools/verify-audit.mjs 2>$null; node tools/verify-host-width.mjs   # 期望全绿 / 无 FAIL
-# 设置页应出现「会话策略」四项；④ 对话页默认 80%（百分比，v1.5.0 起）
+# 设置页应出现「会话策略」七个分区（①–⑦ 连续编号）；⑥ 对话页默认 80%（百分比，v1.5.0 起）
 ```
 
 ## 验证
@@ -371,6 +457,12 @@ node tools/verify-ui-appearance.mjs   # 外观引擎 + 置顶跟随滚动选条 
 node tools/verify-host-width.mjs      # host：字段钳制 + 从底图工坊的一次性迁移（临时 DSH_HOME）
 node tools/verify-gate-truncation.mjs # 规则截断：原/留长度 + 显式标记 + 边界与两个 HTTP 响应契约
 ```
+
+④ 自动审查（v1.11.0）没有独立套件，断言分挂在两处：**payload 对齐**（`reviewSkillEnabled` 必须
+出现在主 PUT 载荷里 —— 这条正是 v1.6.0 `hideResizer` 那个"拨得动不落盘"bug 的守门人）与
+**client 渲染**（七个分区标题、①–⑦ 连续圈符、不许出现 `[圈符][字母]` 混编）。ocr 探测本身是
+子进程调用，不进套件（CI 上没有 ocr，且它属于"环境事实"而不是逻辑）；改探测逻辑时手工跑一次
+`node -e "import('./index.js').then(h=>h.probeOcr().then(console.log))"` 看结果。
 
 浏览器侧（会往 `tools/*-out/` 落 HTML/JSON/PNG，已在 `.gitignore` 里）：
 

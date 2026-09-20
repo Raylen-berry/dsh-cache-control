@@ -27,11 +27,16 @@ const ok = (name, cond, extra = '') => {
 
 /** 从一个 `关键字 {` 起、到下一个以 `}` 开头的行（trim 后）为止的顶层键名。
  *  注意收尾行的缩进不一样：DEFAULTS 是行首 `}`，保存载荷是缩进的 `}),` —— 所以按
- *  "trim 后以 } 开头" 判，不能写死 '\n}'（第一版就是这么错的：找不到收尾就抛错，套件本身在红）。 */
-function keysOfBlock(text, startPattern, label) {
-  const m = startPattern.exec(text)
+ *  "trim 后以 } 开头" 判，不能写死 '\n}'（第一版就是这么错的：找不到收尾就抛错，套件本身在红）。
+ *
+ *  ⚠ 必须从**函数定义处**起找，不能全文搜第一个匹配：v1.11.0 加了 setReviewEnabled() 之后，
+ *  文件里出现了第二个 `body: JSON.stringify({`（它是个单行小载荷 `{ enabled: ... }`），
+ *  全文搜会命中它并解析出 1 个键 —— 于是所有对齐断言集体假失败。锚点先定位
+ *  `function saveNow()`，再在它之后找载荷块。 */
+function keysOfBlock(text, startPattern, label, fromIndex = 0) {
+  const m = startPattern.exec(text.slice(fromIndex))
   if (!m) throw new Error('没找到代码块：' + label)
-  const lines = text.slice(m.index + m[0].length).split('\n')
+  const lines = text.slice(fromIndex + m.index + m[0].length).split('\n')
   const keys = []
   for (const line of lines) {
     if (line.trim().startsWith('}')) return keys
@@ -45,11 +50,19 @@ const hostSrc = fs.readFileSync(path.join(REPO, 'index.js'), 'utf8')
 const clientSrc = fs.readFileSync(path.join(REPO, 'client.js'), 'utf8')
 
 const defaults = keysOfBlock(hostSrc, /export const DEFAULTS = Object\.freeze\(\{/, 'host DEFAULTS')
-const payload = keysOfBlock(clientSrc, /body: JSON\.stringify\(\{/, 'client saveNow 载荷')
+const saveNowAt = clientSrc.indexOf('function saveNow()')
+const payload = keysOfBlock(clientSrc, /body: JSON\.stringify\(\{/, 'client saveNow 载荷', saveNowAt)
 
 console.log('— 1. 两边的字段集合 —')
 ok('DEFAULTS 解析出来了', defaults.length >= 10, defaults.length + ' 个: ' + defaults.join(','))
 ok('保存载荷解析出来了', payload.length >= 10, payload.length + ' 个: ' + payload.join(','))
+// 上面那条锚点修复的回归：载荷块必须是从 saveNow() 起的那一个，不是文件里更早出现的小载荷。
+ok('载荷块定位在 saveNow() 之后（没误命中别处的 body）',
+  saveNowAt >= 0 && clientSrc.indexOf('body: JSON.stringify({', saveNowAt) > saveNowAt,
+  'saveNow@' + saveNowAt + ' 载荷@' + clientSrc.indexOf('body: JSON.stringify({', saveNowAt))
+ok('解析出的载荷键数 ≥ DEFAULTS 键数（只多不少 = 抓对了整块）',
+  payload.length >= defaults.filter((k) => !EXCLUDE.has(k)).length,
+  'payload=' + payload.length + ' defaults(非排除)=' + defaults.filter((k) => !EXCLUDE.has(k)).length)
 
 const wanted = defaults.filter((k) => !EXCLUDE.has(k))
 const missing = wanted.filter((k) => !payload.includes(k))
@@ -60,6 +73,8 @@ ok('DEFAULTS 每个字段都在保存载荷里（漏了 = 拨了不落盘）', m
 ok('载荷里没有 host 不认识的字段（多了会被静默丢弃）', extra.length === 0, extra.length ? '多: ' + extra.join(',') : '无多余')
 ok('hideResizer 这个具体回归已堵住（v1.6.0 漏的就是它）', payload.includes('hideResizer'))
 ok('hideDivider 同样在载荷里（v1.7.0 拆出的第二个开关，别再犯同样的漏）', payload.includes('hideDivider'))
+ok('reviewSkillEnabled 在载荷里（v1.11.0 的审查技能开关；它另有 /cc/review.json 一条直路，主 PUT 也得带上）',
+  payload.includes('reviewSkillEnabled'))
 ok('白名单只排除了 host 自维护字段', wanted.length === defaults.length - defaults.filter((k) => EXCLUDE.has(k)).length,
   'DEFAULTS=' + defaults.length + ' 其中被排除=' + defaults.filter((k) => EXCLUDE.has(k)).length + ' 待对齐=' + wanted.length)
 

@@ -1,0 +1,24 @@
+dsh-cache-control
+=================
+
+本插件的 ③ ponytail 段（ponytail-gate.md）蒸馏自：
+    Ponytail — https://github.com/DietrichGebert/ponytail
+    Copyright (c) DietrichGebert · MIT License
+
+本插件的 ④ 自动审查技能（skills/auto-code-review/SKILL.md）依据并引用：
+    Open Code Review — https://github.com/alibaba/open-code-review
+    Copyright (c) Alibaba · Apache License 2.0
+
+关于 ④ 的两点说明：
+
+1. **没有把上游的规则文本抄进本仓库。** 上游 README 明确把"通用 agent + 自然语言 skill 做代码
+   审查"列为反面教材（覆盖不全 / 行号漂移 / 质量不稳），其解法是确定性工程硬约束选文件、分组、
+   匹配规则。抄规则文本 = 只拿走它论证过会失败的那一半。所以本技能每次运行时现向 `ocr`
+   （delegation mode）取「该审哪些文件」与「这些文件命中哪些规则」，本仓库不存规则正文。
+   技能正文是本项目的原创转述，其中对上游设计动机与基准数字的描述属于事实性引用。
+
+2. **运行期依赖上游的可执行文件，不是它的源码。** 用户自行 `npm install -g
+   @alibaba-group/open-code-review`（Apache-2.0，允许商用与再分发，需保留署名）。本插件不打包、
+   不下载、不自动安装该 CLI；探测不到时界面如实显示"没找到 ocr"，技能跑到第一步也会停下说明。
+
+上游许可证全文见其仓库 LICENSE（Apache-2.0）与 https://www.apache.org/licenses/LICENSE-2.0 。

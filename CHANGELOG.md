@@ -2,6 +2,52 @@
 
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
 
+## 1.11.0 — 2026-09-21 · 新增「④ 自动审查」：注册按需技能 auto-code-review（接外部 ocr），不注入常驻段
+
+**需求**（用户）：蒸馏 GitHub 上的 open-code-review 及同类，内嵌进会话策略插件，做到写代码时自动审查，UI 与懒码同族。
+
+**先做的判断（这条决定了实现形状）**：**没有蒸成常驻 prompt 段**。上游 [alibaba/open-code-review](https://github.com/alibaba/open-code-review)（Apache-2.0）自己的 README 就把"通用 agent + 自然语言 skill 做审查"列为反面教材 —— 三条通病：大 changeset 选择性漏审、报出的位置与真实行号漂移、prompt 微调即质量波动；根因是纯语言驱动对审查过程没有硬约束。其基准（AACR-bench：50 仓库 / 200 真实 PR / 1,505 条标注）显示同模型下 F1 更高而 token 只用通用 agent 的约 1/9。照 ponytail 的路子抄规则文本 = 只拿走它论证过会失败的那一半。ponytail 能常驻是因为它是风格取向、无可度量指标；审查有覆盖率与定位准确率。
+
+**做法**：
+- **零常驻注入**：一个字都不进 system prompt。注册宿主 `skills` 服务里的 `auto-code-review`（正文 `skills/auto-code-review/SKILL.md`，3.5 KB，用到才加载）。与 ②③ 两段的根本区别就写在卡的抽屉里。
+- host 侧新增 `/cc/review.json`（GET 状态 / PUT 开关）、`parseSkillFrontmatter`、`ocrCandidates` + `detectOcr` + `probeOcr`（TTL 60s 记忆化）、`reviewMeta`；设置新键 `reviewSkillEnabled`（默认开）。注销走 dispose，卸载钩子里也撤一遍。
+- client 侧新增 ReviewCard：开关 + 「技能体积 / 路径 / 常驻 0 B」+ **ocr 探测结果**（装了就显示版本与命令，没装给安装命令）+「重新检测」按钮 + 抽屉说明为什么不是常驻规则。chip 不加第四段（已经三段，再加挤爆；审查不是每轮都要拨的东西）。
+- 分区编号顺延为 ①–⑦（自动审查插在 ponytail 之后 ⇒ 气泡置顶⑤ / 对话页⑥ / 存储⑦）。总述改"七块"、「关于本页」的纯界面对象同步。
+- `package.json` 的 `files` 补 `skills`、`ponytail-gate.md`、`CHANGELOG.md`、`NOTICE`（原来连 ponytail 内置文件都没打包，npm 装出来那段规则是空的 —— 顺手补上）。新增 NOTICE 记两个上游的署名。
+
+**踩到并修掉的三个坑**：
+1. **`execFile('ocr.cmd')` 在 Node ≥18.20/20.12/24 抛 EINVAL**（CVE-2024-27980 修复），不是 ENOENT —— npm 在 Windows 上装的全局 CLI 恰恰就是 `.cmd` shim。第一版探测永远假失败、界面一直显示"未安装"。修法：`.cmd` 走 `shell:true` 且**整条命令进 shell、不传 args**（避开 DEP0190 告警）。
+2. **宿主进程的 PATH 里没有 npm 全局 bin**：命令行 `ocr` 能跑、插件里 spawn `'ocr'` 报 ENOENT。所以 `ocrCandidates()` 显式补 `%APPDATA%\npm\ocr.cmd`。
+3. （测试侧）`verify-settings-payload.mjs` 全文搜第一个 `body: JSON.stringify({` 当载荷锚点 —— 新增 `setReviewEnabled()` 后文件里多了个单行小载荷，被它抢先命中 ⇒ 解析出 1 个键、对齐断言集体假失败。修法：先定位 `function saveNow()` 再从那里找块，并加两条"锚点定位正确 / 键数不少于 DEFAULTS"的防回归断言。
+
+**验证**：`npm test` **7/7 套件通过**（该套件 76 passed / 0 failed）。编号断言随之更新（⑤ 气泡置顶、⑥ 对话页、①–⑦ 连续圈符）。本机 ocr v1.12.7 实测：`delegate preview --format json` 给出 reviewable/excluded 与增删行数；`delegate rule --format json client.js` 按 `**/*.{ts,js,tsx,jsx,mjs,cjs}` 分组返回规则正文 —— 技能正文写的三步就是照这个契约写的。
+
+**代价**：注册状态本身零 token（技能只在目录里占一行 description）。真正的成本发生在调用时：一次 delegate 审查要读 diff + 规则，属正常工具调用量级。ocr 未安装时技能仍在目录里，但跑到第一步就会停下说明 —— 卡上提前把这件事显示出来。
+
+## 1.10.2 — 2026-09-21 · 设置页分区编号重排为连续的 ①–⑥（修"两个 ②"）
+
+**现象**（用户）：设置页「会话策略」里出现两个 ②，序号没对齐。
+**根因**：v1.10.0 加 ponytail 卡时用了 `②b` 这种插队写法（挂在守则之后、不想动后面编号），而守则本身就是 ② ⇒ 页面上一眼看到两个 ②；同时 v1.8.0 的 ⑤ 存储也从未进过总述文案，编号体系一直停在"四块"的说法里。
+**修法**：编号统一为连续圈符，不再混编字母后缀 —— ① 省缓存 / ② 会话守则 / **③ ponytail** / ④ 气泡置顶 / ⑤ 对话页 / ⑥ 存储。同步改了设置页六张卡的 `h3`、快捷面板里的 `cc-sectTitle`、「总述」段（四块 → 六块并补 ③⑥ 两句）、「关于本页」里的"③④ 纯界面"→"④⑤"，以及文件头注释与两处指向旧编号的行内注释。**只改显示层**：settings.json 字段名、提示词段序常量（GATE 400 / PONY 405）、HTTP 路由一律未动，盘上存量与已开会话不受影响。
+**回归**：`verify-gate-client.mjs` 三条写死旧编号的断言随之更新（③→④ 气泡置顶、④→⑤ 对话页、四个→六个分区标题），并新增两条把这次的坑钉住的断言：**编号必须是从 ① 起连续的圈符、不许出现 `[①-⑥][a-z]` 这类字母后缀**。
+
+## 1.10.2b — 2026-09-21 · 补 v1.10.0 欠账：chip 三段版式的 8 条断言改对，并把该套件挪回 CI
+
+**现象**（用户确认要修）：`verify-gate-client.mjs` 长期 8 条 FAIL，因此整个套件被 `EXCLUDED` 出 CI。
+**根因**：v1.10.0 给 chip 加了第三段「懒码」（ponytail），版式从"两段标签 + 一根竖线 + 三个按钮"变成三段；那 8 条断言仍按两段写，加完没人更新 ⇒ 一直红着，被以"要 %APPDATA%"为由排除掉了。**真实原因不是环境依赖，是断言过期** —— 这是本轮查出来的事实。
+**修法**：
+- 断言按三段现状重写（`CHIP_LABELS` 常量承载标签序列，别再散落字面量）：三段标签、三枚徽标各自的开/关与高亮态、两根竖线、四个按钮、四条 title；C 段"全开"补上 `ponytailEnabled: true`，勾选框计数 5→6。
+- 消除套件自身三条真实的本机依赖，让它进得了 CI：① preset 从 `%APPDATA%` 复制 → 换成与 verify-session-gate 同款最小夹具；② 收尾"真实 settings.json / gate.md 未被改动"两条硬读真实 home → 不存在时 SKIP 并如实打印；③ primitives 桩原来要求读到宿主真包源码才装载 → 改为始终按签名复刻、读不到只打一行 NOTE。`react-dom` 补进 `devDependencies`（原来只有 react，server.js 靠宿主目录）。
+- `run-all.mjs`：`verify-gate-client.mjs` 从 `EXCLUDED` 挪进 `SUITES`，理由照实改写。
+**验证**：本机 `npm ci --offline && npm test` ⇒ **7/7 套件通过**（该套件 76 passed / 0 failed）。反向证据（模拟 CI）：`APPDATA` 指空目录后跑 `npm test` ⇒ 仍 7/7，该套件 74 passed / 0 failed + SKIP；verify-session-gate 同步退化为 36 项。`react-dom` 钉到与 `react` 同版本 18.3.1（不用 `^`），lockfile 已同步。
+**没做的**：`verify-gate-http` / `verify-ui-appearance` 仍在 EXCLUDED —— 它们有几条"逐字节比对真实 preset 未被改动"的断言，夹具化就得换比对对象、属于放宽口径，维持原判断。
+
+## 1.10.2c — 2026-09-21 · verify-gate-http 里一条 v1.10.0 留下的假失败（顺手）
+
+**现象**：跑本机全套时发现 `ctx.inject 依赖 systemPrompt` FAIL，实际打印 `sections=2`。
+**根因**：v1.10.0 挂了第二段规则（ponytail），该断言仍写死"只挂一段"；且它取 `sections[0]` 当门禁段用，一旦宿主按 order 排出的顺序变了，下面三条段名/段序/text 契约就会验到错误的段上。**与上面那条同族**：都是加 ponytail 时没同步的旧断言。
+**修法**：改成"两段都挂上"+ **按段名找门禁段**（不靠数组下标）。44 passed / 0 failed。套件仍留在 EXCLUDED（原因不变）。
+
 ## 1.10.1 — 2026-09-21 · 改段序：守则(400) → ponytail(405) → 输出形状(410)
 
 **需求**（用户）：ponytail 不该排在 ADHD 形状规则之后——编码纪律与守则 R5 同源，应贴着守则走。

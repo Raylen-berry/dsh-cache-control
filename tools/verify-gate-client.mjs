@@ -14,43 +14,77 @@ const ok = (name, cond, extra = '') => {
   else { fail++; console.log('  FAIL  ' + name + (extra ? '  [' + extra + ']' : '')) }
 }
 
-// ---- 临时 DSH_HOME，含一份 preset 副本，绝不写用户真实文件 ----
+// ---- 临时 DSH_HOME，含一份最小 preset 夹具，绝不写用户真实文件 ----
+// v1.10.2 夹具化（同 verify-session-gate v1.9.4 的口径）：以前这里 copyFileSync 真 %APPDATA%
+// 下的 agent.cordis.yml、收尾又读真实 settings.json 做对照 —— 本机绿纯属"这台机器装过 DSH"。
+// 本套件的 client 侧断言只消费 preset 的**文本结构**（compaction-basic 行块），仓库自带夹具足够；
+// "真实文件未被改动"的守护在真实 home 存在时照比，不存在就 SKIP 并如实打印 ⇒ CI/干净机器可跑。
 fs.rmSync(ROOT, { recursive: true, force: true })
 const presetDir = pathMod.join(ROOT, 'profiles/node_modules/@deepseek-ai/dsh-agent-presets/presets/standard')
 fs.mkdirSync(presetDir, { recursive: true })
 fs.mkdirSync(pathMod.join(ROOT, 'dsh-cache-control'), { recursive: true })
-fs.copyFileSync(process.env.APPDATA + '/dsh-desktop/harness/profiles/node_modules/@deepseek-ai/dsh-agent-presets/presets/standard/agent.cordis.yml',
-  pathMod.join(presetDir, 'agent.cordis.yml'))
+const MINIMAL_PRESET = [
+  '# minimal fixture for verify-gate-client (structure mirrors the real standard preset)',
+  '- id: persona',
+  "  name: '@deepseek-ai/dsh-persona'",
+  '  config:',
+  '    suffix: Your working directory is {{cwd}}.',
+  '- id: compaction',
+  '  name: cordis:group',
+  '  group: true',
+  '  isolate:',
+  '    compaction: true',
+  '  config:',
+  '    - id: compaction-basic',
+  "      name: '@deepseek-ai/dsh-compaction-basic'",
+  '      # managed by dsh-cache-control (auto-rewritten)',
+  '      config:',
+  '        thresholdRatio: 0.30',
+  '        retainRatio: 0.04',
+  '        auto: true',
+  '',
+].join('\n')
+fs.writeFileSync(pathMod.join(presetDir, 'agent.cordis.yml'), MINIMAL_PRESET, 'utf8')
 process.env.DSH_HOME = ROOT
 const settingsFile = pathMod.join(ROOT, 'dsh-cache-control', 'settings.json')
-// 用户真实设置的当前快照，收尾比对（本测试只该动临时目录）
-const REAL_HOME = process.env.APPDATA + '/dsh-desktop/harness/dsh-cache-control'
-const realSettingsBefore = fs.readFileSync(pathMod.join(REAL_HOME, 'settings.json'), 'utf8')
-const hadRealGateMd = fs.existsSync(pathMod.join(REAL_HOME, 'gate.md'))
+// 用户真实设置的当前快照，收尾比对（本机装了 DSH 才有；CI 上跳过那两条并如实标注）
+const REAL_HOME = pathMod.join(process.env.APPDATA || '', 'dsh-desktop', 'harness', 'dsh-cache-control')
+const haveRealHome = fs.existsSync(pathMod.join(REAL_HOME, 'settings.json'))
+const realSettingsBefore = haveRealHome ? fs.readFileSync(pathMod.join(REAL_HOME, 'settings.json'), 'utf8') : null
+const hadRealGateMd = haveRealHome && fs.existsSync(pathMod.join(REAL_HOME, 'gate.md'))
 
 const unwrap = (m) => (m && m.default && (m.default.createElement || m.default.renderToStaticMarkup)) ? m.default : m
 const host = await import('file:///' + PLUGIN + 'index.js')
 const React = unwrap(await import('file:///' + APP + 'react/index.js'))
 const ReactDOMServer = unwrap(await import('file:///' + APP + 'react-dom/server.js'))
 // 宿主原子包（Switch/Button…）：client 半经 require('@deepseek-ai/dsh-client-ui-primitives') 取用。
-// Node 下它 import 'clsx' 解析不到（打包产物在浏览器里由 seed 提供），所以这里不 import 真身，
-// 而是**按真签名复刻一份桩**（对照 lib/index.js 的 Switch/Button/props），让断言真正打在
-// primitives 分支上；取不到就退回 null —— 与真实浏览器里 seed 提供与否的两种形态一致。
+// Node 下它 import 'clsx' 解析不到（打包产物在浏览器里由 seed 提供），所以这里**不 import 真身**，
+// 而是按真签名复刻一份桩；读宿主 lib/index.js 只为确认签名没变（变了说明桩该跟着改）。
+// 于是本套件不再依赖"这台机器装过 DSH"：CI/干净机器上桩照样装载，断言口径不变。
+const PRIM_REL = '@deepseek-ai/dsh-client-ui-primitives/lib/index.js'
+const SW_SIG = 'function Switch({ checked, onChange, label, disabled'
+// 仓库自己的 node_modules 根（run-all 会把 DSH_APP_MODULES 指到这里；直接手工跑时也要能找到）
+const REPO_ROOT = pathMod.resolve(new URL('..', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'))
+const makePrimitives = () => ({
+  Switch: (p) => React.createElement('button', {
+    type: 'button', role: 'switch', 'aria-checked': p.checked, 'aria-label': p.label,
+    title: p.title, disabled: p.disabled, className: p.className,
+    onClick: () => p.onChange(!p.checked),
+  }, React.createElement('span', { className: 'pr-thumb' })),
+  Button: ({ variant, size, icon, className, children, ...rest }) => React.createElement('button',
+    Object.assign({ type: 'button', className: 'pr-btn pr-' + variant + ' pr-' + size + (className ? ' ' + className : '') }, rest), children),
+})
 let primitives = null
 try {
-  const swMatch = fs.readFileSync(pathMod.join(APP.replace(/\//g, '\\'), '@deepseek-ai/dsh-client-ui-primitives/lib/index.js'), 'utf8')
-    .indexOf('function Switch({ checked, onChange, label, disabled')
-  if (swMatch >= 0) {
-    primitives = {
-      Switch: (p) => React.createElement('button', {
-        type: 'button', role: 'switch', 'aria-checked': p.checked, 'aria-label': p.label,
-        title: p.title, disabled: p.disabled, className: p.className,
-        onClick: () => p.onChange(!p.checked),
-      }, React.createElement('span', { className: 'pr-thumb' })),
-      Button: ({ variant, size, icon, className, children, ...rest }) => React.createElement('button',
-        Object.assign({ type: 'button', className: 'pr-btn pr-' + variant + ' pr-' + size + (className ? ' ' + className : '') }, rest), children),
-    }
+  // 依次看 DSH_APP_MODULES、仓库自己的 node_modules、本机 DSH 安装目录；任一处签名对得上即确认。
+  const primCandidates = [pathMod.join(APP, PRIM_REL), pathMod.join(REPO_ROOT, 'node_modules', PRIM_REL),
+    'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/' + PRIM_REL]
+  let sigFound = false
+  for (const p of primCandidates) {
+    try { if (fs.readFileSync(p, 'utf8').indexOf(SW_SIG) >= 0) { sigFound = true; break } } catch { /* 下一个 */ }
   }
+  primitives = makePrimitives()
+  if (!sigFound) console.log('  NOTE  未读到宿主 primitives 源码 ⇒ 桩未经签名核对（本机与 CI 都可能这样）：' + primCandidates[0])
 } catch { primitives = null }
 ok('primitives 桩已装载（否则本套件只测了回退路径）', primitives !== null)
 const h = React.createElement
@@ -161,10 +195,23 @@ const L_AUTO = '自动压缩（关闭 = 仅保留手动 /compact）'
 const L_GATE = '启用会话守则（下一个请求即生效，含已打开的会话）'
 const L_PIN = '把最近一条「我的提问」钉在会话区顶部'
 const L_CLEAR = '我的气泡背景透明（露出壁纸）'
+// chip 三段标签（v1.10.0 起第三段是 ponytail「懒码」）。徽标顺序 = 省缓存 / 提问 / 懒码。
+const CHIP_LABELS = ['省缓存', '提问', '懒码']
 
 console.log('\n— A. 关缓存 / 开门禁 —')
+// v1.11.0：ponytail / 审查技能显式钉成关（A 段验的是"只开门禁"，ponytail 开着第三段徽标就不是
+// 「关」；审查技能按 DEFAULTS **默认开**，不关掉会多一个勾选框、脏掉 checkedCount）。
+// ⚠ 必须写在 bootClient() **之前**：本插件的 STORE 是模块级单例，bootClient 里那次 GET 才是
+// 状态来源 —— 写完盘再 render 不会重读（先写后 render 才拿得到新值）。
 fs.writeFileSync(settingsFile, JSON.stringify({ enabled: false, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true }))
 let c = await bootClient('a' + Date.now())
+// v1.11.0：A 段还要验"第三段徽标是关"与 checkedCount 基线 ⇒ 显式钉上 ponytailEnabled:false /
+// reviewSkillEnabled:false（ponytail 开着第三段就不是「关」；审查技能按 DEFAULTS **默认开**，
+// 不关掉会多一个勾选框）。
+// ⚠ 必须**重开实例**：本插件的 STORE 是模块级单例，bootClient() 里那次 GET 才是状态来源 ——
+// 写完盘只 render 不会重读，读到的是上一次实例留下的状态（第一版栽在这，四条断言集体假失败）。
+fs.writeFileSync(settingsFile, JSON.stringify({ enabled: false, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true, ponytailEnabled: false, reviewSkillEnabled: false }))
+c = await bootClient('a2' + Date.now())
 let pageHtml = render(c.page)
 const pageExp = expanded(c)
 let chipHtml = render(c.chip)
@@ -181,35 +228,37 @@ ok('展开后说明正文可见', pageExp.includes('不产生技术硬拦截') &
 ok('门禁开关已勾选', checked(pageHtml, L_GATE) === true)
 ok('压缩开关未勾选（互不牵连）', checked(pageHtml, L_CACHE) === false)
 ok('自动压缩仍按设置勾选', checked(pageHtml, L_AUTO) === true)
-ok('chip 两段标签为 省缓存 / 提问', parts.labels.join(',') === '省缓存,提问', parts.labels.join(','))
-ok('chip 徽标：关 与 开', parts.badges.length === 2 && parts.badges[0].state === '关' && parts.badges[1].state === '开',
+ok('chip 三段标签为 省缓存 / 提问 / 懒码', parts.labels.join(',') === CHIP_LABELS.join(','), parts.labels.join(','))
+ok('chip 徽标：关 / 开 / 关（A 段只开门禁）', parts.badges.length === 3
+  && parts.badges[0].state === '关' && parts.badges[1].state === '开' && parts.badges[2].state === '关',
   JSON.stringify(parts.badges.map((b) => b.state)))
-ok('徽标高亮态与开关一致（第一段不亮、第二段亮）', parts.badges[0].on === false && parts.badges[1].on === true)
-ok('chip 中间一根竖线', parts.divs === 1, 'divs=' + parts.divs)
-ok('chip 是三个按钮（两段可点 + ▾）', (chipHtml.match(/<button/g) || []).length === 3,
+ok('徽标高亮态与开关一致（第一段不亮、第二段亮、第三段不亮）',
+  parts.badges[0].on === false && parts.badges[1].on === true && parts.badges[2].on === false)
+ok('chip 两根竖线（三段之间各一根）', parts.divs === 2, 'divs=' + parts.divs)
+ok('chip 是四个按钮（三段可点 + ▾）', (chipHtml.match(/<button/g) || []).length === 4,
   'buttons=' + (chipHtml.match(/<button/g) || []).length)
-ok('每段各有 hover 介绍（title）', (chipHtml.match(/title="/g) || []).length === 3,
+ok('每段各有 hover 介绍（title）', (chipHtml.match(/title="/g) || []).length === 4,
   'titles=' + (chipHtml.match(/title="/g) || []).length)
 ok('介绍里写清了"点这一段=直接开/关"与生效范围',
   chipHtml.includes('点这一段 = 直接开/关') && chipHtml.includes('只影响之后新建的') && chipHtml.includes('下一个请求'))
 ok('▾ 带 aria-expanded（未展开为 false）', /aria-expanded="false"/.test(chipHtml))
 ok('容器是 span 不是 button（避免 button 套 button）', /<span class="cc-chip/.test(chipHtml))
-ok('③ 气泡置顶卡存在（含可调模糊度滑杆）', pageHtml.includes('③ 气泡置顶') && pageHtml.includes('钉顶底衬模糊度'),
+ok('⑤ 气泡置顶卡存在（含可调模糊度滑杆）', pageHtml.includes('⑤ 气泡置顶') && pageHtml.includes('钉顶底衬模糊度'),
   'h3=' + (pageHtml.match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).join(' '))
 ok('外观两开关可用且默认关（新 host 会带回这两个字段）',
   checked(pageHtml, L_PIN) === false && checked(pageHtml, L_CLEAR) === false && disabled(pageHtml, L_PIN) === false)
 ok('关着时不显示自检行', !pageHtml.includes('钉住位置自检'))
 
 console.log('\n— B. 开缓存 / 关门禁 —')
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 30, retainPct: 4, auto: false, gateEnabled: false }))
+fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 30, retainPct: 4, auto: false, gateEnabled: false, ponytailEnabled: false, reviewSkillEnabled: false }))
 c = await bootClient('b' + Date.now())
 chipHtml = render(c.chip)
 pageHtml = render(c.page)
 const pageExpB = expanded(c)
 parts = chipParts(chipHtml)
-ok('chip 徽标翻成 开 / 关', parts.badges[0].state === '开' && parts.badges[1].state === '关',
+ok('chip 徽标翻成 开 / 关 / 关', parts.badges[0].state === '开' && parts.badges[1].state === '关' && parts.badges[2].state === '关',
   JSON.stringify(parts.badges.map((b) => b.state)))
-ok('标签不随状态改名（版式稳定）', parts.labels.join(',') === '省缓存,提问')
+ok('标签不随状态改名（版式稳定）', parts.labels.join(',') === CHIP_LABELS.join(','), parts.labels.join(','))
 ok('压缩已勾选、门禁未勾选', checked(pageHtml, L_CACHE) === true && checked(pageHtml, L_GATE) === false)
 ok('自动压缩子开关独立关着', checked(pageHtml, L_AUTO) === false)
 ok('门禁卡仍列出守则摘要（展开说明可见，含 v1.9.2 的 R5）',
@@ -217,15 +266,15 @@ ok('门禁卡仍列出守则摘要（展开说明可见，含 v1.9.2 的 R5）',
 ok('门禁卡有编辑/重读按钮', pageHtml.includes('编辑规则') && pageHtml.includes('重新读取'))
 ok('门禁声明了"约束而非硬拦截"（展开说明可见）', pageExpB.includes('不产生技术硬拦截'))
 
-console.log('\n— C. 全开（压缩 + 门禁 + 外观两项）—')
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: true, pinLastUser: true, clearBubble: true }))
+console.log('\n— C. 全开（压缩 + 门禁 + ponytail + 外观两项）—')
+fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: true, ponytailEnabled: true, reviewSkillEnabled: false, pinLastUser: true, clearBubble: true }))
 c = await bootClient('c' + Date.now())
 chipHtml = render(c.chip)
 pageHtml = render(c.page)
 const pageExpC = expanded(c)
 parts = chipParts(chipHtml)
-ok('chip 两个徽标都亮', parts.badges.length === 2 && parts.badges.every((b) => b.state === '开' && b.on === true))
-ok('五个勾选框全勾（压缩 + 自动压缩 + 门禁 + 钉顶 + 透明）', checkedCount(pageHtml) === 5, 'checked=' + checkedCount(pageHtml))
+ok('chip 三个徽标都亮', parts.badges.length === 3 && parts.badges.every((b) => b.state === '开' && b.on === true))
+ok('六个勾选框全勾（压缩 + 自动压缩 + 门禁 + ponytail + 钉顶 + 透明）', checkedCount(pageHtml) === 6, 'checked=' + checkedCount(pageHtml))
 ok('外观两开关已勾选', checked(pageHtml, L_PIN) === true && checked(pageHtml, L_CLEAR) === true)
 ok('开着钉顶时给出自检行', pageHtml.includes('钉住位置自检'))
 ok('设置页保留三处生效语义说明（展开说明可见）',
@@ -294,7 +343,7 @@ ok('面板带 data-cache-control-panel 便于对账', panelTag.includes('data-ca
 ok('面板用 bottom 定位（往 chip 上方开，不开到屏幕外）',
   /left:\d+px/.test(panelTag) && /bottom:\d+px/.test(panelTag) && !/;top:\d+px/.test(panelTag), panelTag.slice(0, 120))
 ok('展开态下 chip 三段仍在（开关交互没被面板取代）',
-  opened.includes('省缓存') && opened.includes('提问') && chipParts(opened).divs === 1)
+  CHIP_LABELS.every((l) => opened.includes(l)) && chipParts(opened).divs === 2, 'divs=' + chipParts(opened).divs)
 ok('展开渲染无 React 警告', warnings.length === 0, warnings[0] ? warnings[0].slice(0, 90) : '')
 
 console.log('\n— H. 本轮四项改动（名称长度 / 底衬形态 / 徽标无背景 / 对话页搬过来了）—')
@@ -309,9 +358,16 @@ fs.writeFileSync(settingsFile, JSON.stringify({
 c = await bootClient('h' + Date.now())
 const navLabel = c.pageEntry ? String(c.pageEntry.label) : ''
 const h3s = (render(c.page).match(/<h3[^>]*>([^<]*)<\/h3>/g) || [])
-  .map((s) => s.replace(/<[^>]+>/g, '').replace(/^[①②③④]\s*/, ''))
+  .map((s) => s.replace(/<[^>]+>/g, '').replace(/^[①②③④⑤⑥⑦]\s*/, ''))
 ok('导航条目名 ≤4 字', navLabel.length > 0 && navLabel.length <= 4, navLabel + ' (' + navLabel.length + ')')
-ok('四个分区标题都 ≤4 字', h3s.length >= 4 && h3s.every((x) => x.length <= 4), JSON.stringify(h3s))
+ok('分区标题都 ≤4 字', h3s.length >= 7 && h3s.filter((x) => x !== 'ponytail').every((x) => x.length <= 4), JSON.stringify(h3s))
+// v1.10.2：编号必须是从 ① 起连续的圈符，不许再出现 "②b" 这类插队写法（用户看到过两个 ②）
+const pageH3Raw = (render(c.page).match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).map((s) => s.replace(/<[^>]+>/g, ''))
+const circled = '①②③④⑤⑥⑦'
+const sectNums = pageH3Raw.filter((x) => /^[①②③④⑤⑥⑦]/.test(x)).map((x) => x[0])
+ok('分区编号连续无重复（①–⑦）',
+  sectNums.length === 7 && sectNums.every((ch, i) => ch === circled[i]), JSON.stringify(sectNums))
+ok('没有 ②b / 字母后缀这类混编编号', !/[①②③④⑤⑥][a-z]/i.test(pageH3Raw.join('|')), pageH3Raw.join('|'))
 // ② 钉顶底衬：从"整行铺毛玻璃"改成"定长圆角矩形画在 ::before 上"，模糊度走 CSS 变量
 const pinRule = (ALLCSS.match(/html\[data-cc-pin-last-user="1"\] \[data-cc-pin="1"\]\{[^}]*\}/) || [''])[0]
 const plateRule = (ALLCSS.match(/html\[data-cc-pin-last-user="1"\] \[data-cc-pin="1"\]::before\{[^}]*\}/) || [''])[0]
@@ -353,12 +409,12 @@ ok('chip 内徽标无背景（面板里的同名徽标不受影响）',
   && /\.cc-chip \.cc-badge\.dim\{background:transparent/.test(ALLCSS)
   && baseBadgeRules.length > 0 && !baseBadgeRules.some((l) => /background:transparent/.test(l)),
   '基础规则 ' + baseBadgeRules.length + ' 条：' + baseBadgeRules.join(' ').slice(0, 90))
-// ④ 对话页固定宽度：整节已从底图工坊移进本插件，那边不再碰这三个变量
+// ⑥ 对话页固定宽度：整节已从底图工坊移进本插件，那边不再碰这三个变量（v1.11.0 起编号为 ⑥）
 const pageHtml4 = render(c.page)
-ok('设置页出现「④ 对话页」卡（开关 + 30–100% 滑杆 + 常用百分比快捷键）',
-  pageHtml4.includes('④ 对话页') && /min="30"/.test(pageHtml4) && /max="100"/.test(pageHtml4)
+ok('设置页出现「⑥ 对话页」卡（开关 + 30–100% 滑杆 + 常用百分比快捷键）',
+  pageHtml4.includes('⑥ 对话页') && /min="30"/.test(pageHtml4) && /max="100"/.test(pageHtml4)
   && pageHtml4.includes('90%') && pageHtml4.includes('启用固定对话页宽度'),
-  'has=' + pageHtml4.includes('④ 对话页'))
+  'has=' + pageHtml4.includes('⑥ 对话页'))
 // 对面插件(dsh-bg-atelier)的交叉断言：装了才判，没装就跳过（开源仓库不能硬依赖别人的路径）。
 const bgaPath = process.env.DSH_BGA_CLIENT || 'D:/DeepSeek/dsh-plugins/dsh-desktop-wallpaper/client.js'
 if (fs.existsSync(bgaPath)) {
@@ -442,9 +498,13 @@ await new Promise((r) => oldGateServer.close(r))
 
 console.log('\n— F. 收尾 —')
 gServer.close()
-const realSettingsNow = fs.readFileSync(pathMod.join(REAL_HOME, 'settings.json'), 'utf8')
-ok('用户真实 settings.json 全程未被本测试改动', realSettingsNow === realSettingsBefore, realSettingsNow.trim().replace(/\s+/g, ' '))
-ok('用户真实 gate.md 状态未变', fs.existsSync(pathMod.join(REAL_HOME, 'gate.md')) === hadRealGateMd)
+if (haveRealHome) {
+  const realSettingsNow = fs.readFileSync(pathMod.join(REAL_HOME, 'settings.json'), 'utf8')
+  ok('用户真实 settings.json 全程未被本测试改动', realSettingsNow === realSettingsBefore, realSettingsNow.trim().replace(/\s+/g, ' ').slice(0, 120))
+  ok('用户真实 gate.md 状态未变', fs.existsSync(pathMod.join(REAL_HOME, 'gate.md')) === hadRealGateMd)
+} else {
+  console.log('  SKIP  真实 home（%APPDATA%/dsh-desktop/harness）不存在 ⇒ 本机未装 DSH，跳过"真实文件未被改动"两条')
+}
 fs.rmSync(ROOT, { recursive: true, force: true })
 delete globalThis.window
 delete globalThis.document

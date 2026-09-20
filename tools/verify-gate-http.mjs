@@ -61,8 +61,11 @@ const put = async (p, obj) => {
 }
 
 console.log('\n— 1. 门禁段挂载 —')
-ok('ctx.inject 依赖 systemPrompt', sections.length === 1, 'sections=' + sections.length)
-const section = sections[0]
+// v1.10.0 起本插件挂**两段**常驻规则（② 守则 + ③ ponytail），所以这里找的是"其中名字为
+// GATE_SECTION 的那一段"，而不是"只挂了一段"。断言口径不变（段名/段序/text 契约照旧逐条验）。
+ok('ctx.inject 依赖 systemPrompt（两段都挂上了）', sections.length === 2, 'sections=' + sections.length)
+const section = sections.find((s) => s.name === host.GATE_SECTION)
+ok('门禁段存在且唯一', !!section && sections.filter((s) => s.name === host.GATE_SECTION).length === 1)
 ok('段名/段序正确', section.name === host.GATE_SECTION && section.order === host.GATE_SECTION_ORDER)
 ok('text 是函数（每请求重算 ⇒ 开关无需重启即生效）', typeof section.text === 'function')
 ok('settings.json 缺失时 text() 不抛错且为空', section.text({}) === '')

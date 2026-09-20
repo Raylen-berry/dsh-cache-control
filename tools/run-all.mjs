@@ -41,12 +41,15 @@ const SUITES = [
   'tools/verify-session-gate.mjs',
   // v1.10.0：ponytail 段与门禁段的独立性（开关、缓存、override、截断）回归。
   'tools/verify-ponytail-gate.mjs',
+  // v1.10.2 挪回 CI：① preset 换成仓库内最小夹具（同 verify-session-gate v1.9.4 的口径），
+  // "真实文件未被改动"两条在真实 home 存在时照比、不存在则 SKIP 并如实打印；② primitives 桩
+  // 不再依赖能读到宿主真包源码（读不到只打一行 NOTE，断言口径不变）；③ react-dom 补进 devDeps。
+  // 反向证据见 README「验证」：APPDATA 指向空目录 + DSH_APP_MODULES 指仓库 node_modules ⇒ 74/0。
+  'tools/verify-gate-client.mjs',
 ]
 
 const EXCLUDED = [
   ['tools/probe-userrow.mjs', '开发用探针脚本（手工跑、看 host 侧 userRow 的真实 DOM 结构），不是断言式测试套件'],
-  ['tools/verify-gate-client.mjs',
-    '要 %APPDATA% 下的真实 preset/settings.json 才能跑（本机 DSH 安装态的配置，CI 里没有）'],
   ['tools/verify-gate-http.mjs',
     '要 %APPDATA% 下的真实 preset（copyFileSync 源文件不存在就抛错）。**未做夹具化**：它的断言里有几条' +
     '逐字节比对真实 preset 有没有被本次验证改动，换成仓库内夹具就得重写那几条断言口径 —— 本任务只允许' +

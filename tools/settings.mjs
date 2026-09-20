@@ -1,6 +1,6 @@
 // 会话策略 · 设置导出 / 导入（换机器用；开发与运维脚本，不进 npm 包）
 //
-// 为什么需要它：本插件四项开关的**全部状态**都在 $DSH_HOME/dsh-cache-control/
+// 为什么需要它：本插件各分区开关的**全部状态**都在 $DSH_HOME/dsh-cache-control/
 // （settings.json + ② 会话守则的 gate.md override），**不随仓库走** ⇒ 换机器后四项全是默认关，
 // 用户看到的就是"装了但什么都没发生"。这个脚本把那份状态导出成可携带的 JSON，并在新机器上一键写回。
 //
@@ -87,7 +87,7 @@ if (cmd === 'show') {
   if (gate !== null) payload.extra = { 'gate.md': gate }
   fs.writeFileSync(out, JSON.stringify(payload, null, 2), 'utf8')
   console.log('已导出 ' + out)
-  console.log('  四项开关：省缓存=' + settings.enabled + ' 会话守则=' + settings.gateEnabled + ' 气泡置顶=' + settings.pinLastUser + ' 对话页=' + settings.chatWidthEnabled + '（' + settings.chatWidth + '%）')
+  console.log('  开关：省缓存=' + settings.enabled + ' 会话守则=' + settings.gateEnabled + ' ponytail=' + settings.ponytailEnabled + ' 气泡置顶=' + settings.pinLastUser + ' 对话页=' + settings.chatWidthEnabled + '（' + settings.chatWidth + '%）')
   console.log('  规则 override：' + (gate === null ? '无' : Buffer.byteLength(gate) + ' 字节'))
   for (const n of notes) console.log('  注意：' + n)
   console.log('  ⚠ ① 省缓存改的是 $DSH_HOME 里 standard preset 的行，**不在这个文件里**：新机器导入后若想继续省缓存，去设置页把总开关关一次再打开（或让它保持开启并重启）。')
