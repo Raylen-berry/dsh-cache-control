@@ -2,6 +2,46 @@
 
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
 
+## 1.12.0 — 2026-09-21 · 并入独立插件 dsh-output-shape：第三段常驻规则「输出形状」+ 两条按需技能
+
+**需求**（用户）：把插件"输出形状"迁移到会话策略插件里作为并行项，做个开关，然后可以删掉那个插件的框架。
+
+**做法（按 ponytail 的第二级：先看这个仓库里已经有什么）**：形状段与 ponytail 段**逐字同构** —— 同一套通用装载器
+（`loadRuleFile` + 独立的 mtime+size 缓存）、同一套 `ruleMeta`、同一条 `/cc/<name>.json` GET/PUT 路由、同样的截断三元组、
+同样的花括号中和、同样的"设置页卡片 + 快捷面板分区 + chip 一段"三处入口。**没有为它新写任何机制**，
+只把三处 `ponytail` 的现有实现复制成 `shape` 并把默认值翻过来。
+
+- 新增 `shape-gate.md`（4868 B，就是原 `skills/i-have-adhd/SKILL.md` 去掉 YAML frontmatter 的正文；逐字节比对通过）
+  作为该段的内置文本；override 落 `$DSH_HOME/dsh-cache-control/shape.md`；路由 `/cc/shape.json`。
+- 段名 `dsh-output-shape:output-shape` → **`dsh-cache-control:shape-gate`**，order 仍是 **410**（紧随守则 400 / ponytail 405）。
+  段名只在运行时用，盘上没有任何东西引用它，所以无需迁移。
+- **`shapeEnabled` 默认 true**，与另两段（默认 false）相反：并入前它由那个插件的 bundle config 默认开启，
+  合并时保持同默认 —— 否则升级即静默改变行为，用户只会看到"形状规则没了"。判据是 `!== false` 而不是 `=== true`，
+  于是"旧盘上没这个键"也能正确判成开。
+- **接手两条按需技能**：`i-have-adhd` 与 `ponytail`（原来是那个插件 `registerSkills` 注册的）。
+  无开关、零常驻 token；正文**直接读本插件的规则文件**（override 优先），所以"技能里读到的"与"每请求注入的"永远同一份。
+- 逃生开关**沿用原名** `DSH_OUTPUT_SHAPE_DISABLE`（改名等于把别人环境变量/脚本里的开关悄悄拔掉）。界面在卡片与面板都写明
+  "被环境变量强制关闭"，chip 徽标也按"实际是否注入"画 —— 开关开着却没注入时不假装亮着。
+- 会话守则里的 R4 一节 v1.9.1 摘出给那个插件，现在改指本插件同目录 `shape-gate.md`（只留归属声明，**不许再抄一份**）。
+- `tools/verify-shape-gate.mjs`（新，60 项）+ `run-all.mjs` 登记；`verify-gate-client.mjs` 跟着换语义：
+  chip 四段 / 三根竖线 / 五个按钮 / 五条 title、八个勾选框（C 段）、八个分区名字、`verify-settings-payload` 16 键对齐。
+
+**顺手修掉一处静默丢键**：`tools/settings.mjs`（导出/导入）的 `DEFAULTS` 停在 v1.4.x，v1.10.0 的 `ponytailEnabled`
+与 v1.11.0 的 `reviewSkillEnabled` **从来没进过名单** ⇒ 导出再导入会把这俩开关悄悄抹回默认（`sanitize` 丢弃未知字段）。
+三个键一起补上，并加了往返实测。`verify-settings-payload.mjs` 只比对 host 与 client 两处，管不到这个脚本 ——
+以后加开关记得**三处**都补。
+
+**验证**：`node --check` 两个半边 exit 0；`npm test` **8/8 套件通过**（本机：gate-truncation 30 / settings-payload 12 /
+gate-client 80 / shape-gate 60 / session-gate 39 / ponytail-gate 23 / panel-and-resizer 25 / host-width 全绿）。
+另有一条反向证据：形状段与守则段**同时注入**时合计 11,793 B（≈2,948 tokens/请求），没有翻倍
+（`verify-shape-gate` 第 7 节钉住"守则段里不许再出现形状正文"）。
+
+**代价**：默认开着 ⇒ 所有会话每请求多约 1.2K token（含子代理与非编码会话）。这是并入前就有的账，没有变多；
+不想付就去设置页或 chip 第四段关掉。`DSH_OUTPUT_SHAPE_DISABLE` 的老用法继续有效。
+
+**没做**（明确不做，不是忘了）：原插件的 `/os/skills/reload` 路由不迁移（技能在启动时注册一次，那个路由只是开发期方便）；
+`/os/*` 旧路由名不保留别名（除 `INTERFACES.md` 外无任何引用）。仓库目录归档不删除（有未推送的 git 历史）。
+
 ## 1.11.1 — 2026-09-21 · 分区标题去掉圈符编号，只留名字
 
 **起因**：v1.11.0 刚把编号顺延过一遍（插入「自动审查」⇒ 气泡置顶⑤ / 对话页⑥ / 存储⑦），那是**连续第二次为同一件事返工** —— v1.10.2 修的是 ponytail 曾写作 "②b" 导致页面上出现两个 ②。用户问"把编号去掉只留名字是什么意思"，确认范围后落地。

@@ -41,6 +41,8 @@ const SUITES = [
   'tools/verify-session-gate.mjs',
   // v1.10.0：ponytail 段与门禁段的独立性（开关、缓存、override、截断）回归。
   'tools/verify-ponytail-gate.mjs',
+  // v1.12.0：输出形状段（并入自 dsh-output-shape）——默认开 / 三段独立 / 技能同源 / 不重复注入。
+  'tools/verify-shape-gate.mjs',
   // v1.10.2 挪回 CI：① preset 换成仓库内最小夹具（同 verify-session-gate v1.9.4 的口径），
   // "真实文件未被改动"两条在真实 home 存在时照比、不存在则 SKIP 并如实打印；② primitives 桩
   // 不再依赖能读到宿主真包源码（读不到只打一行 NOTE，断言口径不变）；③ react-dom 补进 devDeps。

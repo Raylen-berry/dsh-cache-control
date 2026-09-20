@@ -1,6 +1,8 @@
 # 备份：会话守则 R4（2026-09-16 摘出）
 
 R4 已从 session-gate.md 摘出，真源迁到 dsh-output-shape/skills/i-have-adhd/SKILL.md。本文件仅作回退用，不参与注入。
+（2026-09-21 补注：那个插件已下线，同一段正文现由本插件 `shape-gate.md` 提供 —— 回退时若想恢复成守则的一段，
+注意 shape-gate.md 默认就在常驻注入，**别再抄回 session-gate.md**，否则同一套规则会被注入两遍。）
 
 ---
 

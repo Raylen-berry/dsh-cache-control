@@ -14,6 +14,10 @@
 //      一段 system prompt 常驻注入（通过 ctx.systemPrompt.section，宿主全局层，
 //      与 dsh-web-app 注入 "app:web-surface" 段同一条路）。开关只决定这段文本
 //      是否为空 —— 空段在 renderPrompt 里被丢弃，因此关=完全不进提示词。
+//   2b. ponytail（编码纪律，v1.10.0）与输出形状（v1.12.0，并入自 dsh-output-shape）：
+//      与门禁同构的第二、第三段常驻规则，各自独立开关与 override 文件。
+//      输出形状并入时一并接手了它的两条**按需技能**（i-have-adhd / ponytail），
+//      正文读的就是上面这两个规则文件 —— 技能与注入永远同一份，不会漂。
 //   3. 设置持久化到 $DSH_HOME/dsh-cache-control/settings.json（HTTP GET/PUT
 //      /cc/settings.json）；规则的可编辑副本持久化到
 //      $DSH_HOME/dsh-cache-control/gate.md（override，删除即回到插件内置文本），
@@ -50,6 +54,8 @@ const GET_PATH = '/cc/settings.json'
 const GATE_PATH = '/cc/gate.json'
 // ponytail 编码纪律的规则文本路由（v1.10.0），与 /cc/gate.json 同构。
 const PONY_PATH = '/cc/ponytail.json'
+// 输出形状的规则文本路由（v1.12.0，并入自 dsh-output-shape），与上两者同构。
+const SHAPE_PATH = '/cc/shape.json'
 // 自动代码审查（v1.11.0）：GET 回"技能注册状态 + ocr 是否可用"，PUT 切开关。
 const REVIEW_PATH = '/cc/review.json'
 
@@ -173,6 +179,11 @@ const PONY_BUILTIN_FILE = fileURLToPath(new URL('./ponytail-gate.md', import.met
 /** 用户在界面上编辑后写入；删除它即回到插件内置文本。 */
 const PONY_OVERRIDE_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'ponytail.md')
 
+/** 输出形状（v1.12.0）：第三段常驻规则，内置文件 + 可编辑 override，与门禁同构。 */
+const SHAPE_BUILTIN_FILE = fileURLToPath(new URL('./shape-gate.md', import.meta.url))
+/** 用户在界面上编辑后写入；删除它即回到插件内置文本。 */
+const SHAPE_OVERRIDE_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'shape.md')
+
 /** 注入提示词的字节上限：这段文本每请求重复计费，必须留硬闸（防误粘大文件把成本乘上每个子代理）。 */
 export const GATE_MAX_BYTES = 16 * 1024
 
@@ -180,9 +191,16 @@ export const GATE_MAX_BYTES = 16 * 1024
 export const GATE_SECTION = 'dsh-cache-control:session-gate'
 export const GATE_SECTION_ORDER = 400
 
-/** 段序（v1.10.1 定稿）：守则 400 → ponytail 405 → 输出形状(dsh-output-shape) 410，都在 plan 政策(500) 之前。 */
+/** 段序（v1.10.1 定稿，v1.12.0 起三段同属本插件）：守则 400 → ponytail 405 → 输出形状 410，都在 plan 政策(500) 之前。 */
 export const PONY_SECTION = 'dsh-cache-control:ponytail-gate'
 export const PONY_SECTION_ORDER = 405
+
+/** 输出形状段（v1.12.0）：从 dsh-output-shape 的 `dsh-output-shape:output-shape` 改名并入，order 不变。 */
+export const SHAPE_SECTION = 'dsh-cache-control:shape-gate'
+export const SHAPE_SECTION_ORDER = 410
+/** 逃生开关：置 1 则无论设置如何都不注入形状段。**沿用并入前 dsh-output-shape 的那个变量名** ——
+ *  它可能已经写在某台机器的环境里或脚本里，改名等于把那个开关悄悄拔掉。 */
+export const SHAPE_DISABLE_ENV = 'DSH_OUTPUT_SHAPE_DISABLE'
 
 // ── 自动代码审查（v1.11.0）───────────────────────────────────────────────────
 // **不注入常驻规则**：上游 alibaba/open-code-review 的 README 把"通用 agent + 自然语言 skill
@@ -303,6 +321,33 @@ export async function reviewMeta(settings, state, registeredOverride) {
     residentBytes: 0,
   }
 }
+
+/**
+ * 并入自 dsh-output-shape 的**常驻技能**（v1.12.0）。
+ *
+ * 与上面的 auto-code-review 同族（按需加载、零常驻 token、不进 system prompt），但**没有开关**：
+ * 技能躺在目录里不花一个 token，少一个开关就少一处能漂的状态。正文一律读本插件自己的规则文件
+ * （`body()` 走的就是常驻注入那条加载路径，override 优先），于是"技能里读到的规则"与
+ * "每请求注入的规则"永远同一份 —— 这正是并入前 dsh-output-shape 的承诺，别在合并时丢掉。
+ *
+ * description / whenToUse 是**技能目录里的元信息**，只此一处硬编码；规则正文不在这里。
+ */
+export const RULE_SKILLS = [
+  {
+    name: 'i-have-adhd',
+    description: '把回复整形成"读完就能动手"的形状——首行给下一步、多步编号、状态复述、跑题后置、报错讲因果、无开场白无客套。用户说"关闭 ADHD 模式"或"正常模式"即停。',
+    whenToUse: '用户抱怨回复太长/铺垫太多/看完不知道做什么，或要求简短直接、先给结论；也适合长任务里持续保持这种形状。',
+    body: () => loadShapeSync(),
+    builtinFile: SHAPE_BUILTIN_FILE,
+  },
+  {
+    name: 'ponytail',
+    description: '用最懒但真正可用的方案写代码：先问这需求该不该存在（YAGNI），再复用库里已有的，再用标准库与平台原生特性，最后才写最小代码。禁止没要求的抽象、样板脚手架、为几行代码新增依赖。修 bug 修根因。适用于一切编码任务：写、改、重构、修、评审代码，或选库选依赖。用户说"ponytail""懒人模式""最简方案""YAGNI"，或抱怨过度设计、代码臃肿、依赖乱加时启用。非编码请求（通用知识、写作、翻译）不要用。',
+    whenToUse: '任何编码任务开工前；用户抱怨实现过度设计、diff 太大、加了没要的依赖或抽象时。',
+    body: () => loadPonytailSync(),
+    builtinFile: PONY_BUILTIN_FILE,
+  },
+]
 
 /** 写入 config 时的标记注释：既便于用户识别，也让插件能识别“这是我写过的行”。 */
 const MANAGER_MARK = '# managed by dsh-cache-control (auto-rewritten)'
@@ -432,6 +477,11 @@ export const DEFAULTS = Object.freeze({
   auto: true,
   gateEnabled: false, // 会话门禁：独立于压缩开关
   ponytailEnabled: false, // ponytail 编码纪律常驻注入：独立于门禁（v1.10.0）
+  // 输出形状常驻注入（v1.12.0，并入自 dsh-output-shape）。**默认开** —— 合并前它由
+  // dsh-output-shape 的 bundle config 默认开启（那插件是这套规则的**真源**：会话守则里的
+  // R4 早已摘出交给它）。并入后保持同默认，否则升级即静默改变行为、用户只会看到"形状没了"。
+  // 判据与 reviewSkillEnabled 同族：`!== false`（旧盘上没有这个键 ⇒ 开）。
+  shapeEnabled: true,
   pinLastUser: false,    // 会话区外观：最近一条"我的提问"钉在顶部
   clearBubble: false,    // 会话区外观：我的气泡背景透明（露出壁纸）
   pinBlur: 10,           // 会话区外观：钉顶底衬（圆角矩形毛玻璃）的模糊半径 px
@@ -481,6 +531,9 @@ export function sanitize(raw) {
   const auto = src.auto !== false
   const gateEnabled = src.gateEnabled === true
   const ponytailEnabled = src.ponytailEnabled === true
+  // v1.12.0：输出形状。默认**开**，故判据是 `!== false` —— 不能写 `=== true`，
+  // 那样旧盘（没这个键）会被判成关，用户一升级就静默丢掉形状规则。
+  const shapeEnabled = src.shapeEnabled !== false
   const pinLastUser = src.pinLastUser === true
   const clearBubble = src.clearBubble === true
   let pinBlur = Math.round(Number(src.pinBlur) * 10) / 10   // 保留 1 位小数（1.3 / 1.5 这类微调档）
@@ -501,7 +554,7 @@ export function sanitize(raw) {
   // 否则"关闭省缓存还原原状"就失去了依据。形状不合法时归 null（当作没有备份）。
   const compactionBackup = readBackup(src)
   return {
-    enabled, triggerPct, retainPct, auto, gateEnabled, ponytailEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
+    enabled, triggerPct, retainPct, auto, gateEnabled, ponytailEnabled, shapeEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
     chatWidth, chatWidthEnabled, hideResizer, hideDivider, reviewSkillEnabled, compactionBackup,
   }
 }
@@ -629,6 +682,8 @@ const gateCache = { key: '', text: '', record: null }
 // 共用一份缓存会让"改了 ponytail.md"把门禁段的缓存顶掉（反之亦然），
 // assemble 热路径上表现为无谓的重读，且 gateMeta/ponyMeta 的 record 会互相串。
 const ponyCache = { key: '', text: '', record: null }
+// 输出形状段（v1.12.0）同理：第三份独立缓存，理由同上。
+const shapeCache = { key: '', text: '', record: null }
 
 /**
  * 一次计算同时给出"注入文本"与"截断元信息"，两者必须**同源**：
@@ -655,6 +710,14 @@ function loadPonytailSync() {
 
 async function loadPonytail() {
   try { return loadPonytailSync() } catch { return '' }
+}
+
+function loadShapeSync() {
+  return loadRuleFile(SHAPE_BUILTIN_FILE, SHAPE_OVERRIDE_FILE(), shapeCache, GATE_MAX_BYTES)
+}
+
+async function loadShape() {
+  try { return loadShapeSync() } catch { return '' }
 }
 
 /**
@@ -721,10 +784,25 @@ export function ponytailPromptText(settings) {
 }
 
 /**
- * 「内置 + override」两段共用的元信息（门禁 / ponytail）。与旧的 gateMeta 同一套口径：
- * 截断三元组必须与文本同源，预览返回的就是注入形态 —— 别再复制第二份实现。
+ * 输出形状段的注入形态。默认**开**，所以这里读的是 `!== false` ——
+ * 与 gate/ponytail 两个"默认关"的段不同，不能照抄它们的 `=== true`。
+ * 逃生开关保留 dsh-output-shape 时期的那个名字（旧环境变量继续有效）。
  */
-async function ruleMeta(settings, enabledKey, builtinFile, overrideFile, cache) {
+export function shapePromptText(settings) {
+  if (process.env[SHAPE_DISABLE_ENV] === '1') return ''
+  // 只有**显式的 false** 才关：null / undefined 都按默认开走（与 sanitize 的 `!== false` 同一口径）。
+  if (settings && settings.shapeEnabled === false) return ''
+  return loadShapeSync()
+}
+
+/**
+ * 「内置 + override」三段共用的元信息（门禁 / ponytail / 输出形状）。与旧的 gateMeta 同一套口径：
+ * 截断三元组必须与文本同源，预览返回的就是注入形态 —— 别再复制第二份实现。
+ *
+ * `defaultOn` 只影响 enabled 的判读：门禁/ponytail 缺省关（`=== true`），
+ * 输出形状缺省开（`!== false`，见 DEFAULTS.shapeEnabled 的注释）。
+ */
+async function ruleMeta(settings, enabledKey, builtinFile, overrideFile, cache, defaultOn = false) {
   const usingOverride = existsSync(overrideFile)
   const sourcePath = usingOverride ? overrideFile : builtinFile
   let text = ''
@@ -734,8 +812,11 @@ async function ruleMeta(settings, enabledKey, builtinFile, overrideFile, cache) 
   // 旧写法 `bytes >= GATE_MAX_BYTES` 既漏判截断又误判恰好压线的原文，见 truncateBytes 的注释。
   // record 为空只在加载吞掉异常时出现，退化成"无截断"。
   const info = cache.record || { originalBytes: bytes, keptBytes: bytes, truncated: false }
+  const on = settings && settings[enabledKey] !== undefined
+    ? (defaultOn ? settings[enabledKey] !== false : settings[enabledKey] === true)
+    : defaultOn
   return {
-    enabled: settings[enabledKey] === true,
+    enabled: on,
     source: usingOverride ? 'override' : 'builtin',
     builtinPath: builtinFile,
     overridePath: overrideFile,
@@ -759,6 +840,12 @@ export async function ponytailMeta(settings) {
   return ruleMeta(settings, 'ponytailEnabled', PONY_BUILTIN_FILE, PONY_OVERRIDE_FILE(), ponyCache)
 }
 
+export async function shapeMeta(settings) {
+  const meta = await ruleMeta(settings, 'shapeEnabled', SHAPE_BUILTIN_FILE, SHAPE_OVERRIDE_FILE(), shapeCache, true)
+  // 逃生开关压过设置：界面要能说出"开关开着、其实没注入"这个状态，而不是继续报"开"。
+  return { ...meta, disabledByEnv: process.env[SHAPE_DISABLE_ENV] === '1' }
+}
+
 /** 写入 / 清除（text 为 null 或空串）规则 override。 */
 export async function writeGateOverride(text) {
   return writeRuleOverride(GATE_OVERRIDE_FILE(), gateCache, loadGate, text)
@@ -766,6 +853,10 @@ export async function writeGateOverride(text) {
 
 export async function writePonytailOverride(text) {
   return writeRuleOverride(PONY_OVERRIDE_FILE(), ponyCache, loadPonytail, text)
+}
+
+export async function writeShapeOverride(text) {
+  return writeRuleOverride(SHAPE_OVERRIDE_FILE(), shapeCache, loadShape, text)
 }
 
 /**
@@ -877,8 +968,12 @@ export async function apply(ctx) {
   }
   let gateSectionActive = false
   let ponySectionActive = false
+  let shapeSectionActive = false
   // v1.11.0：审查技能。注册状态与 dispose 都记在这里，卸载时必须撤干净。
   const reviewState = { registered: [], disposers: [], serviceAvailable: false }
+  // v1.12.0：并入的两条常驻技能（i-have-adhd / ponytail）。**独立于 reviewState** ——
+  // 审查技能是可开关的，关掉时会 dispose 自己那一批；共用一份状态会把这两条一起注销掉。
+  const ruleSkillState = { registered: [], disposers: [] }
 
   // 启动自检：与本机磁盘状态对账（例如 app 升级重置了组装文件之后）。
   try {
@@ -949,6 +1044,33 @@ export async function apply(ctx) {
     console.warn('[dsh-cache-control] systemPrompt unavailable, ponytail disabled: ' + String((err && err.message) || err))
   }
 
+  // ---- 输出形状：第三段常驻规则（v1.12.0，并入自 dsh-output-shape），同一挂载路径 ----
+  // 段名从 `dsh-output-shape:output-shape` 改成 `dsh-cache-control:shape-gate`；order 仍是 410
+  // （守则 400 → ponytail 405 → 本段 410）。段名只在运行时用，盘上没有引用，改名不需要迁移。
+  try {
+    ctx.inject(['systemPrompt'], (promptCtx) => {
+      try {
+        promptCtx.systemPrompt.section({
+          name: SHAPE_SECTION,
+          order: SHAPE_SECTION_ORDER,
+          text: () => {
+            try {
+              return shapePromptText(readSettingsSync())
+            } catch {
+              return ''
+            }
+          },
+        })
+        shapeSectionActive = true
+        console.log('[dsh-cache-control] output shape section mounted (order ' + SHAPE_SECTION_ORDER + ')')
+      } catch (err) {
+        console.warn('[dsh-cache-control] output shape section rejected: ' + String((err && err.message) || err))
+      }
+    })
+  } catch (err) {
+    console.warn('[dsh-cache-control] systemPrompt unavailable, output shape disabled: ' + String((err && err.message) || err))
+  }
+
   // ---- 自动代码审查（v1.11.0）：注册**按需技能**，不注入常驻段 ----
   // 与上面两段的根本区别：这里一个字都不进 system prompt。技能装了只在目录里多一行说明，
   // 正文由模型真正要用时才加载 ⇒ 零常驻 token；审什么文件、按哪条规则，每次现向 ocr 取。
@@ -1010,6 +1132,53 @@ export async function apply(ctx) {
     for (const d of reviewState.disposers) { try { d() } catch { /* 已撤 */ } }
     reviewState.disposers = []
     reviewState.registered = []
+  })
+
+  // ---- 常驻技能（v1.12.0，并入自 dsh-output-shape）：i-have-adhd / ponytail ----
+  // 无开关、无路由：注册一次就完事。正文来自本插件自己的规则文件（见 RULE_SKILLS 注释）。
+  async function syncRuleSkills() {
+    const skillsService = ctx.get('skills')
+    if (skillsService === undefined) {
+      console.warn('[dsh-cache-control] skills 服务不可用，形状/ponytail 技能未注册（常驻段不受影响）')
+      return []
+    }
+    for (const spec of RULE_SKILLS) {
+      let content = ''
+      try { content = spec.body() } catch (err) {
+        console.warn('[dsh-cache-control] 技能 ' + spec.name + ' 正文读取失败：' + String((err && err.message) || err))
+      }
+      if (!content.trim()) {
+        console.warn('[dsh-cache-control] 技能 ' + spec.name + ' 正文为空，未注册')
+        continue
+      }
+      try {
+        const dispose = skillsService.register({
+          name: spec.name,
+          description: spec.description,
+          ...(spec.whenToUse ? { whenToUse: spec.whenToUse } : {}),
+          content,
+          source: 'custom',
+          provider: 'dsh-cache-control',
+          invocation: { modelInvocable: true, userInvocable: true },
+          resourceBase: { kind: 'directory', path: PACKAGE_ROOT },
+          path: spec.builtinFile,
+        })
+        ruleSkillState.disposers.push(dispose)
+        ruleSkillState.registered.push(spec.name)
+        console.log('[dsh-cache-control] 常驻技能已注册：' + spec.name)
+      } catch (err) {
+        console.warn('[dsh-cache-control] 技能 ' + spec.name + ' 注册失败：' + String((err && err.message) || err))
+      }
+    }
+    return ruleSkillState.registered.slice()
+  }
+  await syncRuleSkills().catch((err) => {
+    console.warn('[dsh-cache-control] 常驻技能初始化失败：' + String((err && err.message) || err))
+  })
+  ctx.effect(() => () => {
+    for (const d of ruleSkillState.disposers) { try { d() } catch { /* 已撤 */ } }
+    ruleSkillState.disposers = []
+    ruleSkillState.registered = []
   })
 
   const send = (res, status, obj) => {
@@ -1086,6 +1255,7 @@ export async function apply(ctx) {
           const { text } = await readComposition()
           const gate = await gateMeta(settings)
           const ponytail = await ponytailMeta(settings)
+          const shape = await shapeMeta(settings)
           send(res, 200, {
             settings,
             windowTokens: ROUTED_CONTEXT_WINDOW,
@@ -1098,6 +1268,7 @@ export async function apply(ctx) {
             hasBackup: settings.compactionBackup !== null,
             gate,
             ponytail,
+            shape,
           })
         } catch (err) {
           send(res, 500, { ok: false, error: String((err && err.message) || err) })
@@ -1123,6 +1294,7 @@ export async function apply(ctx) {
             ...resolveValues(settings),
             gateEnabled: settings.gateEnabled,
             ponytailEnabled: settings.ponytailEnabled,
+            shapeEnabled: settings.shapeEnabled,
           })
         } catch (err) {
           send(res, 400, { ok: false, error: String((err && err.message) || err) })
@@ -1212,6 +1384,44 @@ export async function apply(ctx) {
     },
   }), 'dsh-cache-control: ponytail route')
 
+  // ---- 输出形状规则文本（v1.12.0）：与上面两条路由逐字同构，只是键名换成 shape ----
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: SHAPE_PATH,
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        try {
+          send(res, 200, { ok: true, shape: await shapeMeta(await readSettings()) })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String((err && err.message) || err) })
+        }
+        return
+      }
+      if (req.method === 'PUT' || req.method === 'POST') {
+        try {
+          const parsed = JSON.parse(await readBody(req))
+          await writeShapeOverride(parsed && parsed.text)
+          const shape = await shapeMeta(await readSettings())
+          send(res, 200, {
+            ok: true,
+            bytes: shape.bytes,
+            lines: shape.lines,
+            source: shape.source,
+            enabled: shape.enabled,
+            maxBytes: shape.maxBytes,
+            truncated: shape.truncated,
+            originalBytes: shape.originalBytes,
+            keptBytes: shape.keptBytes,
+          })
+        } catch (err) {
+          send(res, 400, { ok: false, error: String((err && err.message) || err) })
+        }
+        return
+      }
+      send(res, 405, { ok: false, error: 'method not allowed' })
+    },
+  }), 'dsh-cache-control: shape route')
+
   // ---- 自动代码审查（v1.11.0）：状态查询 + 开关切换 ----
   ctx.effect(() => webServer.register({
     kind: 'exact',
@@ -1247,12 +1457,17 @@ export async function apply(ctx) {
   const settings = await readSettings()
   const gateText = await loadGate()
   const ponyText = await loadPonytail()
-  console.log('[dsh-cache-control] host up (' + GET_PATH + ', ' + GATE_PATH + ', ' + PONY_PATH + ')'
+  const shapeText = await loadShape()
+  console.log('[dsh-cache-control] host up (' + GET_PATH + ', ' + GATE_PATH + ', ' + PONY_PATH + ', ' + SHAPE_PATH + ')'
     + ' enabled=' + settings.enabled
     + ' gate=' + settings.gateEnabled
     + ' gateSection=' + (gateSectionActive ? 'mounted' : 'absent')
     + ' gateBytes=' + Buffer.byteLength(gateText, 'utf8')
     + ' pony=' + settings.ponytailEnabled
     + ' ponySection=' + (ponySectionActive ? 'mounted' : 'absent')
-    + ' ponyBytes=' + Buffer.byteLength(ponyText, 'utf8'))
+    + ' ponyBytes=' + Buffer.byteLength(ponyText, 'utf8')
+    + ' shape=' + settings.shapeEnabled
+    + ' shapeSection=' + (shapeSectionActive ? 'mounted' : 'absent')
+    + ' shapeBytes=' + Buffer.byteLength(shapeText, 'utf8')
+    + ' skills=' + (ruleSkillState.registered.length ? ruleSkillState.registered.join('+') : 'none'))
 }

@@ -1,12 +1,14 @@
 // ============================================================================
 // dsh-cache-control · Client half
 //
-// 设置页七块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里；**标题不带序号**）：
+// 设置页八块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里；**标题不带序号**）：
 //   * 省缓存 —— 改写 standard preset 的 compaction 参数
 //     （保存后作用于"之后新建的会话"）。
 //   * 会话守则 —— 把 session-gate.md 常驻注入 system prompt
 //     （每个 model step 重新组装，故对已打开的会话下一步即生效，且不被压缩稀释）。
 //   * ponytail —— 第二段常驻规则（编码纪律），与守则互不影响。
+//   * 输出形状 —— 第三段常驻规则（v1.12.0，并入自 dsh-output-shape），与上面两段同构、独立开关，
+//     但**默认开**（并入前它就是这套规则的真源）。它也是 i-have-adhd / ponytail 两条按需技能的注册者。
 //   * 自动审查 —— 注册**按需技能** auto-code-review：一个字都不进 system prompt；
 //     审什么文件、按哪条规则，每次现向外部 ocr（open-code-review）的 delegate 模式取。
 //   * 气泡置顶 —— 最近一条「我的提问」钉顶（圆角矩形毛玻璃底衬随这条提问的实际长度
@@ -287,6 +289,25 @@ window.__ModuleLoader__.load({
         ponytailSaving: false,
         ponytailError: '',
         ponytailReady: true,
+        // 输出形状（v1.12.0，并入自 dsh-output-shape）：第三段常驻规则。与上面两段同构，
+        // 但**默认开**（并入前那插件是这套规则的真源），故初值就是 true。
+        shapeEnabled: true,
+        shapeSource: 'builtin',
+        shapeBuiltinPath: '',
+        shapeOverridePath: '',
+        shapeBytes: 0,
+        shapeMaxBytes: 6144,
+        shapeLines: 0,
+        shapeTruncated: false,
+        shapeOriginalBytes: 0,
+        shapeKeptBytes: 0,
+        shapeText: '',
+        shapeDraft: null,
+        shapeSaving: false,
+        shapeError: '',
+        shapeReady: true,
+        // 逃生开关 DSH_OUTPUT_SHAPE_DISABLE=1 压过设置：界面要能说出"开关开着但没注入"。
+        shapeDisabledByEnv: false,
         // 自动代码审查（v1.11.0）：**按需技能**，不注入常驻段 ⇒ residentBytes 恒 0。
         reviewEnabled: true,
         reviewRegistered: false,
@@ -417,11 +438,33 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** settings.json 的响应可同时带 gate / ponytail 元数据；res.settings 为空时只更新元数据。 */
+    /** 输出形状元数据 → STORE 补丁：与 applyPonytail 同构，键前缀换成 shape（v1.12.0）。 */
+    function applyShape(p) {
+      if (!p || (p.bytes === undefined && p.text === undefined)) return {}
+      return {
+        shapeReady: true,
+        shapeSource: p.source || 'builtin',
+        shapeBuiltinPath: p.builtinPath || '',
+        shapeOverridePath: p.overridePath || '',
+        shapeBytes: Number(p.bytes) || 0,
+        shapeMaxBytes: Number(p.maxBytes) || 6144,
+        shapeLines: Number(p.lines) || 0,
+        shapeTruncated: !!p.truncated,
+        shapeOriginalBytes: Number(p.originalBytes) || Number(p.bytes) || 0,
+        shapeKeptBytes: Number(p.keptBytes) || Number(p.bytes) || 0,
+        shapeText: typeof p.text === 'string' ? p.text : '',
+        shapeEnabled: p.enabled === undefined ? STORE.state.shapeEnabled : !!p.enabled,
+        shapeDisabledByEnv: p.disabledByEnv === true,
+      }
+    }
+
+    /** settings.json 的响应可同时带 gate / ponytail / shape 元数据；res.settings 为空时只更新元数据。 */
     function pull(res) {
       var patch = applyGate(res && res.gate)
       var ponyPatch = applyPonytail(res && res.ponytail)
       for (var pk in ponyPatch) patch[pk] = ponyPatch[pk]
+      var shapePatch = applyShape(res && res.shape)
+      for (var sk in shapePatch) patch[sk] = shapePatch[sk]
       var s = res && res.settings
       if (s) {
         patch.enabled = !!s.enabled
@@ -434,6 +477,9 @@ window.__ModuleLoader__.load({
         // 读到的真值覆盖成 false（v1.10.0 首版就栽在"只改 gate 不改 settings"这类串扰上）。
         // 只有字段真的存在才表态，否则保留元数据里的生效值。
         if (s.ponytailEnabled !== undefined) patch.ponytailEnabled = s.ponytailEnabled === true
+        // v1.12.0：输出形状默认**开**，所以这里既不能写 `=== true`（旧盘没这个键会被判成关），
+        // 也不能无条件覆盖（会把 /cc/shape.json 读到的真值冲掉）。字段存在才表态。
+        if (s.shapeEnabled !== undefined) patch.shapeEnabled = s.shapeEnabled !== false
         patch.pinLastUser = s.pinLastUser === true
         patch.clearBubble = s.clearBubble === true
         patch.pinBlur = clampBlur(s.pinBlur)
@@ -467,6 +513,10 @@ window.__ModuleLoader__.load({
         if (res.gate === undefined) patch.gateReady = false
         // 同理：ponytail 字段缺失 = host 半还是 v1.9.x，界面禁用并提示重启
         if (res.ponytail === undefined) patch.ponytailReady = false
+        // v1.12.0：shape 字段缺失 = host 半还是 v1.11.x（还没并入输出形状），卡片禁用并提示重启。
+        // 这条尤其重要：旧 host 的 sanitize 不认识 shapeEnabled，任何一次保存都会把它抹掉，
+        // 而 shapeEnabled 默认开 ⇒ 用户会在"刷新过页面但没重启"的窗口里静默丢掉形状规则。
+        if (res.shape === undefined) patch.shapeReady = false
         // v1.11.0：review 字段缺失 = host 半还没有 /cc/review.json，卡片禁用并提示重启
         if (res.review === undefined) patch.reviewReady = false
         else {
@@ -581,6 +631,8 @@ window.__ModuleLoader__.load({
           hideDivider: s.hideDivider,
           // v1.11.0：审查技能开关。同样必须出现在载荷里，否则拨得动、不落盘。
           reviewSkillEnabled: s.reviewEnabled,
+          // v1.12.0：输出形状（并入自 dsh-output-shape）。第三个"拨得动就必须落盘"的开关。
+          shapeEnabled: s.shapeEnabled,
         }),
       })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
@@ -598,6 +650,7 @@ window.__ModuleLoader__.load({
             applied: res && res.applied === undefined ? null : !!res.applied,
             gateEnabled: res && res.gate ? res.gate.enabled === true : STORE.state.gateEnabled,
             ponytailEnabled: res && res.ponytail ? res.ponytail.enabled === true : STORE.state.ponytailEnabled,
+            shapeEnabled: res && res.shape ? res.shape.enabled !== false : STORE.state.shapeEnabled,
           })
         })
         .catch(function (e) {
@@ -1436,6 +1489,11 @@ window.__ModuleLoader__.load({
       STORE.set({ ponytailEnabled: v, ponytailError: '' })
       scheduleSave()
     }
+    /** 输出形状总开关（v1.12.0）：独立于门禁、ponytail 与压缩。默认开。 */
+    function setShapeEnabled(v) {
+      STORE.set({ shapeEnabled: v, shapeError: '' })
+      scheduleSave()
+    }
     /**
      * chip 两段的点击处理（提到模块作用域，便于离线断言"点哪段切哪个"）。
      * 读 STORE.state 而非闭包快照，避免连点用旧值。
@@ -1451,6 +1509,15 @@ window.__ModuleLoader__.load({
     function flipPonytail() {
       if (STORE.state.loading || !STORE.state.loaded || !STORE.state.ponytailReady) return
       setPonytailEnabled(!STORE.state.ponytailEnabled)
+    }
+    function flipShape() {
+      if (STORE.state.loading || !STORE.state.loaded || !STORE.state.shapeReady) return
+      setShapeEnabled(!STORE.state.shapeEnabled)
+    }
+    /** chip 徽标要看**实际是否注入**：逃生开关压过设置时，开关是开的但一个 token 都没进提示词。 */
+    function shapeInjected(state) {
+      var s = state || STORE.state
+      return s.shapeEnabled === true && s.shapeDisabledByEnv !== true
     }
 
     /** 写 ponytail 规则文本；text 为 '' 表示删除 override、回到插件内置。 */
@@ -1496,6 +1563,54 @@ window.__ModuleLoader__.load({
           STORE.set({
             ponytailReady: !missing,
             ponytailError: missing ? 'ponytail 接口不可用：需重启桌面应用装载新版 host 半' : '规则读取失败: ' + String(e),
+          })
+        })
+    }
+
+    /** 写输出形状规则文本；text 为 '' 表示删除 override、回到插件内置（与 ponytail 逐字同构）。 */
+    function saveShapeText(text) {
+      STORE.set({ shapeSaving: true, shapeError: '' })
+      fetch('/cc/shape.json', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: text }),
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+        .then(function (res) {
+          if (!res.ok || !res.j || res.j.ok !== true) {
+            throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
+          }
+          STORE.set({ shapeSaving: false, shapeError: '', shapeDraft: null })
+          return fetch('/cc/shape.json', { cache: 'no-store' })
+        })
+        .then(function (r) { return r.json() })
+        .then(function (res) { if (res && res.shape) pull({ settings: null, shape: res.shape }) })
+        .catch(function (e) {
+          STORE.set({ shapeSaving: false, shapeError: '规则保存失败: ' + String(e) })
+        })
+    }
+
+    function reloadShape() {
+      fetch('/cc/shape.json', { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+        .then(function (res) {
+          if (!res || !res.shape) throw new Error('no shape payload')
+          var p = res.shape
+          STORE.set({
+            shapeSource: p.source, shapeBuiltinPath: p.builtinPath || '', shapeOverridePath: p.overridePath || '',
+            shapeBytes: Number(p.bytes) || 0, shapeLines: Number(p.lines) || 0, shapeText: p.text || '',
+            shapeTruncated: !!p.truncated, shapeEnabled: p.enabled !== false, shapeDraft: null, shapeError: '',
+            shapeOriginalBytes: Number(p.originalBytes) || Number(p.bytes) || 0,
+            shapeKeptBytes: Number(p.keptBytes) || Number(p.bytes) || 0,
+            shapeDisabledByEnv: p.disabledByEnv === true,
+            shapeReady: true,
+          })
+        })
+        .catch(function (e) {
+          var missing = /404|no shape payload|not found/i.test(String(e))
+          STORE.set({
+            shapeReady: !missing,
+            shapeError: missing ? '输出形状接口不可用：需重启桌面应用装载新版 host 半' : '规则读取失败: ' + String(e),
           })
         })
     }
@@ -1694,6 +1809,66 @@ window.__ModuleLoader__.load({
             '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 2–3K token/请求，' +
             '且读图、写文案之类的会话也会看到它（正文里已写明"非编码任务不适用"来兜底）。' +
             '平时不用可以关着，需要时来这里或点 chip 打开。')))
+    }
+
+    // ------------------------------------------- 设置页：输出形状卡（v1.12.0）--
+    function ShapeCard() {
+      var s = useCache()
+      var editing = s.shapeDraft !== null
+      var draft = editing ? s.shapeDraft : s.shapeText
+      var draftBytes = new Blob([draft || '']).size
+      return h('div', { className: 'cc-card' },
+        Switch('启用输出形状（下一个请求即生效，含已打开的会话；默认开）', s.shapeEnabled, setShapeEnabled, !s.shapeReady),
+        s.shapeReady ? RuleSummary(s, 'shape')
+          : h('div', { className: 'cc-err' }, '未装载：当前运行的 host 还没有 /cc/shape.json，请重启桌面应用后再操作。'),
+        // 逃生开关压过设置：开关开着却一个字都没进提示词，必须说出来（否则用户会以为规则生效了）。
+        s.shapeDisabledByEnv ? h('p', { className: 'cc-warn' },
+          '环境变量 DSH_OUTPUT_SHAPE_DISABLE=1 正在强制关闭本段：开关状态照旧记录，但规则不会注入提示词。' +
+          '去掉这个变量并重启桌面应用才会恢复。') : null,
+        s.shapeTruncated ? h('p', { className: 'cc-warn' },
+          '你的规则被截断了：原文 ' + s.shapeOriginalBytes + ' 字节，实际注入 ' + s.shapeKeptBytes +
+          ' 字节（上限 ' + s.shapeMaxBytes + ' 字节）。请精简规则。') : null,
+        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+          h(Btn, {
+            disabled: !s.shapeReady,
+            onClick: function () { STORE.set({ shapeDraft: editing ? null : s.shapeText }) },
+          }, editing ? '取消编辑' : '编辑规则'),
+          editing ? h(Btn, {
+            disabled: s.shapeSaving,
+            onClick: function () { saveShapeText(s.shapeDraft) },
+          }, s.shapeSaving ? '保存中…' : '保存并生效') : null,
+          editing && s.shapeSource === 'override' ? h(Btn, {
+            disabled: s.shapeSaving,
+            onClick: function () { saveShapeText('') },
+          }, '清除自定义，回到内置') : null,
+          h(Btn, { onClick: reloadShape }, '重新读取')),
+        editing ? h('div', null,
+          h('textarea', {
+            className: 'cc-textarea', value: draft, spellCheck: false,
+            onChange: function (e) { STORE.set({ shapeDraft: e.target.value }) },
+          }),
+          h('div', { className: 'cc-muted', style: { marginTop: '6px' } },
+            '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(s.shapeMaxBytes) +
+            (draftBytes > s.shapeMaxBytes ? '（超出 ' + (draftBytes - s.shapeMaxBytes) + ' B，保存后会被截断）' : '') +
+            '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。')) : null,
+        s.shapeError ? h('p', { className: 'cc-err' }, s.shapeError) : null,
+        h(Fold, { label: '规则说明' },
+          h('div', { className: 'cc-note' },
+            '输出形状（蒸自 GitHub ayghri/i-have-adhd，MIT）：把回复整形成"读完就能动手"的形状——' +
+            '首行给下一步、多步编号、状态复述、跑题后置、时间给量级、战果可见、报错讲因果、展示分组、无开场白无客套，' +
+            '外加六条破例（要解释就讲透、破坏性操作先确认、连续三轮不对就换假设、真歧义先问一句、任务赢形状留、' +
+            'system 指令优先）。'),
+          h('div', { className: 'cc-note' },
+            '来源：本节原先由独立插件 dsh-output-shape 提供（段名 dsh-output-shape:output-shape）。' +
+            '2026-09-21 并入本插件后那个插件已下线，段名改为 dsh-cache-control:shape-gate，order 仍是 410。' +
+            '会话守则里的 R4 只留了一句归属声明，两者不会重复注入。'),
+          h('div', { className: 'cc-path' }, '内置规则：' + (s.shapeBuiltinPath || '（未就绪）')),
+          h('div', { className: 'cc-path' }, '自定义副本：' + (s.shapeOverridePath || '（未就绪）') +
+            (s.shapeSource === 'override' ? '（当前生效）' : '（尚未创建）')),
+          h('div', { className: 'cc-note' },
+            '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 1.5K token/请求，' +
+            '任何会话都会看到（读图、写文案也照带）。并入前它是默认开的，所以升级后不会变；不想付这份 token 就关掉它。' +
+            '技能 i-have-adhd 与 ponytail 用的是同一份正文，关掉本节不影响按需调用技能。')))
     }
 
     /**
@@ -1951,7 +2126,7 @@ window.__ModuleLoader__.load({
         h('section', null,
           h('h3', { className: 'cc-h' }, '会话策略'),
           h(Fold, { label: '总述' },
-            h('p', { className: 'cc-sub' }, '七块互相独立的开关（无编号，按下面卡片的顺序）：压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；对话页只管会话列宽（原底图工坊里的同名区块）；存储管各用途占盘与清理。'))),
+            h('p', { className: 'cc-sub' }, '八块互相独立的开关（无编号，按下面卡片的顺序）：压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；输出形状是第三段常驻规则（回复形状，**默认开**，并入自原 dsh-output-shape 插件）；自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；对话页只管会话列宽（原底图工坊里的同名区块）；存储管各用途占盘与清理。'))),
         h('section', null,
           h('h3', { className: 'cc-h' }, '省缓存'),
           CacheCard()),
@@ -1961,6 +2136,9 @@ window.__ModuleLoader__.load({
         h('section', null,
           h('h3', { className: 'cc-h' }, 'ponytail'),
           PonytailCard()),
+        h('section', null,
+          h('h3', { className: 'cc-h' }, '输出形状'),
+          ShapeCard()),
         h('section', null,
           h('h3', { className: 'cc-h' }, '自动审查'),
           ReviewCard()),
@@ -1975,7 +2153,7 @@ window.__ModuleLoader__.load({
           StorageCard()),
         h('section', null,
           h(Fold, { label: '关于本页' },
-            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则开关只决定规则段是否为空（空段在提示词渲染时被丢弃）；「气泡置顶」与「对话页」两项纯界面，只改样式与 CSS 变量。规则文本见上列路径。'))))
+            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则/ponytail/输出形状三个开关只决定各自规则段是否为空（空段在提示词渲染时被丢弃）；「气泡置顶」与「对话页」两项纯界面，只改样式与 CSS 变量。规则文本见上列路径。'))))
     }
 
     // ------------------------------------------ 输入工具条 chip + 弹出面板 --
@@ -2153,6 +2331,21 @@ window.__ModuleLoader__.load({
           s.ponytailSaving ? h('span', { className: 'cc-muted', key: 'hint' }, '规则处理中…') : null),
       ]
 
+      // 输出形状 —— 独立开关，与上面两段同族（v1.12.0 并入；规则正文的编辑在设置页那张卡里）
+      var shapeSection = [
+        h('div', { className: 'cc-sect', key: 'h' },
+          h('span', { className: 'cc-sectTitle' }, '输出形状'),
+          h('span', { className: 'cc-sectHint' }, '下一步即生效')),
+        h(React.Fragment, { key: 'on' }, Switch('启用回复形状（首行给下一步 / 无客套）', s.shapeEnabled, setShapeEnabled, !s.shapeReady)),
+        s.shapeReady ? h('div', { key: 'meta' }, RuleSummary(s, 'shape'))
+          : h('div', { className: 'cc-err', key: 'meta' }, '未装载：需重启桌面应用'),
+        s.shapeReady && s.shapeDisabledByEnv
+          ? h('div', { className: 'cc-warn', key: 'env' }, '环境变量 DSH_OUTPUT_SHAPE_DISABLE=1 正在强制关闭本段。') : null,
+        h('div', { key: 'btns', style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          h(Btn, { onClick: reloadShape }, '重读'),
+          h('span', { className: 'cc-muted' }, '改规则去设置页')),
+      ]
+
       var note = h('div', { className: 'cc-note' },
         '压缩：' + (s.enabled
           ? '触发 ~' + fmt(s.triggerTokens) + ' / 保留 ~' + fmt(s.retainTokens) + '（窗口 ' + fmt(s.windowTokens) + '），仅影响之后新建的会话。'
@@ -2164,9 +2357,14 @@ window.__ModuleLoader__.load({
         + ' ponytail：' + (!s.ponytailReady ? '未装载，需重启桌面应用。'
           : s.ponytailEnabled
             ? kb(s.ponytailBytes) + ' 编码纪律常驻注入（对非编码会话也占 token）。'
-            : '未注入，仅按需技能可用。'))
-      var status = s.error || s.gateError || s.ponytailError
-        ? h('div', { className: 'cc-err' }, s.error || s.gateError || s.ponytailError)
+            : '未注入，仅按需技能可用。')
+        + ' 输出形状：' + (!s.shapeReady ? '未装载，需重启桌面应用。'
+          : s.shapeDisabledByEnv ? '被环境变量 DSH_OUTPUT_SHAPE_DISABLE=1 强制关闭。'
+            : s.shapeEnabled
+              ? kb(s.shapeBytes) + ' 回复形状常驻注入（默认开，对所有会话生效）。'
+              : '未注入，仅按需技能 i-have-adhd 可用。'))
+      var status = s.error || s.gateError || s.ponytailError || s.shapeError
+        ? h('div', { className: 'cc-err' }, s.error || s.gateError || s.ponytailError || s.shapeError)
         : h('div', { className: 'cc-ok' }, s.saving ? '正在保存…' : (s.enabled === s.applied ? '已与磁盘一致' : '待同步…'))
 
       var panel = open ? h('div', {
@@ -2184,6 +2382,7 @@ window.__ModuleLoader__.load({
         h(React.Fragment, null, cacheSection),
         h(React.Fragment, null, gateSection),
         h(React.Fragment, null, ponySection),
+        h(React.Fragment, null, shapeSection),
         note,
         status) : null
 
@@ -2215,11 +2414,18 @@ window.__ModuleLoader__.load({
           + '\nYAGNI / 七级梯子 / 修根因 / 禁没要求的抽象，常驻 system prompt。'
           + '\n生效范围：所有会话的下一个请求；只对编码任务生效，但 token 对所有会话照收。'
           + '\n点这一段 = 直接开/关。')
+      var shapeTitle = '输出形状（回复形状 · 默认开）：' + (!s.shapeReady ? '未装载，需重启桌面应用。'
+        : (shapeInjected(s) ? '开（' : '关（') + kb(s.shapeBytes) + ' · ' + s.shapeLines + ' 行 · '
+          + (s.shapeSource === 'override' ? '自定义' : '内置') + '）'
+          + (s.shapeDisabledByEnv ? '\n注意：DSH_OUTPUT_SHAPE_DISABLE=1 正在强制关闭，开关状态不作数。' : '')
+          + '\n首行给下一步 / 多步编号 / 状态复述 / 跑题后置 / 报错讲因果 / 无开场白无客套，常驻 system prompt。'
+          + '\n生效范围：所有会话的下一个请求（含子代理与子会话）。'
+          + '\n点这一段 = 直接开/关；要改规则去设置页「输出形状」。')
       var caretTitle = '滑杆与规则面板：压缩触发点 / 保留尾部 / 自动压缩 / 查看·重读规则（气泡置顶与对话页宽度在设置页）'
 
       return h(React.Fragment, null,
         h('span', {
-          className: 'cc-chip' + ((s.enabled || s.gateEnabled || s.ponytailEnabled) ? ' on' : ''),
+          className: 'cc-chip' + ((s.enabled || s.gateEnabled || s.ponytailEnabled || shapeInjected(s)) ? ' on' : ''),
           ref: btnRef,
           'data-cache-control-toggle': '1',
         },
@@ -2255,6 +2461,17 @@ window.__ModuleLoader__.load({
           },
             h('span', { className: 'cc-segLabel' }, '懒码'),
             OnOff(s.ponytailEnabled, !s.ponytailReady)),
+          h('span', { className: 'cc-div' }),
+          h('button', {
+            type: 'button',
+            className: 'cc-seg' + (shapeInjected(s) && s.shapeReady ? ' on' : ''),
+            disabled: s.loading || !s.shapeReady,
+            'aria-pressed': shapeInjected(s) === true && s.shapeReady === true,
+            title: shapeTitle,
+            onClick: flipShape,
+          },
+            h('span', { className: 'cc-segLabel' }, '形状'),
+            OnOff(shapeInjected(s), !s.shapeReady)),
           h('button', {
             type: 'button',
             className: 'cc-caret',
@@ -2395,6 +2612,18 @@ window.__ModuleLoader__.load({
       setPonytailEnabled: setPonytailEnabled,
       ponytailChip: function () {
         return { ponytailEnabled: STORE.state.ponytailEnabled, ponytailReady: STORE.state.ponytailReady }
+      },
+      // v1.12.0 缝：输出形状段同理 —— "点哪段切哪个"、默认开、逃生开关压过设置，都要能离线断言
+      flipShape: flipShape,
+      setShapeEnabled: setShapeEnabled,
+      shapeInjected: shapeInjected,
+      shapeChip: function () {
+        return {
+          shapeEnabled: STORE.state.shapeEnabled,
+          shapeReady: STORE.state.shapeReady,
+          shapeDisabledByEnv: STORE.state.shapeDisabledByEnv,
+          injected: shapeInjected(),
+        }
       },
     }
     return module.exports

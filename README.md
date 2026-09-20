@@ -1,16 +1,20 @@
-# dsh-cache-control（会话策略：省缓存 / 会话守则 / ponytail / 自动审查 / 气泡置顶 / 对话页 / 存储）
+# dsh-cache-control（会话策略：省缓存 / 会话守则 / ponytail / 输出形状 / 自动审查 / 气泡置顶 / 对话页 / 存储）
 
-给 DSH Desktop（dsh 0.7.2-alpha，web profile）加**七个互相独立的开关**，设置页名称就叫
-**会话策略**（4 字，七个分区标题 省缓存 / 会话守则 / ponytail / 自动审查 / 气泡置顶 /
+给 DSH Desktop（dsh 0.7.2-alpha，web profile）加**八个互相独立的开关**，设置页名称就叫
+**会话策略**（4 字，八个分区标题 省缓存 / 会话守则 / ponytail / 输出形状 / 自动审查 / 气泡置顶 /
 对话页 / 存储 一律 2–4 字，**不带序号** —— v1.11.1 起去掉编号，理由见下面「为什么分区标题没有编号」）：
-chip 上只有 省缓存 / 提问 / 懒码 三段各自可点，自动审查、气泡置顶、对话页、存储全部走设置页。
+chip 上 省缓存 / 提问 / 懒码 / 形状 四段各自可点，自动审查、气泡置顶、对话页、存储全部走设置页。
 
-| | 省缓存 · 压缩策略 | 会话守则 · 长期规则 | ponytail · 编码纪律 | 自动审查 · 按需技能 |
-|---|---|---|---|---|
-| 动的是什么 | standard preset 里 `@deepseek-ai/dsh-compaction-basic` 的 config | system prompt 里一个常驻段（规则文本） | system prompt 里的第二个常驻段（与守则同构、独立开关） | 宿主 `skills` 目录里的一个条目（**不进 system prompt**） |
-| 生效时机 | **之后新建的会话**（preset 按组装文件 mtime 分代） | **所有会话的下一个 model step**（含当前会话，无需重启） | 同「会话守则」 | 模型/用户调用技能那一刻 |
-| 会被压缩冲掉吗 | — | 不会：压缩只折叠对话历史，system prompt 每请求重发 | 同「会话守则」 | 不适用（压根不在 prompt 里） |
-| 代价 | 无额外 token | 规则体积 × 每请求（含子代理/工作流子会话） | 约 1.3K token/请求 × 所有会话 | **注册零 token**；成本只在真调用时 |
+| | 省缓存 · 压缩策略 | 会话守则 · 长期规则 | ponytail · 编码纪律 | 输出形状 · 回复形状 | 自动审查 · 按需技能 |
+|---|---|---|---|---|---|
+| 动的是什么 | standard preset 里 `@deepseek-ai/dsh-compaction-basic` 的 config | system prompt 里一个常驻段（规则文本） | system prompt 里的第二个常驻段（与守则同构、独立开关） | system prompt 里的第三个常驻段（同上，但**默认开**） | 宿主 `skills` 目录里的一个条目（**不进 system prompt**） |
+| 生效时机 | **之后新建的会话**（preset 按组装文件 mtime 分代） | **所有会话的下一个 model step**（含当前会话，无需重启） | 同「会话守则」 | 同「会话守则」 | 模型/用户调用技能那一刻 |
+| 会被压缩冲掉吗 | — | 不会：压缩只折叠对话历史，system prompt 每请求重发 | 同「会话守则」 | 同「会话守则」 | 不适用（压根不在 prompt 里） |
+| 代价 | 无额外 token | 规则体积 × 每请求（含子代理/工作流子会话） | 约 1.3K token/请求 × 所有会话 | 约 1.2K token/请求 × 所有会话（默认就开着） | **注册零 token**；成本只在真调用时 |
+
+「气泡置顶」与「对话页」是纯界面开关，只改样式与 CSS 变量，不动消息数据、不动宿主代码；
+「存储」只做各用途占盘统计与"移入回收"式清理。
+只影响 `standard` 之外的说明：会话守则走宿主全局提示词层，对**所有 preset、子代理、workflow 子会话**都生效。
 
 「气泡置顶」与「对话页」是纯界面开关，只改样式与 CSS 变量，不动消息数据、不动宿主代码；
 「存储」只做各用途占盘统计与"移入回收"式清理。
@@ -23,7 +27,7 @@ v1.10.2 修的是 ponytail 曾写作 "②b" 导致页面上出现两个 ②；v1
 （README、CHANGELOG、跨插件指路、测试断言各扫一遍）。v1.11.1 起标题只留名字，顺序由卡片书写顺序决定，
 **插一张卡只改一处**。要指代某块直接说名字。
 
-`verify-gate-client.mjs` 里两条断言钉住这件事：① 页面（含抽屉正文）不许出现圈符；② 七个名字必须齐全且顺序正确。
+`verify-gate-client.mjs` 里两条断言钉住这件事：① 页面（含抽屉正文）不许出现圈符；② 八个名字必须齐全且顺序正确。
 注意这里只剩**行文里的列举序号**不算违规 —— 断言扫的是渲染出的整页文本，所以 README/注释以外，
 client.js 里给用户看的字符串也不能带圈符。
 
@@ -91,9 +95,9 @@ client.js 里给用户看的字符串也不能带圈符。
 - 上限 **16,384 字节**（16 KB，约 6.6k tokens）；超限自动截断，避免规则膨胀悄悄吃掉上下文。
   （初版是 6 KB；加完 R4 输出形状一节后余量只剩 92 B，故 v1.9.0 放宽到 16 KB —— 这段文本每请求
   重复计费，上限本身仍然保留，只是不再卡在刚好够用的位置。）
-- **R4 输出形状已于 v1.9.1（2026-09-16）摘出本文件**，真源迁到 `dsh-output-shape/skills/i-have-adhd/SKILL.md`，
-  由那个插件常驻注入（默认开）。本文件的 R4 一节现在只剩一句归属声明——**别在这里再抄一份**，
-  否则同一套规则会被注入两遍。要收回原文：同目录 `session-gate.R4-backup-2026-09-16.md`。
+- **R4 输出形状不在本文件里**：2026-09-16 起本文件只剩一句归属声明，真源是**同目录 `shape-gate.md`**，
+  由本插件作为第三段常驻规则注入（详见下面「输出形状」一节）。**别在这里再抄一份**，否则同一套规则会被注入两遍。
+  要收回原文备份：`session-gate.R4-backup-2026-09-16.md`。
 - **怎么知道自己的规则被砍了**：`/cc/gate.json` 与 `/cc/settings.json` 内嵌的 `gate` 里有三个字段 ——
   `truncated`（**显式布尔标记**）、`originalBytes`（规则**原文**字节数）、`keptBytes`（**实际注入**
   字节数，与老字段 `bytes` 同值）。**不要**用 `bytes >= maxBytes` 去反推"有没有截断过"：截断后的
@@ -115,6 +119,26 @@ client.js 里给用户看的字符串也不能带圈符。
 两段各读各的文件（`session-gate.md` / `ponytail.md`）、各有独立的 mtime+size 缓存，互不顶掉；
 自定义覆盖走 `/cc/ponytail.json`（GET 预览 / PUT 写 override / 空文删回内置）。
 代价：开着约 1.3K token/请求 × **所有**会话（含子代理与非编码会话），正文里写明"只对编码任务生效"兜底行为。
+
+## 输出形状 · 回复形状（v1.12.0，并入自 dsh-output-shape）
+
+与上面两段**同构的第三段常驻规则**：蒸馏自 GitHub [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd)（MIT）的
+「ADHD 友好输出」十条规则（首行给下一步 / 多步编号 / 状态复述 / 跑题后置 / 时间给量级 / 战果可见 / 报错讲因果 /
+展示分组 ≤5 / 无开场白无客套）＋六条破例 ＋ 发送前自检。独立开关 `shapeEnabled`，
+提示词段 `dsh-cache-control:shape-gate`（order 410，紧随 ponytail 405、plan 政策 500 之前）。
+
+- **默认开**，与另两段相反：并入前它由独立插件 dsh-output-shape 的 bundle config 默认开启（那插件是这套规则的**真源**，
+  会话守则里的 R4 早在 2026-09-16 就摘出交给它）。合并时保持同默认 —— 否则升级即静默改变行为，用户只看到"形状规则没了"。
+  不想要这份 token 就去设置页或 chip 第四段关掉它。判据是 `!== false`（不是 `=== true`）：旧盘上没有这个键时按开处理。
+- 文件与路由：内置 `shape-gate.md`、override `$DSH_HOME/dsh-cache-control/shape.md`、
+  `/cc/shape.json`（GET 元信息 / PUT 写 override / 空文删回内置）、独立 mtime+size 缓存（三段互不顶掉）。
+- **原独立插件已下线**：`dsh-output-shape` 从 web profile 的依赖与 bundle 列表里摘除，仓库目录归档。
+  段名由 `dsh-output-shape:output-shape` 改为 `dsh-cache-control:shape-gate`（段名只在运行时用，盘上没有引用，无需迁移）。
+- **它还接手了两条按需技能**：`i-have-adhd` 与 `ponytail`（原来是那个插件注册的）。两条技能无开关、零常驻 token，
+  正文**直接读本插件的规则文件**（shape-gate.md / ponytail-gate.md，override 优先）—— 于是"技能里读到的规则"与
+  "每请求注入的规则"永远同一份，不会漂。`verify-shape-gate.mjs` 第 8 节把这条钉死。
+- **逃生开关**沿用原名 `DSH_OUTPUT_SHAPE_DISABLE=1`（改名等于把别人环境里/脚本里的开关悄悄拔掉）：
+  置 1 则无论设置如何都不注入常驻段；技能注册不受影响。界面在卡片与面板里都会写明"被环境变量强制关闭"。
 
 ## 自动审查 · 按需技能（v1.11.0）
 
@@ -361,9 +385,10 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 | `tools/verify-panel-and-resizer.mjs` | 25 项通过（v1.7.0 起两类把手分开关断言） |
 | `tools/verify-session-gate.mjs` | 39 项通过（v1.9.4 起纳入；本机跑时另加真实 home 对照 3 条） |
 
-> 上表是 v1.9.x 那次"干净机器实测"的记录，当时确实只有 5 套。**v1.10.2 起进 CI 的是 7 套**：
-> 多出 `verify-ponytail-gate.mjs`（23 项，v1.10.0 纳入）与 `verify-gate-client.mjs`
-> （v1.11.0 起本机 76 项 / 无真实 home 时 74 项 + SKIP，夹具化见下面那条）。
+> 上表是 v1.9.x 那次"干净机器实测"的记录，当时确实只有 5 套。**v1.10.2 起进 CI 的是 8 套**：
+> 多出 `verify-ponytail-gate.mjs`（23 项，v1.10.0 纳入）、`verify-shape-gate.mjs`
+> （60 项，v1.12.0 纳入）与 `verify-gate-client.mjs`
+> （v1.12.0 起本机 80 项 / 无真实 home 时 78 项 + SKIP，夹具化见下面那条）。
 
 > `verify-panel-and-resizer.mjs` 原来因为"要本机 DSH 安装目录的 `node_modules/react`"被排除。
 > 现在 `react` 进 `devDependencies`，`run-all.mjs` 把 `DSH_APP_MODULES` 指向**仓库自己的 `node_modules/`**，
@@ -378,10 +403,10 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 
 > `verify-gate-client.mjs` 同样在 v1.10.2 挪回 CI，消除的是三条本机依赖：① preset 从 `%APPDATA%`
 > 复制 ⇒ 换成与 verify-session-gate 同款的最小夹具；② 收尾"真实 settings.json/gate.md 未被改动"
-> 两条硬读真实 home ⇒ 真实 home 不存在时 SKIP 并如实打印（本机跑仍是 76 条，CI 上 74 条 + SKIP）；
+> 两条硬读真实 home ⇒ 真实 home 不存在时 SKIP 并如实打印（v1.12.0 起本机 80 条，CI 上 78 条 + SKIP）；
 > ③ primitives 桩原来要求"能读到宿主真包源码"才装载 ⇒ 改为始终按签名复刻桩，读不到只打一行 NOTE。
 > `react-dom` 随之补进 `devDependencies`（钉到与 react 同版本 18.3.1，原来只有 `react`、server.js 靠宿主目录）。
-> 反向证据（本轮实测）：`APPDATA` 指空目录后跑 `npm test` ⇒ **7/7 套件通过**，该套件 74 passed / 0 failed + SKIP；
+> 反向证据（本轮实测）：`APPDATA` 指空目录后跑 `npm test` ⇒ **8/8 套件通过**，该套件 78 passed / 0 failed + SKIP；
 > verify-session-gate 同步退化为 36 项（它自己的真实 home 对照 3 条也走 SKIP）。
 
 **未纳入 CI** 的套件（原因同时写在 `tools/run-all.mjs` 的 `EXCLUDED` 里）：
@@ -412,10 +437,12 @@ client 半在**服务启动时**才 compose 进图（依据见上一节），所
 
 **C. 设置**不随仓库走**（换机器后各开关全是默认关）**
 所有状态都在 `$DSH_HOME/dsh-cache-control/`：`settings.json`（各开关 + 数值）、
-`gate.md`（会话守则的自定义覆盖，可选）、`ponytail.md`（ponytail 的自定义覆盖，可选）。
+`gate.md`（会话守则的自定义覆盖，可选）、`ponytail.md`（ponytail 的自定义覆盖，可选）、
+`shape.md`（输出形状的自定义覆盖，可选）。
 **仓库里没有它们**，因此换机器后要重新打开：
 「省缓存」「会话守则」「ponytail」「气泡置顶」「对话页」—— 否则会表现为"插件装了但什么都没发生"。
-（「自动审查」按 DEFAULTS **默认开**，换机器不用拨；它只注册一个技能，ocr 没装也不报错，只是用到时第一步会停下说明。）
+（「自动审查」与「输出形状」按 DEFAULTS **默认开**，换机器不用拨：前者只注册一个技能，ocr 没装也不报错，
+只是用到时第一步会停下说明；后者是常驻规则，不想要那份 token 才需要去关。）
 
 **D. 「省缓存」改的是 preset，不是插件目录**
 它把参数写进 `$DSH_HOME/profiles/**/standard/agent.yml` 里 `compaction-basic` 那一行
@@ -444,6 +471,10 @@ node tools/settings.mjs import D:\cc-settings.json --yes    # 新机器（覆盖
 （触发点 5–95、保留尾部 < 触发点、底衬模糊 0–24 且 1 位小数、钉顶上限 12–80vh、
 对话页宽度 30–100% 且旧 px 值归一 80%），未知字段丢弃并列出来；
 **host 读盘时还会再 sanitize 一次**，所以口径即使漂了也不会写坏引擎侧。
+⚠ 导出/导入只搬 `settings.json` 与 `gate.md`：`ponytail.md` / `shape.md` 两个 override 要自己拷
+（它们就在同一个目录下）。v1.12.0 修掉一处静默丢键：这个脚本的 `DEFAULTS` 曾经漏了
+`ponytailEnabled` / `reviewSkillEnabled`，于是"导出再导入"会把这两个开关悄悄抹回默认 ——
+`verify-settings-payload.mjs` 只比对 host 与 client，管不到这个脚本，所以以后加开关记得**三处**都补。
 ⚠ 「省缓存」**不在这个文件里**：它改的是 `$DSH_HOME` 里 standard preset 的那一行，
 新机器导入后在设置页把总开关关一次再打开即可重新写入。
 
@@ -451,7 +482,7 @@ node tools/settings.mjs import D:\cc-settings.json --yes    # 新机器（覆盖
 
 ```powershell
 node tools/verify-audit.mjs 2>$null; node tools/verify-host-width.mjs   # 期望全绿 / 无 FAIL
-# 设置页应出现「会话策略」七个分区（标题无编号）；对话页默认 80%（百分比，v1.5.0 起）
+# 设置页应出现「会话策略」八个分区（标题无编号）；对话页默认 80%（百分比，v1.5.0 起）
 ```
 
 ## 验证
@@ -462,6 +493,8 @@ node tools/verify-audit.mjs 2>$null; node tools/verify-host-width.mjs   # 期望
 
 ```powershell
 node tools/verify-session-gate.mjs    # 规则解析 / 花括号防御 / 截断 / 压缩行无回归
+node tools/verify-ponytail-gate.mjs   # ponytail 段：独立开关 / 独立缓存 / 截断 / override 往返
+node tools/verify-shape-gate.mjs      # 输出形状段（v1.12.0）：默认开 / 逃生开关 / 三段独立 / 技能同源 / 不重复注入
 node tools/verify-gate-http.mjs       # host 半真起 http 服务：路由、两开关正交、异常输入
 node tools/verify-gate-client.mjs     # client 半真渲染：磁盘 → 路由 → STORE → DOM（含抽屉展开态）
 node tools/verify-ui-appearance.mjs   # 外观引擎 + 置顶跟随滚动选条 + chip 点击语义 + 对话页宽度钉法
@@ -471,7 +504,7 @@ node tools/verify-gate-truncation.mjs # 规则截断：原/留长度 + 显式标
 
 「自动审查」（v1.11.0）没有独立套件，断言分挂在两处：**payload 对齐**（`reviewSkillEnabled` 必须
 出现在主 PUT 载荷里 —— 这条正是 v1.6.0 `hideResizer` 那个"拨得动不落盘"bug 的守门人）与
-**client 渲染**（七个分区标题名字齐全且顺序正确、页面里不许出现圈符编号）。ocr 探测本身是
+**client 渲染**（八个分区标题名字齐全且顺序正确、页面里不许出现圈符编号）。ocr 探测本身是
 子进程调用，不进套件（CI 上没有 ocr，且它属于"环境事实"而不是逻辑）；改探测逻辑时手工跑一次
 `node -e "import('./index.js').then(h=>h.probeOcr().then(console.log))"` 看结果。
 

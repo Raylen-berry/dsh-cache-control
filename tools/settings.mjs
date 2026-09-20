@@ -23,7 +23,10 @@ const dir = () => path.join(dshHome(), PLUGIN)
 const settingsFile = () => path.join(dir(), 'settings.json')
 const gateFile = () => path.join(dir(), 'gate.md')
 
-const DEFAULTS = { enabled: false, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: false, pinLastUser: false, clearBubble: false, pinBlur: 10, pinMaxVh: 38, chatWidth: 80, chatWidthEnabled: false, hideResizer: false, hideDivider: false }
+// ⚠ 与 index.js 的 DEFAULTS **手工同步**（本脚本不 import 宿主模块）。v1.12.0 补回三个曾经漏掉的键：
+// ponytailEnabled / reviewSkillEnabled（各自加入那一版忘了同步，于是导入一份开着它们的设置会被
+// "丢弃未知字段"静默抹掉）与新的 shapeEnabled。漏键的表现是"导出再导入，开关悄悄变默认"。
+const DEFAULTS = { enabled: false, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: false, ponytailEnabled: false, shapeEnabled: true, reviewSkillEnabled: true, pinLastUser: false, clearBubble: false, pinBlur: 10, pinMaxVh: 38, chatWidth: 80, chatWidthEnabled: false, hideResizer: false, hideDivider: false }
 // GATE_MAX_BYTES 与 index.js 的同名常量保持一致（本脚本不 import 宿主模块，故手工同步）。
 const CHAT_MIN = 30, CHAT_MAX = 100, GATE_MAX_BYTES = 16 * 1024
 
@@ -34,6 +37,10 @@ export function validate(raw) {
   for (const k of Object.keys(src)) if (!(k in DEFAULTS)) notes.push('丢弃未知字段 ' + k)
   out.auto = src.auto !== false
   out.gateEnabled = src.gateEnabled === true
+  // ponytail 缺省关（判据 `=== true`）；输出形状缺省**开**（判据 `!== false`，与 host 的 sanitize 同源）。
+  out.ponytailEnabled = src.ponytailEnabled === true
+  out.shapeEnabled = src.shapeEnabled !== false
+  out.reviewSkillEnabled = src.reviewSkillEnabled !== false
   out.pinLastUser = src.pinLastUser === true
   out.clearBubble = src.clearBubble === true
   out.chatWidthEnabled = src.chatWidthEnabled === true
