@@ -2,6 +2,14 @@
 
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
 
+## 1.9.7 — 2026-09-20 · 修 CI 红：verify-session-gate 的断言基线不再取自真实安装文件
+
+**现象**：v1.9.4/v1.9.5 推上 GitHub 后 Actions 三档 Node **全红**（run #5/#6），本机却 39/39 —— 正是守则 R6"本机绿 ≠ 干净机器绿"的反例，被自己抓到。
+**根因**：夹具化时留了一条"本机以真实 settings.json 为底、CI 用 DEFAULTS"的双源基线，而下面三条 sanitize 断言写死的期望是 30/4 —— **恰好是本机真实值**，DEFAULTS 实为 25/5。本机绿纯属巧合，CI 必红。
+**修法**：断言基线改为套件自写的固定值 `{...DEFAULTS, enabled:true, triggerPct:30, retainPct:4, auto:true, gateEnabled:true}`；真实 home 只用于收尾的"未被改动"对照（不存在则 SKIP 并打印）。**反向验证**：把 `APPDATA`/`DSH_APP_MODULES` 指到不存在的目录模拟 CI ⇒ 修复前复现同一条 FAIL，修复后 36 passed / 0 failed + SKIP 标注。
+**排查审计**：grep 全部 8 个套件的 `%APPDATA%` 读取点——其余套件要么纯临时目录，要么只在 EXCLUDED 里（不进 CI），无同类雷。
+**教训入规**：以后凡"测试期望值来自环境文件"的写法一律禁止——基线必须随测试代码走，环境文件只做被守护对象。
+
 ## 1.9.6 — 2026-09-20 · ② 会话守则：R2 补两行「提问时机前置 / 阻塞式提问是最后手段」（C 项收尾）
 
 **需求**（用户 2026-09-20）：可行性分析 v2 的 C 项 —— 蒸 Claude Code 出厂条款 "Delivering work at full scope"（ccVersion 2.1.218，经 Piebald-AI/claude-code-system-prompts 收录，MIT）。

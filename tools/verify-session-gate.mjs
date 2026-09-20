@@ -68,10 +68,11 @@ const realBefore = fs.existsSync(realSettingsPath) && fs.existsSync(realPresetPa
 
 const settingsFile = pathMod.join(ROOT, 'dsh-cache-control', 'settings.json')
 const overrideFile = pathMod.join(ROOT, 'dsh-cache-control', 'gate.md')
-const defaultSettings = JSON.stringify({ ...host.DEFAULTS })
-// 本机跑时以真实 settings 为底；CI 上没有安装态，用 DEFAULTS（sanitize 断言里
-// triggerPct/retainPct 的期望值与 DEFAULTS 一致：30/4）。
-const settingsBackup = realBefore ? realBefore.settings : defaultSettings
+// 断言基线**固定自写**（enabled/triggerPct/retainPct = true/30/4）——不拿真实安装文件当期望值来源：
+// CI 上没有 %APPDATA%，而 DEFAULTS(25/5) 与下面三条断言的写死期望(30/4)不同构 ⇒ 首跑即红
+// （本机绿纯属巧合：真实 settings.json 恰好是 30/4）。"改没改对"由第 5 节自己造底自证。
+const BASELINE_SETTINGS = JSON.stringify({ ...host.DEFAULTS, enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true })
+const settingsBackup = BASELINE_SETTINGS
 fs.writeFileSync(settingsFile, settingsBackup, 'utf8')
 
 // 最小 preset 夹具：结构（缩进、compaction-basic 行块位置）与真实 agent.cordis.yml 一致，
