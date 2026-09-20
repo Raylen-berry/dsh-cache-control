@@ -35,12 +35,14 @@ const SUITES = [
   // react 由 package.json 的 devDependencies 声明，下面的 ENV 把 DSH_APP_MODULES 指向
   // **仓库自己的 node_modules/**，于是本地与 CI 都不再依赖本机 DSH 安装目录 —— 2026-09 从 EXCLUDED 挪回。
   'tools/verify-panel-and-resizer.mjs',
+  // v1.9.4：DEPLOYMENT_PERSONA 崩溃根因是断言引用了从未导出的符号（修在套件里）；
+  // %APPDATA% 依赖靠最小 preset 夹具 + 「真实 home 存在才比对」去掉，devDeps 补装
+  // @deepseek-ai/dsh-system-prompt 及其运行时依赖。反向证据：DSH_APP_MODULES 指向空目录仍 39/39。
+  'tools/verify-session-gate.mjs',
 ]
 
 const EXCLUDED = [
   ['tools/probe-userrow.mjs', '开发用探针脚本（手工跑、看 host 侧 userRow 的真实 DOM 结构），不是断言式测试套件'],
-  ['tools/verify-session-gate.mjs',
-    '既有失败：DEPLOYMENT_PERSONA TypeError（本机复测退出码 1，与本任务无关）；且要读 %APPDATA% 下的真实 DSH 安装目录'],
   ['tools/verify-gate-client.mjs',
     '要 %APPDATA% 下的真实 preset/settings.json 才能跑（本机 DSH 安装态的配置，CI 里没有）'],
   ['tools/verify-gate-http.mjs',

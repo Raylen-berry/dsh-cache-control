@@ -32,6 +32,27 @@ const unwrap = (m) => (m && m.default && (m.default.createElement || m.default.r
 const host = await import('file:///' + PLUGIN + 'index.js')
 const React = unwrap(await import('file:///' + APP + 'react/index.js'))
 const ReactDOMServer = unwrap(await import('file:///' + APP + 'react-dom/server.js'))
+// 宿主原子包（Switch/Button…）：client 半经 require('@deepseek-ai/dsh-client-ui-primitives') 取用。
+// Node 下它 import 'clsx' 解析不到（打包产物在浏览器里由 seed 提供），所以这里不 import 真身，
+// 而是**按真签名复刻一份桩**（对照 lib/index.js 的 Switch/Button/props），让断言真正打在
+// primitives 分支上；取不到就退回 null —— 与真实浏览器里 seed 提供与否的两种形态一致。
+let primitives = null
+try {
+  const swMatch = fs.readFileSync(pathMod.join(APP.replace(/\//g, '\\'), '@deepseek-ai/dsh-client-ui-primitives/lib/index.js'), 'utf8')
+    .indexOf('function Switch({ checked, onChange, label, disabled')
+  if (swMatch >= 0) {
+    primitives = {
+      Switch: (p) => React.createElement('button', {
+        type: 'button', role: 'switch', 'aria-checked': p.checked, 'aria-label': p.label,
+        title: p.title, disabled: p.disabled, className: p.className,
+        onClick: () => p.onChange(!p.checked),
+      }, React.createElement('span', { className: 'pr-thumb' })),
+      Button: ({ variant, size, icon, className, children, ...rest }) => React.createElement('button',
+        Object.assign({ type: 'button', className: 'pr-btn pr-' + variant + ' pr-' + size + (className ? ' ' + className : '') }, rest), children),
+    }
+  }
+} catch { primitives = null }
+ok('primitives 桩已装载（否则本套件只测了回退路径）', primitives !== null)
 const h = React.createElement
 
 const routes = new Map()
@@ -87,6 +108,9 @@ async function bootClient(tag) {
   const exportsObj = captured.factory((name) => {
     if (name === 'react') return React
     if (name === 'react-dom') return fakeReactDOM
+    // v1.9.3：client 半软 require 宿主原子包；这里喂**真包**（它只 import react，
+    // Node 条件导出解析到源码、clsx 在 APP 下可解析），Switch/Button 才走真实实现。
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives
     throw new Error('unexpected require: ' + name)
   })
   exportsObj.apply(fakeCtx)
@@ -104,7 +128,7 @@ const expanded = (c) => {
   c.ex.internals.setFoldsOpen(false)
   return hh
 }
-const checkedCount = (html) => (html.match(/checked=""/g) || []).length
+const checkedCount = (html) => (html.match(/checked=""/g) || []).length + (html.match(/aria-checked="true"/g) || []).length
 /** chip 版式解析：两段「标签 + 开/关徽标」+ 一根竖线 */
 function chipParts(html) {
   const labels = [...html.matchAll(/class="cc-segLabel"[^>]*>([^<]*)</g)].map((m) => m[1])
@@ -113,19 +137,24 @@ function chipParts(html) {
   const divs = (html.match(/class="cc-div"/g) || []).length
   return { labels, badges, divs }
 }
-/** 按 label 文本精确取回它前面那个 checkbox 的属性串（判勾选/禁用）。 */
+/** 按 label 文本取回它的开/关控件属性串（判勾选/禁用）。
+ *  v1.9.3：primitives 在场时 Switch 渲染 role="switch"、label 走 aria-label；
+ *  退回路径仍是 <input type=checkbox><span>{label}。两种形态都认，断言口径不变。 */
 function inputAttrsFor(html, label) {
   const esc = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // checkbox 回退路径在前（真包形态下 Switch 的 disabled 不带 =""，先匹配到谁就用谁）
   const m = new RegExp('<input([^>]*)><span>' + esc).exec(html)
-  return m ? m[1] : null
+  if (m) return m[1]
+  const sw = new RegExp('<button([^>]*aria-label="' + esc + '"[^>]*)>').exec(html)
+  return sw ? sw[1] : null
 }
 const checked = (html, label) => {
   const a = inputAttrsFor(html, label)
-  return a === null ? null : /checked=""/.test(a)
+  return a === null ? null : /checked=""/.test(a) || /aria-checked="true"/.test(a)
 }
 const disabled = (html, label) => {
   const a = inputAttrsFor(html, label)
-  return a === null ? null : /disabled=""/.test(a)
+  return a === null ? null : /disabled=""/.test(a) || /disabled/.test(a)
 }
 const L_CACHE = '启用压缩策略（作用于之后新建的标准模式会话）'
 const L_AUTO = '自动压缩（关闭 = 仅保留手动 /compact）'
@@ -183,8 +212,8 @@ ok('chip 徽标翻成 开 / 关', parts.badges[0].state === '开' && parts.badge
 ok('标签不随状态改名（版式稳定）', parts.labels.join(',') === '省缓存,提问')
 ok('压缩已勾选、门禁未勾选', checked(pageHtml, L_CACHE) === true && checked(pageHtml, L_GATE) === false)
 ok('自动压缩子开关独立关着', checked(pageHtml, L_AUTO) === false)
-ok('门禁卡仍列出三条规则摘要（展开说明可见）',
-  pageExpB.includes('R1') && pageExpB.includes('R2') && pageExpB.includes('R3'))
+ok('门禁卡仍列出守则摘要（展开说明可见，含 v1.9.2 的 R5）',
+  pageExpB.includes('R1') && pageExpB.includes('R2') && pageExpB.includes('R3') && pageExpB.includes('R5'))
 ok('门禁卡有编辑/重读按钮', pageHtml.includes('编辑规则') && pageHtml.includes('重新读取'))
 ok('门禁声明了"约束而非硬拦截"（展开说明可见）', pageExpB.includes('不产生技术硬拦截'))
 
@@ -355,15 +384,20 @@ console.log('\n— E2. 规则被截断时界面必须说清"原多少 → 保留
 // 截断函数直接返回 truncated/originalBytes/keptBytes，界面读标记、并把两个字节数摆出来。
 // 这里走完整链路：磁盘上的超长 gate.md → host 路由 → STORE → 渲染出的 HTML。
 const gateMd = pathMod.join(ROOT, 'dsh-cache-control', 'gate.md')
-const LONG_RULE = '规'.repeat(6666)          // 19,998 B ⇒ 保留 5,839 B（审计给的数）
+// 样本与期望值一律**相对 host 的上限生成**（同 verify-gate-truncation 的口径）：
+// 写死 19998/5839/6144 是"6 KB 年代"的数字，GATE_MAX_BYTES 放宽到 16 KB 后它们全是错的。
+const LONG_RULE = '规'.repeat(6666)          // 19,998 B > 上限 ⇒ 必然触发截断
 fs.writeFileSync(gateMd, LONG_RULE, 'utf8')
 const cLong = await bootClient('trunc' + Date.now())
 const longHtml = render(cLong.page)
-ok('超长规则 ⇒ 界面标出"已截断：原 19998 B → 保留 5839 B"',
-  longHtml.includes('已截断：原 19998 B → 保留 5839 B'), (longHtml.match(/已截断[^<]*/) || [''])[0])
-ok('超长规则 ⇒ 有一句看得懂的话：你的规则被截断了 + 原文/实际注入两个字节数',
-  longHtml.includes('你的规则被截断了') && longHtml.includes('原文 19998 字节')
-  && longHtml.includes('实际注入 5839 字节') && longHtml.includes('上限 6144 字节'),
+const gLong = (await (await nodeFetch(base + '/cc/gate.json', { cache: 'no-store' })).json()).gate
+ok('超长规则 ⇒ 界面标出"已截断：原 N B → 保留 M B"（数字来自 host，且确实被砍）',
+  gLong.truncated === true && gLong.keptBytes < gLong.maxBytes && gLong.originalBytes > gLong.maxBytes
+  && longHtml.includes('已截断：原 ' + gLong.originalBytes + ' B → 保留 ' + gLong.keptBytes + ' B'),
+  (longHtml.match(/已截断[^<]*/) || [''])[0])
+ok('超长规则 ⇒ 有一句看得懂的话：你的规则被截断了 + 原文/实际注入/上限三个字节数',
+  longHtml.includes('你的规则被截断了') && longHtml.includes('原文 ' + gLong.originalBytes + ' 字节')
+  && longHtml.includes('实际注入 ' + gLong.keptBytes + ' 字节') && longHtml.includes('上限 ' + gLong.maxBytes + ' 字节'),
   (longHtml.match(/你的规则被截断了[^<]*/) || [''])[0].slice(0, 120))
 ok('这句提示用警示色类（cc-warn），不是悄悄混在别的文字里',
   /<p class="cc-warn">你的规则被截断了/.test(longHtml))

@@ -137,8 +137,12 @@ ok('但注入形态已中和', !/\{\{|\}\}/.test(section.text({})), section.text
 const c3 = await put('/cc/gate.json', { text: '   ' })
 ok('空白 text = 清除 override', c3.status === 200 && c3.body.source === 'builtin' && !fs.existsSync(pathMod.join(ROOT, 'dsh-cache-control', 'gate.md')))
 ok('清除后回到内置', section.text({}).startsWith('# 会话守则'))
-const c4 = await put('/cc/gate.json', { text: 'y'.repeat(7000) })
-ok('超上限文本被截断而非溢出', c4.status === 200 && section.text({}).length < 6200, 'injected=' + section.text({}).length)
+const c4 = await put('/cc/gate.json', { text: 'y'.repeat(20000) })
+// 判据相对 host.GATE_MAX_BYTES（v1.9.0 起上限 6 KB→16 KB，旧断言写死 7000/6200 是 6 KB 年代的数，
+// 放宽后 7000 字节的输入根本不再触发截断 —— 与 verify-gate-truncation 同口径：样本相对上限生成）。
+ok('超上限文本被截断而非溢出', c4.status === 200 && section.text({}).length > 0
+  && Buffer.byteLength(section.text({}), 'utf8') < host.GATE_MAX_BYTES,
+  'injected=' + Buffer.byteLength(section.text({}), 'utf8') + ' / limit=' + host.GATE_MAX_BYTES)
 await put('/cc/gate.json', { text: '' })
 const c5 = await put('/cc/gate.json', { nope: 1 })
 ok('PUT 无 text 字段视为清除 override（不报错）', c5.status === 200)

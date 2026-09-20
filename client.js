@@ -28,6 +28,11 @@ window.__ModuleLoader__.load({
     // dsh-client-ui-primitives）。取不到只是没有 portal，不影响开关本身，故软失败。
     var ReactDOM = null
     try { ReactDOM = require('react-dom') } catch (e) { ReactDOM = null }
+    // v1.9.3：设置页与面板的开关/按钮改用宿主官方原子（Switch/Button），随主题与明暗。
+    // 与 react-dom 同款软失败：拿不到（旧宿主/HMR 未预热）就退回本文件自带的 cc-* 控件，
+    // 功能一律不受影响 —— 仿 dsh-note-changes 的 `P = require(...) || null` + 逐点守卫。
+    var P = null
+    try { P = require('@deepseek-ai/dsh-client-ui-primitives') } catch (e) { P = null }
     var PANEL_WIDTH = 302
     /**
      * 我的提问气泡宽度上限，单位 **em**（相对会话字号）：文字不到就一直贴文字，到此为止。
@@ -60,6 +65,9 @@ window.__ModuleLoader__.load({
       '.cc-sub{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0 0 10px;line-height:1.7}',
       '.cc-card{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 16px;background:var(--dsw-alias-bg-layer-1);display:flex;flex-direction:column;gap:12px}',
       '.cc-row{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dsw-alias-label-primary)}',
+      // 开/关行（v1.9.3）：说明文字在左、宿主 Switch 在右，两端对齐。
+      '.cc-swRow{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;color:var(--dsw-alias-label-primary)}',
+      '.cc-swLabel{flex:1;min-width:0}',
       '.cc-row input[type=range]{flex:1;min-width:120px;accent-color:var(--dsw-alias-brand-primary,#4d6bfe)}',
       '.cc-val{min-width:118px;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:pre}',
       '.cc-note{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.7;border-left:2px solid var(--dsw-alias-brand-primary,#4d6bfe);padding-left:10px}',
@@ -1221,13 +1229,38 @@ window.__ModuleLoader__.load({
       return h('span', { className: cls }, on && !dim ? '开' : '关')
     }
 
+    /**
+     * 开/关行（v1.9.3）：右侧放宿主官方 Switch；primitives 不可用时退回原生 checkbox，
+     * 布局两种情况一致。aria-label/title 由 primitives Switch 自己带上。
+     */
     function Switch(label, checked, onChange, disabled) {
+      if (P && typeof P.Switch === 'function') {
+        return h('div', { className: 'cc-swRow', style: { opacity: disabled ? 0.6 : 1 } },
+          h('span', { className: 'cc-swLabel' }, label),
+          h(P.Switch, {
+            checked: !!checked, disabled: !!disabled, label: label, title: label,
+            // disabled 时宿主 Switch 自己不拦点击（真包里它带 disabled 属性，浏览器会拦；
+            // 这里再兜一层，保证任何实现下禁用态都是 no-op）。
+            onChange: function (v) { if (!disabled) onChange(v) },
+          }))
+      }
       return h('label', { className: 'cc-row', style: { cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1 } },
         h('input', {
           type: 'checkbox', checked: !!checked, disabled: !!disabled,
           onChange: function (e) { onChange(e.target.checked) },
         }),
         h('span', null, label))
+    }
+
+    /** 按钮（v1.9.3）：优先宿主 Button（ghost/sm），退回 cc-btn。props 直接透传。 */
+    function Btn(props) {
+      var children = props.children
+      var rest = {}
+      for (var k in props) { if (k !== 'children') rest[k] = props[k] }
+      if (P && typeof P.Button === 'function') {
+        return h(P.Button, Object.assign({ variant: 'ghost', size: 'sm' }, rest), children)
+      }
+      return h('button', Object.assign({ type: 'button', className: 'cc-btn' }, rest), children)
     }
 
     function SliderRow(label, value, min, max, unit, onChange) {
@@ -1350,20 +1383,20 @@ window.__ModuleLoader__.load({
           ' 字节（上限 ' + s.gateMaxBytes + ' 字节，超出 ' + Math.max(0, s.gateOriginalBytes - s.gateKeptBytes) +
           ' 字节未进入提示词）。请精简规则或把大段内容拆到别处。') : null,
         h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-          h('button', {
-            className: 'cc-btn', type: 'button', disabled: !s.gateReady,
+          h(Btn, {
+            disabled: !s.gateReady,
             onClick: function () { STORE.set({ gateDraft: editing ? null : s.gateText }) },
           }, editing ? '取消编辑' : '编辑规则'),
-          editing ? h('button', {
-            className: 'cc-btn', type: 'button', disabled: s.gateSaving,
+          editing ? h(Btn, {
+            disabled: s.gateSaving,
             onClick: function () { saveGateText(s.gateDraft) },
           }, s.gateSaving ? '保存中…' : '保存并生效') : null,
-          editing && s.gateSource === 'override' ? h('button', {
-            className: 'cc-btn', type: 'button', disabled: s.gateSaving,
+          editing && s.gateSource === 'override' ? h(Btn, {
+            disabled: s.gateSaving,
             onClick: function () { saveGateText('') },
           }, '清除自定义，回到内置') : null,
-          h('button', {
-            className: 'cc-btn', type: 'button', onClick: reloadGate,
+          h(Btn, {
+            onClick: reloadGate,
           }, '重新读取')),
         editing ? h('div', null,
           h('textarea', {
@@ -1379,7 +1412,7 @@ window.__ModuleLoader__.load({
         s.gateError ? h('p', { className: 'cc-err' }, s.gateError) : null,
         h(Fold, { label: '规则说明' },
           h('div', { className: 'cc-note' },
-            '规则三条：R1 独立研判（允许并要求反对你，不默认你正确）；R2 不确定就提问（只问查不到、且会改变结果的那些）；R3 分工固定（你定目标/补真实情况/判定可用性，我搜索·执行·制作·验证·交付）。'),
+            '规则六条：R1 独立研判（允许并要求反对你，不默认你正确）；R2 不确定就提问（只问查不到、且会改变结果的那些）；R3 分工固定（你定目标/补真实情况/判定可用性，我搜索·执行·制作·验证·交付）；R5 少犯错优先（说假设/最小实现/只动该动的行/任务转成可验证目标，蒸馏自 Karpathy 四原则）；R6 查证再下结论（先验证再断言，没跑检查就明说）；R7 谨慎执行（不可逆动作先确认，授权按当次范围算）。'),
           h('div', { className: 'cc-path' }, '内置规则：' + (s.gateBuiltinPath || '（未就绪）')),
           h('div', { className: 'cc-path' }, '自定义副本：' + (s.gateOverridePath || '（未就绪）') +
             (s.gateSource === 'override' ? '（当前生效）' : '（尚未创建）')),
@@ -1568,7 +1601,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'cc-val' }, fmtBytes(c.bytes)),
             h('span', { className: 'cc-sub' }, c.files + ' 个文件'),
             h('span', { className: 'cc-sub', style: { flex: '1' }, title: c.path }, c.why + '（风险：' + c.risk + '）'),
-            h('button', { className: 'cc-btn', type: 'button', disabled: st.busy !== '', onClick: function () { post('/cc/storage/clean', { paths: [c.path] }, c.label) } }, '移入回收'),
+            h(Btn, { disabled: st.busy !== '', onClick: function () { post('/cc/storage/clean', { paths: [c.path] }, c.label) } }, '移入回收'),
           )
         })
         body = h('div', null,
@@ -1586,8 +1619,8 @@ window.__ModuleLoader__.load({
             h('div', null, cands.length ? cands : h('div', { className: 'cc-sub' }, '当前没有可回收的东西')),
             h('div', { className: 'cc-row', style: { marginTop: '6px' } },
               h('span', { className: 'cc-sub', style: { flex: '1' } }, '回收目录当前占用：' + fmtBytes(data.recycle.bytes) + '（' + data.recycle.files + ' 个文件）'),
-              h('button', { className: 'cc-btn', type: 'button', disabled: st.busy !== '', onClick: function () { post('/cc/storage/clean', {}, 'all') } }, '全部移入回收'),
-              h('button', { className: 'cc-btn', type: 'button', disabled: st.busy !== '', onClick: function () { post('/cc/storage/purge', {}, 'purge') } }, '清空回收目录'),
+              h(Btn, { disabled: st.busy !== '', onClick: function () { post('/cc/storage/clean', {}, 'all') } }, '全部移入回收'),
+              h(Btn, { disabled: st.busy !== '', onClick: function () { post('/cc/storage/purge', {}, 'purge') } }, '清空回收目录'),
             ),
           ),
         )
@@ -1595,7 +1628,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'cc-card' },
         h('div', { className: 'cc-row' },
           h('span', { style: { flex: '1' } }, '各用途分别占多少盘；清理先给候选清单，且只「移入回收」不直接删'),
-          h('button', { className: 'cc-btn', type: 'button', disabled: st.loading || st.busy !== '', onClick: load }, st.loading ? '读取中…' : '刷新'),
+          h(Btn, { disabled: st.loading || st.busy !== '', onClick: load }, st.loading ? '读取中…' : '刷新'),
         ),
         body,
         st.error && data ? h('div', { className: 'cc-err' }, '上一次操作出错：' + st.error) : null,
@@ -1800,22 +1833,19 @@ window.__ModuleLoader__.load({
         h('div', { className: 'cc-sect', key: 'h' },
           h('span', { className: 'cc-sectTitle' }, '② 会话守则'),
           h('span', { className: 'cc-sectHint' }, '下一步即生效')),
-        h(React.Fragment, { key: 'on' }, Switch('启用（规则 R1 研判 / R2 提问 / R3 分工）', s.gateEnabled, setGateEnabled, !s.gateReady)),
+        h(React.Fragment, { key: 'on' }, Switch('启用（规则 R1–R3 研判提问分工 / R5–R7 少犯错·查证·谨慎）', s.gateEnabled, setGateEnabled, !s.gateReady)),
         s.gateReady ? h('div', { key: 'meta' }, GateSummary(s))
           : h('div', { className: 'cc-err', key: 'meta' }, '未装载：需重启桌面应用'),
         s.gateOpen ? h('div', { className: 'cc-gateBody', key: 'body' }, s.gateText || '（空）') : null,
         h('div', { key: 'btns', style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-          h('button', {
-            className: 'cc-btn', type: 'button',
+          h(Btn, {
             onClick: function () {
               var next = !STORE.state.gateOpen
               STORE.set({ gateOpen: next })
               if (next && !STORE.state.gateText) reloadGate()
             },
           }, s.gateOpen ? '收起规则' : '查看规则'),
-          h('button', {
-            className: 'cc-btn', type: 'button', onClick: reloadGate,
-          }, '重读'),
+          h(Btn, { onClick: reloadGate }, '重读'),
           s.gateSaving ? h('span', { className: 'cc-muted', key: 'hint' }, '规则处理中…') : null),
       ]
 
@@ -1826,7 +1856,7 @@ window.__ModuleLoader__.load({
         + ' 守则：' + (!s.gateReady ? '未装载，需重启桌面应用。'
           : s.gateEnabled
             ? kb(s.gateBytes) + ' 规则已常驻 system prompt，对所有会话的下一个请求生效，不被压缩稀释。'
-            : '未注入，模型不会看到 R1/R2/R3。'))
+            : '未注入，模型不会看到 R1–R3/R5–R7。'))
       var status = s.error || s.gateError
         ? h('div', { className: 'cc-err' }, s.error || s.gateError)
         : h('div', { className: 'cc-ok' }, s.saving ? '正在保存…' : (s.enabled === s.applied ? '已与磁盘一致' : '待同步…'))
@@ -1867,7 +1897,7 @@ window.__ModuleLoader__.load({
       var gateTitle = '会话守则 · 长期规则：' + (!s.gateReady ? '未装载，需重启桌面应用。'
         : (s.gateEnabled ? '开（' : '关（') + kb(s.gateBytes) + ' · ' + s.gateLines + ' 行 · '
           + (s.gateSource === 'override' ? '自定义' : '内置') + '）'
-          + '\nR1 独立研判 / R2 必要提问 / R3 分工固定，常驻 system prompt。'
+          + '\nR1 独立研判 / R2 必要提问 / R3 分工固定 / R5 少犯错 / R6 查证 / R7 谨慎，常驻 system prompt。'
           + '\n生效范围：所有会话（含子代理）的下一个请求，不被压缩稀释。'
           + '\n点这一段 = 直接开/关；要看或改规则点右侧 ▾。')
       var caretTitle = '滑杆与规则面板：压缩触发点 / 保留尾部 / 自动压缩 / 查看·重读规则（气泡置顶与对话页宽度在设置页）'
