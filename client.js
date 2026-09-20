@@ -1866,7 +1866,8 @@ window.__ModuleLoader__.load({
           h('div', { className: 'cc-path' }, '自定义副本：' + (s.shapeOverridePath || '（未就绪）') +
             (s.shapeSource === 'override' ? '（当前生效）' : '（尚未创建）')),
           h('div', { className: 'cc-note' },
-            '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 1.5K token/请求，' +
+            '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 1.2K token/请求' +
+            '（4,867 B 中文按 4 B/token 估），' +
             '任何会话都会看到（读图、写文案也照带）。并入前它是默认开的，所以升级后不会变；不想付这份 token 就关掉它。' +
             '技能 i-have-adhd 与 ponytail 用的是同一份正文，关掉本节不影响按需调用技能。')))
     }
