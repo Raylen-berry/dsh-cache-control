@@ -263,6 +263,23 @@ window.__ModuleLoader__.load({
         gateError: '',
         // host 半没有 /cc/gate.json 时（旧版未重启）为 false：界面提示，不假装可用
         gateReady: true,
+        // ponytail 编码纪律（v1.10.0）：与门禁同构的第二段常驻规则，独立开关
+        ponytailEnabled: false,
+        ponytailSource: 'builtin',
+        ponytailBuiltinPath: '',
+        ponytailOverridePath: '',
+        ponytailBytes: 0,
+        ponytailMaxBytes: 6144,
+        ponytailLines: 0,
+        ponytailTruncated: false,
+        ponytailOriginalBytes: 0,
+        ponytailKeptBytes: 0,
+        ponytailText: '',
+        ponytailOpen: false,
+        ponytailDraft: null,
+        ponytailSaving: false,
+        ponytailError: '',
+        ponytailReady: true,
         // 会话区外观
         pinLastUser: false,
         clearBubble: false,
@@ -362,9 +379,30 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** settings.json 的响应可同时带 gate 元数据；res.settings 为空时只更新 gate。 */
+    /** ponytail 元数据 → STORE 补丁：与 applyGate 同构，键前缀换成 ponytail。 */
+    function applyPonytail(p) {
+      if (!p || (p.bytes === undefined && p.text === undefined)) return {}
+      return {
+        ponytailReady: true,
+        ponytailSource: p.source || 'builtin',
+        ponytailBuiltinPath: p.builtinPath || '',
+        ponytailOverridePath: p.overridePath || '',
+        ponytailBytes: Number(p.bytes) || 0,
+        ponytailMaxBytes: Number(p.maxBytes) || 6144,
+        ponytailLines: Number(p.lines) || 0,
+        ponytailTruncated: !!p.truncated,
+        ponytailOriginalBytes: Number(p.originalBytes) || Number(p.bytes) || 0,
+        ponytailKeptBytes: Number(p.keptBytes) || Number(p.bytes) || 0,
+        ponytailText: typeof p.text === 'string' ? p.text : '',
+        ponytailEnabled: p.enabled === undefined ? STORE.state.ponytailEnabled : !!p.enabled,
+      }
+    }
+
+    /** settings.json 的响应可同时带 gate / ponytail 元数据；res.settings 为空时只更新元数据。 */
     function pull(res) {
       var patch = applyGate(res && res.gate)
+      var ponyPatch = applyPonytail(res && res.ponytail)
+      for (var pk in ponyPatch) patch[pk] = ponyPatch[pk]
       var s = res && res.settings
       if (s) {
         patch.enabled = !!s.enabled
@@ -372,6 +410,11 @@ window.__ModuleLoader__.load({
         patch.retainPct = Number(s.retainPct) || 5
         patch.auto = s.auto !== false
         patch.gateEnabled = s.gateEnabled === true
+        // 旧 host 的 sanitize 不认识 ponytailEnabled ⇒ undefined。这里**不能**照抄
+        // gateEnabled 的 `=== true` 写法：那会把 applyPonytail 从 /cc/ponytail.json
+        // 读到的真值覆盖成 false（v1.10.0 首版就栽在"只改 gate 不改 settings"这类串扰上）。
+        // 只有字段真的存在才表态，否则保留元数据里的生效值。
+        if (s.ponytailEnabled !== undefined) patch.ponytailEnabled = s.ponytailEnabled === true
         patch.pinLastUser = s.pinLastUser === true
         patch.clearBubble = s.clearBubble === true
         patch.pinBlur = clampBlur(s.pinBlur)
@@ -403,6 +446,8 @@ window.__ModuleLoader__.load({
         patch.windowTokens = res.windowTokens || 1000000
         // 旧版 host 的响应里没有 gate 字段 ⇒ 门禁能力未装载
         if (res.gate === undefined) patch.gateReady = false
+        // 同理：ponytail 字段缺失 = host 半还是 v1.9.x，界面禁用并提示重启
+        if (res.ponytail === undefined) patch.ponytailReady = false
       }
       STORE.set(patch)
       applyAppearance(STORE.state)
@@ -440,6 +485,8 @@ window.__ModuleLoader__.load({
           retainPct: s.retainPct,
           auto: s.auto,
           gateEnabled: s.gateEnabled,
+          // v1.10.0 新增：漏了这一行 = 界面上拨得动、永远不落盘（verify-settings-payload 会抓）。
+          ponytailEnabled: s.ponytailEnabled,
           pinLastUser: s.pinLastUser,
           clearBubble: s.clearBubble,
           pinBlur: s.pinBlur,
@@ -468,6 +515,7 @@ window.__ModuleLoader__.load({
           STORE.set({
             applied: res && res.applied === undefined ? null : !!res.applied,
             gateEnabled: res && res.gate ? res.gate.enabled === true : STORE.state.gateEnabled,
+            ponytailEnabled: res && res.ponytail ? res.ponytail.enabled === true : STORE.state.ponytailEnabled,
           })
         })
         .catch(function (e) {
@@ -1296,9 +1344,14 @@ window.__ModuleLoader__.load({
       STORE.set({ auto: v })
       scheduleSave()
     }
-    /** 门禁总开关：与省缓存互不影响。 */
+    /** 门禁总开关：与省缓存、ponytail 互不影响。 */
     function setGateEnabled(v) {
       STORE.set({ gateEnabled: v, gateError: '' })
+      scheduleSave()
+    }
+    /** ponytail 编码纪律总开关（v1.10.0）：独立于门禁与压缩。 */
+    function setPonytailEnabled(v) {
+      STORE.set({ ponytailEnabled: v, ponytailError: '' })
       scheduleSave()
     }
     /**
@@ -1313,18 +1366,74 @@ window.__ModuleLoader__.load({
       if (STORE.state.loading || !STORE.state.loaded || !STORE.state.gateReady) return
       setGateEnabled(!STORE.state.gateEnabled)
     }
+    function flipPonytail() {
+      if (STORE.state.loading || !STORE.state.loaded || !STORE.state.ponytailReady) return
+      setPonytailEnabled(!STORE.state.ponytailEnabled)
+    }
 
-    function GateSummary(s) {
+    /** 写 ponytail 规则文本；text 为 '' 表示删除 override、回到插件内置。 */
+    function savePonytailText(text) {
+      STORE.set({ ponytailSaving: true, ponytailError: '' })
+      fetch('/cc/ponytail.json', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: text }),
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+        .then(function (res) {
+          if (!res.ok || !res.j || res.j.ok !== true) {
+            throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
+          }
+          STORE.set({ ponytailSaving: false, ponytailError: '', ponytailDraft: null })
+          return fetch('/cc/ponytail.json', { cache: 'no-store' })
+        })
+        .then(function (r) { return r.json() })
+        .then(function (res) { if (res && res.ponytail) pull({ settings: null, ponytail: res.ponytail }) })
+        .catch(function (e) {
+          STORE.set({ ponytailSaving: false, ponytailError: '规则保存失败: ' + String(e) })
+        })
+    }
+
+    function reloadPonytail() {
+      fetch('/cc/ponytail.json', { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+        .then(function (res) {
+          if (!res || !res.ponytail) throw new Error('no ponytail payload')
+          var p = res.ponytail
+          STORE.set({
+            ponytailSource: p.source, ponytailBuiltinPath: p.builtinPath || '', ponytailOverridePath: p.overridePath || '',
+            ponytailBytes: Number(p.bytes) || 0, ponytailLines: Number(p.lines) || 0, ponytailText: p.text || '',
+            ponytailTruncated: !!p.truncated, ponytailEnabled: p.enabled === true, ponytailDraft: null, ponytailError: '',
+            ponytailOriginalBytes: Number(p.originalBytes) || Number(p.bytes) || 0,
+            ponytailKeptBytes: Number(p.keptBytes) || Number(p.bytes) || 0,
+            ponytailReady: true,
+          })
+        })
+        .catch(function (e) {
+          var missing = /404|no ponytail payload|not found/i.test(String(e))
+          STORE.set({
+            ponytailReady: !missing,
+            ponytailError: missing ? 'ponytail 接口不可用：需重启桌面应用装载新版 host 半' : '规则读取失败: ' + String(e),
+          })
+        })
+    }
+
+    /** 规则卡共用的元信息行（门禁 / ponytail 同构，只差键前缀）。 */
+    function RuleSummary(s, pre) {
       var tags = []
-      tags.push(h('span', { className: 'cc-tag', key: 'src' }, s.gateSource === 'override' ? '自定义规则' : '内置规则'))
-      tags.push(h('span', { className: 'cc-tag', key: 'size' }, kb(s.gateBytes) + ' · ' + s.gateLines + ' 行'))
+      tags.push(h('span', { className: 'cc-tag', key: 'src' }, s[pre + 'Source'] === 'override' ? '自定义规则' : '内置规则'))
+      tags.push(h('span', { className: 'cc-tag', key: 'size' }, kb(s[pre + 'Bytes']) + ' · ' + s[pre + 'Lines'] + ' 行'))
       // 截断标记直接来自 host 的显式字段（不是"体积到了上限"推出来的），并把两头的
       // 字节数一起摆出来 —— 用户要能看出"被砍了多少"，而不是只知道"被砍了"。
-      if (s.gateTruncated) {
+      if (s[pre + 'Truncated']) {
         tags.push(h('span', { className: 'cc-tag warn', key: 'tr' },
-          '已截断：原 ' + s.gateOriginalBytes + ' B → 保留 ' + s.gateKeptBytes + ' B'))
+          '已截断：原 ' + s[pre + 'OriginalBytes'] + ' B → 保留 ' + s[pre + 'KeptBytes'] + ' B'))
       }
       return h('div', { className: 'cc-gateMeta' }, tags)
+    }
+
+    function GateSummary(s) {
+      return RuleSummary(s, 'gate')
     }
 
     /** 说明抽屉: 默认收起 (测试可经 internals.setFoldsOpen 让其默认展开)。 */
@@ -1420,6 +1529,57 @@ window.__ModuleLoader__.load({
             '生效范围：注入 system prompt 的一个段（排在 persona 之后、工具说明之前）。它随 system prompt 每请求重发，' +
             '不进对话历史，因此不受上面压缩策略的影响；代价是每次请求（含子代理、工作流子会话）都多这几 KB token。' +
             '会话守则是"必须遵守的规则"，不是"模型无法违反"——它约束行为，不产生技术硬拦截。')))
+    }
+
+    // ---------------------------------------------- 设置页：ponytail 编码纪律卡 --
+    function PonytailCard() {
+      var s = useCache()
+      var editing = s.ponytailDraft !== null
+      var draft = editing ? s.ponytailDraft : s.ponytailText
+      var draftBytes = new Blob([draft || '']).size
+      return h('div', { className: 'cc-card' },
+        Switch('启用 ponytail 编码纪律（下一个请求即生效，含已打开的会话）', s.ponytailEnabled, setPonytailEnabled, !s.ponytailReady),
+        s.ponytailReady ? RuleSummary(s, 'ponytail')
+          : h('div', { className: 'cc-err' }, '未装载：当前运行的 host 还没有 /cc/ponytail.json，请重启桌面应用后再操作。'),
+        s.ponytailTruncated ? h('p', { className: 'cc-warn' },
+          '你的规则被截断了：原文 ' + s.ponytailOriginalBytes + ' 字节，实际注入 ' + s.ponytailKeptBytes +
+          ' 字节（上限 ' + s.ponytailMaxBytes + ' 字节）。请精简规则。') : null,
+        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+          h(Btn, {
+            disabled: !s.ponytailReady,
+            onClick: function () { STORE.set({ ponytailDraft: editing ? null : s.ponytailText }) },
+          }, editing ? '取消编辑' : '编辑规则'),
+          editing ? h(Btn, {
+            disabled: s.ponytailSaving,
+            onClick: function () { savePonytailText(s.ponytailDraft) },
+          }, s.ponytailSaving ? '保存中…' : '保存并生效') : null,
+          editing && s.ponytailSource === 'override' ? h(Btn, {
+            disabled: s.ponytailSaving,
+            onClick: function () { savePonytailText('') },
+          }, '清除自定义，回到内置') : null,
+          h(Btn, { onClick: reloadPonytail }, '重新读取')),
+        editing ? h('div', null,
+          h('textarea', {
+            className: 'cc-textarea', value: draft, spellCheck: false,
+            onChange: function (e) { STORE.set({ ponytailDraft: e.target.value }) },
+          }),
+          h('div', { className: 'cc-muted', style: { marginTop: '6px' } },
+            '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(s.ponytailMaxBytes) +
+            (draftBytes > s.ponytailMaxBytes ? '（超出 ' + (draftBytes - s.ponytailMaxBytes) + ' B，保存后会被截断）' : '') +
+            '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。')) : null,
+        s.ponytailError ? h('p', { className: 'cc-err' }, s.ponytailError) : null,
+        h(Fold, { label: '规则说明' },
+          h('div', { className: 'cc-note' },
+            'ponytail（蒸馏自 GitHub DietrichGebert/ponytail，MIT）：最懒资深工程师的编码纪律——七级梯子' +
+            '（YAGNI → 复用库内已有 → 标准库 → 平台原生 → 已装依赖 → 一行 → 最少代码）、修 bug 先 grep 全部调用方修根因、' +
+            '禁没要求的抽象、故意简化留 ponytail: 注释标升级路径。只对编码任务生效，非编码请求不适用该节。'),
+          h('div', { className: 'cc-path' }, '内置规则：' + (s.ponytailBuiltinPath || '（未就绪）')),
+          h('div', { className: 'cc-path' }, '自定义副本：' + (s.ponytailOverridePath || '（未就绪）') +
+            (s.ponytailSource === 'override' ? '（当前生效）' : '（尚未创建）')),
+          h('div', { className: 'cc-note' },
+            '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 2–3K token/请求，' +
+            '且读图、写文案之类的会话也会看到它（正文里已写明"非编码任务不适用"来兜底）。' +
+            '平时不用可以关着，需要时来这里或点 chip 打开。')))
     }
 
     /**
@@ -1682,6 +1842,9 @@ window.__ModuleLoader__.load({
           h('h3', { className: 'cc-h' }, '② 会话守则'),
           GateCard()),
         h('section', null,
+          h('h3', { className: 'cc-h' }, '②b ponytail'),
+          PonytailCard()),
+        h('section', null,
           h('h3', { className: 'cc-h' }, '③ 气泡置顶'),
           AppearanceCard()),
         h('section', null,
@@ -1849,6 +2012,27 @@ window.__ModuleLoader__.load({
           s.gateSaving ? h('span', { className: 'cc-muted', key: 'hint' }, '规则处理中…') : null),
       ]
 
+      // ②b ponytail —— 独立开关，与门禁同族（v1.10.0）
+      var ponySection = [
+        h('div', { className: 'cc-sect', key: 'h' },
+          h('span', { className: 'cc-sectTitle' }, '②b ponytail'),
+          h('span', { className: 'cc-sectHint' }, '下一步即生效')),
+        h(React.Fragment, { key: 'on' }, Switch('启用编码纪律（YAGNI / 梯子 / 修根因）', s.ponytailEnabled, setPonytailEnabled, !s.ponytailReady)),
+        s.ponytailReady ? h('div', { key: 'meta' }, RuleSummary(s, 'ponytail'))
+          : h('div', { className: 'cc-err', key: 'meta' }, '未装载：需重启桌面应用'),
+        s.ponytailOpen ? h('div', { className: 'cc-gateBody', key: 'body' }, s.ponytailText || '（空）') : null,
+        h('div', { key: 'btns', style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          h(Btn, {
+            onClick: function () {
+              var next = !STORE.state.ponytailOpen
+              STORE.set({ ponytailOpen: next })
+              if (next && !STORE.state.ponytailText) reloadPonytail()
+            },
+          }, s.ponytailOpen ? '收起规则' : '查看规则'),
+          h(Btn, { onClick: reloadPonytail }, '重读'),
+          s.ponytailSaving ? h('span', { className: 'cc-muted', key: 'hint' }, '规则处理中…') : null),
+      ]
+
       var note = h('div', { className: 'cc-note' },
         '压缩：' + (s.enabled
           ? '触发 ~' + fmt(s.triggerTokens) + ' / 保留 ~' + fmt(s.retainTokens) + '（窗口 ' + fmt(s.windowTokens) + '），仅影响之后新建的会话。'
@@ -1856,9 +2040,13 @@ window.__ModuleLoader__.load({
         + ' 守则：' + (!s.gateReady ? '未装载，需重启桌面应用。'
           : s.gateEnabled
             ? kb(s.gateBytes) + ' 规则已常驻 system prompt，对所有会话的下一个请求生效，不被压缩稀释。'
-            : '未注入，模型不会看到 R1–R3/R5–R7。'))
-      var status = s.error || s.gateError
-        ? h('div', { className: 'cc-err' }, s.error || s.gateError)
+            : '未注入，模型不会看到 R1–R3/R5–R7。')
+        + ' ponytail：' + (!s.ponytailReady ? '未装载，需重启桌面应用。'
+          : s.ponytailEnabled
+            ? kb(s.ponytailBytes) + ' 编码纪律常驻注入（对非编码会话也占 token）。'
+            : '未注入，仅按需技能可用。'))
+      var status = s.error || s.gateError || s.ponytailError
+        ? h('div', { className: 'cc-err' }, s.error || s.gateError || s.ponytailError)
         : h('div', { className: 'cc-ok' }, s.saving ? '正在保存…' : (s.enabled === s.applied ? '已与磁盘一致' : '待同步…'))
 
       var panel = open ? h('div', {
@@ -1875,6 +2063,7 @@ window.__ModuleLoader__.load({
         header,
         h(React.Fragment, null, cacheSection),
         h(React.Fragment, null, gateSection),
+        h(React.Fragment, null, ponySection),
         note,
         status) : null
 
@@ -1900,11 +2089,17 @@ window.__ModuleLoader__.load({
           + '\nR1 独立研判 / R2 必要提问 / R3 分工固定 / R5 少犯错 / R6 查证 / R7 谨慎，常驻 system prompt。'
           + '\n生效范围：所有会话（含子代理）的下一个请求，不被压缩稀释。'
           + '\n点这一段 = 直接开/关；要看或改规则点右侧 ▾。')
+      var ponyTitle = 'ponytail 编码纪律：' + (!s.ponytailReady ? '未装载，需重启桌面应用。'
+        : (s.ponytailEnabled ? '开（' : '关（') + kb(s.ponytailBytes) + ' · ' + s.ponytailLines + ' 行 · '
+          + (s.ponytailSource === 'override' ? '自定义' : '内置') + '）'
+          + '\nYAGNI / 七级梯子 / 修根因 / 禁没要求的抽象，常驻 system prompt。'
+          + '\n生效范围：所有会话的下一个请求；只对编码任务生效，但 token 对所有会话照收。'
+          + '\n点这一段 = 直接开/关。')
       var caretTitle = '滑杆与规则面板：压缩触发点 / 保留尾部 / 自动压缩 / 查看·重读规则（气泡置顶与对话页宽度在设置页）'
 
       return h(React.Fragment, null,
         h('span', {
-          className: 'cc-chip' + ((s.enabled || s.gateEnabled) ? ' on' : ''),
+          className: 'cc-chip' + ((s.enabled || s.gateEnabled || s.ponytailEnabled) ? ' on' : ''),
           ref: btnRef,
           'data-cache-control-toggle': '1',
         },
@@ -1929,6 +2124,17 @@ window.__ModuleLoader__.load({
           },
             h('span', { className: 'cc-segLabel' }, '提问'),
             OnOff(s.gateEnabled, !s.gateReady)),
+          h('span', { className: 'cc-div' }),
+          h('button', {
+            type: 'button',
+            className: 'cc-seg' + (s.ponytailEnabled && s.ponytailReady ? ' on' : ''),
+            disabled: s.loading || !s.ponytailReady,
+            'aria-pressed': s.ponytailEnabled === true && s.ponytailReady === true,
+            title: ponyTitle,
+            onClick: flipPonytail,
+          },
+            h('span', { className: 'cc-segLabel' }, '懒码'),
+            OnOff(s.ponytailEnabled, !s.ponytailReady)),
           h('button', {
             type: 'button',
             className: 'cc-caret',
@@ -2063,6 +2269,12 @@ window.__ModuleLoader__.load({
       setFoldsOpen: function (v) { FOLD_DEFAULT_OPEN = !!v },
       chipText: function () {
         return { enabled: STORE.state.enabled, gateEnabled: STORE.state.gateEnabled, gateReady: STORE.state.gateReady }
+      },
+      // v1.10.0 缝：ponytail 段与门禁互不影响，chip"点哪段切哪个"要能离线断言
+      flipPonytail: flipPonytail,
+      setPonytailEnabled: setPonytailEnabled,
+      ponytailChip: function () {
+        return { ponytailEnabled: STORE.state.ponytailEnabled, ponytailReady: STORE.state.ponytailReady }
       },
     }
     return module.exports

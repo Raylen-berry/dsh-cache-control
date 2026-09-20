@@ -39,6 +39,8 @@ const SUITES = [
   // %APPDATA% 依赖靠最小 preset 夹具 + 「真实 home 存在才比对」去掉，devDeps 补装
   // @deepseek-ai/dsh-system-prompt 及其运行时依赖。反向证据：DSH_APP_MODULES 指向空目录仍 39/39。
   'tools/verify-session-gate.mjs',
+  // v1.10.0：ponytail 段与门禁段的独立性（开关、缓存、override、截断）回归。
+  'tools/verify-ponytail-gate.mjs',
 ]
 
 const EXCLUDED = [

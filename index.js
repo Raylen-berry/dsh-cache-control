@@ -48,6 +48,8 @@ const SETTINGS_DIR = () => path.join(dshHome(), 'dsh-cache-control')
 const SETTINGS_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'settings.json')
 const GET_PATH = '/cc/settings.json'
 const GATE_PATH = '/cc/gate.json'
+// ponytail 编码纪律的规则文本路由（v1.10.0），与 /cc/gate.json 同构。
+const PONY_PATH = '/cc/ponytail.json'
 
 // ── 存储用量与清理（v1.8.0）──────────────────────────────────────────────────
 // 用户要求：分开显示各类占用，清理要**先给候选清单**（文件、原因、预计释放），别一键乱删。
@@ -164,12 +166,21 @@ const GATE_OVERRIDE_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'gate
 /** 插件自带、随包分发的长期规则。 */
 const GATE_BUILTIN_FILE = fileURLToPath(new URL('./session-gate.md', import.meta.url))
 
+/** ponytail 编码纪律（v1.10.0）：内置文件 + 可编辑 override，与门禁同构、各一段。 */
+const PONY_BUILTIN_FILE = fileURLToPath(new URL('./ponytail-gate.md', import.meta.url))
+/** 用户在界面上编辑后写入；删除它即回到插件内置文本。 */
+const PONY_OVERRIDE_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'ponytail.md')
+
 /** 注入提示词的字节上限：这段文本每请求重复计费，必须留硬闸（防误粘大文件把成本乘上每个子代理）。 */
 export const GATE_MAX_BYTES = 16 * 1024
 
 /** 门禁段的提示词位置：persona(0) 之后、plan 政策(500) 之前，越靠前权重越稳。 */
 export const GATE_SECTION = 'dsh-cache-control:session-gate'
 export const GATE_SECTION_ORDER = 400
+
+/** ponytail 段紧跟会话守则（400）与输出形状（405）之后，仍在 plan 政策(500) 之前。 */
+export const PONY_SECTION = 'dsh-cache-control:ponytail-gate'
+export const PONY_SECTION_ORDER = 410
 
 /** 写入 config 时的标记注释：既便于用户识别，也让插件能识别“这是我写过的行”。 */
 const MANAGER_MARK = '# managed by dsh-cache-control (auto-rewritten)'
@@ -298,6 +309,7 @@ export const DEFAULTS = Object.freeze({
   retainPct: 5,     // 逐字保留尾部 = 窗口的 5% (~50k / 1M)
   auto: true,
   gateEnabled: false, // 会话门禁：独立于压缩开关
+  ponytailEnabled: false, // ponytail 编码纪律常驻注入：独立于门禁（v1.10.0）
   pinLastUser: false,    // 会话区外观：最近一条"我的提问"钉在顶部
   clearBubble: false,    // 会话区外观：我的气泡背景透明（露出壁纸）
   pinBlur: 10,           // 会话区外观：钉顶底衬（圆角矩形毛玻璃）的模糊半径 px
@@ -343,6 +355,7 @@ export function sanitize(raw) {
   retainPct = Math.min(triggerPct - 1, Math.max(1, retainPct))
   const auto = src.auto !== false
   const gateEnabled = src.gateEnabled === true
+  const ponytailEnabled = src.ponytailEnabled === true
   const pinLastUser = src.pinLastUser === true
   const clearBubble = src.clearBubble === true
   let pinBlur = Math.round(Number(src.pinBlur) * 10) / 10   // 保留 1 位小数（1.3 / 1.5 这类微调档）
@@ -360,7 +373,7 @@ export function sanitize(raw) {
   // 否则"关闭省缓存还原原状"就失去了依据。形状不合法时归 null（当作没有备份）。
   const compactionBackup = readBackup(src)
   return {
-    enabled, triggerPct, retainPct, auto, gateEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
+    enabled, triggerPct, retainPct, auto, gateEnabled, ponytailEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
     chatWidth, chatWidthEnabled, hideResizer, hideDivider, compactionBackup,
   }
 }
@@ -484,42 +497,61 @@ function sanitizeGateText(raw) {
 }
 
 const gateCache = { key: '', text: '', record: null }
+// ponytail 段与门禁段同构但**独立缓存**：两段各自有各自的 mtime+size 键，
+// 共用一份缓存会让"改了 ponytail.md"把门禁段的缓存顶掉（反之亦然），
+// assemble 热路径上表现为无谓的重读，且 gateMeta/ponyMeta 的 record 会互相串。
+const ponyCache = { key: '', text: '', record: null }
 
 /**
  * 一次计算同时给出"注入文本"与"截断元信息"，两者必须**同源**：
  * 分开算（例如 gateMeta 再截一次）就会出现"文本是这份、标记是那份"的错配。
  */
-function cacheGate(key, record) {
-  gateCache.key = key
-  gateCache.text = record.text
-  gateCache.record = record
-  return gateCache.text
+function cacheInto(cache, key, record) {
+  cache.key = key
+  cache.text = record.text
+  cache.record = record
+  return cache.text
 }
 
 function loadGateSync() {
-  const override = GATE_OVERRIDE_FILE()
-  let target = override
-  try {
-    if (!existsSync(override)) target = GATE_BUILTIN_FILE
-  } catch { target = GATE_BUILTIN_FILE }
-  let st = null
-  try { st = statSync(target) } catch { st = null }
-  if (!st || !st.isFile()) {
-    let builtin = ''
-    try { builtin = readFileSync(GATE_BUILTIN_FILE, 'utf8') } catch { builtin = '' }
-    return cacheGate('missing', truncateBytes(sanitizeGateText(builtin), GATE_MAX_BYTES))
-  }
-  const key = target + '|' + st.mtimeMs + '|' + st.size
-  if (key !== gateCache.key) {
-    let raw = ''
-    try { raw = readFileSync(target, 'utf8') } catch { raw = '' }
-    cacheGate(key, truncateBytes(sanitizeGateText(raw), GATE_MAX_BYTES))
-  }
-  return gateCache.text
+  return loadRuleFile(GATE_BUILTIN_FILE, GATE_OVERRIDE_FILE(), gateCache, GATE_MAX_BYTES)
 }
 
 async function loadGate() {
   try { return loadGateSync() } catch { return '' }
+}
+
+function loadPonytailSync() {
+  return loadRuleFile(PONY_BUILTIN_FILE, PONY_OVERRIDE_FILE(), ponyCache, GATE_MAX_BYTES)
+}
+
+async function loadPonytail() {
+  try { return loadPonytailSync() } catch { return '' }
+}
+
+/**
+ * 「内置 + override」两段共用的加载器。loadGateSync 与 loadPonytailSync 都是它的一行特化，
+ * 别再复制一份 mtime+size 记忆化 —— 两处实现必然漂移（cache-control 的老教训）。
+ */
+function loadRuleFile(builtinFile, overrideFile, cache, maxBytes) {
+  let target = overrideFile
+  try {
+    if (!existsSync(overrideFile)) target = builtinFile
+  } catch { target = builtinFile }
+  let st = null
+  try { st = statSync(target) } catch { st = null }
+  if (!st || !st.isFile()) {
+    let builtin = ''
+    try { builtin = readFileSync(builtinFile, 'utf8') } catch { builtin = '' }
+    return cacheInto(cache, 'missing', truncateBytes(sanitizeGateText(builtin), maxBytes))
+  }
+  const key = target + '|' + st.mtimeMs + '|' + st.size
+  if (key !== cache.key) {
+    let raw = ''
+    try { raw = readFileSync(target, 'utf8') } catch { raw = '' }
+    cacheInto(cache, key, truncateBytes(sanitizeGateText(raw), maxBytes))
+  }
+  return cache.text
 }
 
 /**
@@ -554,46 +586,76 @@ export function gatePromptText(settings) {
   return loadGateSync()
 }
 
-export async function gateMeta(settings) {
-  const override = GATE_OVERRIDE_FILE()
-  const usingOverride = existsSync(override)
-  const sourcePath = usingOverride ? override : GATE_BUILTIN_FILE
-  const text = await loadGate()
+/** ponytail 段的注入形态，语义与 gatePromptText 完全一致。 */
+export function ponytailPromptText(settings) {
+  if (!settings || settings.ponytailEnabled !== true) return ''
+  return loadPonytailSync()
+}
+
+/**
+ * 「内置 + override」两段共用的元信息（门禁 / ponytail）。与旧的 gateMeta 同一套口径：
+ * 截断三元组必须与文本同源，预览返回的就是注入形态 —— 别再复制第二份实现。
+ */
+async function ruleMeta(settings, enabledKey, builtinFile, overrideFile, cache) {
+  const usingOverride = existsSync(overrideFile)
+  const sourcePath = usingOverride ? overrideFile : builtinFile
+  let text = ''
+  try { text = loadRuleFile(builtinFile, overrideFile, cache, GATE_MAX_BYTES) } catch { text = '' }
   const bytes = Buffer.byteLength(text, 'utf8')
-  // 与 text 同源的截断记录（loadGateSync 里一并算出）。truncated 是**显式标记**；
-  // 旧写法 `bytes >= GATE_MAX_BYTES` 既漏判截断（截断后必然短于上限）又误判恰好压线的原文，
-  // 见 truncateBytes 的注释。record 为空只在 loadGate 吞掉异常时出现，退化成"无截断"。
-  const info = gateCache.record || { originalBytes: bytes, keptBytes: bytes, truncated: false }
+  // 与 text 同源的截断记录（loadRuleFile 里一并算出）。truncated 是**显式标记**；
+  // 旧写法 `bytes >= GATE_MAX_BYTES` 既漏判截断又误判恰好压线的原文，见 truncateBytes 的注释。
+  // record 为空只在加载吞掉异常时出现，退化成"无截断"。
+  const info = cache.record || { originalBytes: bytes, keptBytes: bytes, truncated: false }
   return {
-    enabled: settings.gateEnabled === true,
+    enabled: settings[enabledKey] === true,
     source: usingOverride ? 'override' : 'builtin',
-    builtinPath: GATE_BUILTIN_FILE,
-    overridePath: override,
+    builtinPath: builtinFile,
+    overridePath: overrideFile,
     sourcePath,
-    editablePath: override,
+    editablePath: overrideFile,
     bytes,
     maxBytes: GATE_MAX_BYTES,
-    truncated: info.truncated,          // 显式标记：规则原文是否被砍过
-    originalBytes: info.originalBytes,  // 新增：规则原文字节数（未截断时 === bytes）
-    keptBytes: info.keptBytes,          // 新增：实际注入的字节数（=== bytes）
+    truncated: info.truncated,
+    originalBytes: info.originalBytes,
+    keptBytes: info.keptBytes,
     lines: text ? text.split('\n').length : 0,
     text,
   }
 }
 
+export async function gateMeta(settings) {
+  return ruleMeta(settings, 'gateEnabled', GATE_BUILTIN_FILE, GATE_OVERRIDE_FILE(), gateCache)
+}
+
+export async function ponytailMeta(settings) {
+  return ruleMeta(settings, 'ponytailEnabled', PONY_BUILTIN_FILE, PONY_OVERRIDE_FILE(), ponyCache)
+}
+
 /** 写入 / 清除（text 为 null 或空串）规则 override。 */
 export async function writeGateOverride(text) {
+  return writeRuleOverride(GATE_OVERRIDE_FILE(), gateCache, loadGate, text)
+}
+
+export async function writePonytailOverride(text) {
+  return writeRuleOverride(PONY_OVERRIDE_FILE(), ponyCache, loadPonytail, text)
+}
+
+/**
+ * 「内置 + override」两段共用的写盘（门禁 / ponytail）。
+ * 与 gateMeta 同一套口径：写完立刻失效对应缓存并回读注入形态，
+ * 调用方拿到的就是模型下一步实际会看到的东西。
+ */
+async function writeRuleOverride(overrideFile, cache, reload, text) {
   await fs.mkdir(SETTINGS_DIR(), { recursive: true })
-  const file = GATE_OVERRIDE_FILE()
   if (text === null || text === undefined || String(text).trim() === '') {
-    try { await fs.unlink(file) } catch { /* 不存在即已回到内置 */ }
+    try { await fs.unlink(overrideFile) } catch { /* 不存在即已回到内置 */ }
   } else {
-    await fs.writeFile(file, String(text).replace(/\r\n/g, '\n').trim() + '\n', 'utf8')
+    await fs.writeFile(overrideFile, String(text).replace(/\r\n/g, '\n').trim() + '\n', 'utf8')
   }
-  gateCache.key = ''
-  gateCache.text = ''
-  gateCache.record = null
-  return loadGate()
+  cache.key = ''
+  cache.text = ''
+  cache.record = null
+  return reload()
 }
 
 async function readComposition() {
@@ -686,6 +748,7 @@ export async function apply(ctx) {
     return
   }
   let gateSectionActive = false
+  let ponySectionActive = false
 
   // 启动自检：与本机磁盘状态对账（例如 app 升级重置了组装文件之后）。
   try {
@@ -729,6 +792,31 @@ export async function apply(ctx) {
     })
   } catch (err) {
     console.warn('[dsh-cache-control] systemPrompt unavailable, gate disabled: ' + String((err && err.message) || err))
+  }
+
+  // ---- ponytail 编码纪律：第二段常驻规则（v1.10.0），与门禁同一条挂载路径 ----
+  try {
+    ctx.inject(['systemPrompt'], (promptCtx) => {
+      try {
+        promptCtx.systemPrompt.section({
+          name: PONY_SECTION,
+          order: PONY_SECTION_ORDER,
+          text: () => {
+            try {
+              return ponytailPromptText(readSettingsSync())
+            } catch {
+              return ''
+            }
+          },
+        })
+        ponySectionActive = true
+        console.log('[dsh-cache-control] ponytail section mounted (order ' + PONY_SECTION_ORDER + ')')
+      } catch (err) {
+        console.warn('[dsh-cache-control] ponytail section rejected: ' + String((err && err.message) || err))
+      }
+    })
+  } catch (err) {
+    console.warn('[dsh-cache-control] systemPrompt unavailable, ponytail disabled: ' + String((err && err.message) || err))
   }
 
   const send = (res, status, obj) => {
@@ -804,6 +892,7 @@ export async function apply(ctx) {
           const values = resolveValues(settings)
           const { text } = await readComposition()
           const gate = await gateMeta(settings)
+          const ponytail = await ponytailMeta(settings)
           send(res, 200, {
             settings,
             windowTokens: ROUTED_CONTEXT_WINDOW,
@@ -815,6 +904,7 @@ export async function apply(ctx) {
             backupAt: settings.compactionBackup ? settings.compactionBackup.at : null,
             hasBackup: settings.compactionBackup !== null,
             gate,
+            ponytail,
           })
         } catch (err) {
           send(res, 500, { ok: false, error: String((err && err.message) || err) })
@@ -839,6 +929,7 @@ export async function apply(ctx) {
             changed: result ? result.changed : false,
             ...resolveValues(settings),
             gateEnabled: settings.gateEnabled,
+            ponytailEnabled: settings.ponytailEnabled,
           })
         } catch (err) {
           send(res, 400, { ok: false, error: String((err && err.message) || err) })
@@ -890,11 +981,53 @@ export async function apply(ctx) {
     },
   }), 'dsh-cache-control: gate route')
 
+  // ---- ponytail 规则文本：GET 读当前生效文本，PUT 写入或清除 override（与门禁同构）----
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: PONY_PATH,
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        try {
+          send(res, 200, { ok: true, ponytail: await ponytailMeta(await readSettings()) })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String((err && err.message) || err) })
+        }
+        return
+      }
+      if (req.method === 'PUT' || req.method === 'POST') {
+        try {
+          const parsed = JSON.parse(await readBody(req))
+          await writePonytailOverride(parsed && parsed.text)
+          const ponytail = await ponytailMeta(await readSettings())
+          send(res, 200, {
+            ok: true,
+            bytes: ponytail.bytes,
+            lines: ponytail.lines,
+            source: ponytail.source,
+            enabled: ponytail.enabled,
+            maxBytes: ponytail.maxBytes,
+            truncated: ponytail.truncated,
+            originalBytes: ponytail.originalBytes,
+            keptBytes: ponytail.keptBytes,
+          })
+        } catch (err) {
+          send(res, 400, { ok: false, error: String((err && err.message) || err) })
+        }
+        return
+      }
+      send(res, 405, { ok: false, error: 'method not allowed' })
+    },
+  }), 'dsh-cache-control: ponytail route')
+
   const settings = await readSettings()
   const gateText = await loadGate()
-  console.log('[dsh-cache-control] host up (' + GET_PATH + ', ' + GATE_PATH + ')'
+  const ponyText = await loadPonytail()
+  console.log('[dsh-cache-control] host up (' + GET_PATH + ', ' + GATE_PATH + ', ' + PONY_PATH + ')'
     + ' enabled=' + settings.enabled
     + ' gate=' + settings.gateEnabled
     + ' gateSection=' + (gateSectionActive ? 'mounted' : 'absent')
-    + ' gateBytes=' + Buffer.byteLength(gateText, 'utf8'))
+    + ' gateBytes=' + Buffer.byteLength(gateText, 'utf8')
+    + ' pony=' + settings.ponytailEnabled
+    + ' ponySection=' + (ponySectionActive ? 'mounted' : 'absent')
+    + ' ponyBytes=' + Buffer.byteLength(ponyText, 'utf8'))
 }

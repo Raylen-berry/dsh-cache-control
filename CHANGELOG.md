@@ -2,6 +2,18 @@
 
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
 
+## 1.10.0 — 2026-09-21 · 加 ponytail 编码纪律段：与会话守则同构的第二段常驻规则 + 独立开关
+
+**需求**（用户 2026-09-21）：把 GitHub [DietrichGebert/ponytail](https://github.com/dietrichgebert/ponytail)（MIT）蒸馏进会话策略插件，做成一个开关 —— 开 = 全文常驻注入 system prompt，关 = 不注入。落点选本插件（而非 dsh-output-shape），与会话守则 R1–R7 同住一处；chip 上第三段「懒码」一键切换。
+
+**做法**：内置文本 `ponytail-gate.md`（5.0 KB / 86 行，中文转写，去重了上游与 R5/R6 重叠的测试条款、去掉 lite/full/ultra 档位）+ settings 新键 `ponytailEnabled`（默认 false）+ 提示词段 `dsh-cache-control:ponytail-gate`（order 410，守则 400 与形状 405 之后）+ HTTP `/cc/ponytail.json`（GET 注入形态预览 / PUT 写 override / 空文删回内置），全部与门禁同构。
+
+**顺手做的抽象收敛**：两段规则同构 ⇒ 加载器合并为 `loadRuleFile(builtin, override, cache, max)`、元信息合并为 `ruleMeta(...)`、写盘合并为 `writeRuleOverride(...)` —— 各自保留**独立的 mtime+size 缓存对象**（gateCache / ponyCache）。共用一份缓存会互相顶掉对方的键，热路径上表现为无谓重读、record 串段。**不要**再把这两段复制成两份实现，漂移是迟早的事。
+
+**回归**：新增 `tools/verify-ponytail-gate.mjs`（23 项，已入 SUITES）——盯开关独立性、两段的缓存互不串、截断三元组同源、override 清除回内置、花括号中和。全套离线 6 套件通过。client 侧 PUT 载荷补 `ponytailEnabled`（verify-settings-payload 的字段对齐闸这次开局就接住了它该拦的那类漏）。
+
+**代价如实告知**：开着时约 1.3K token/请求 × 所有会话（含子代理、非编码会话）；正文里写明"只对编码任务生效"来兜底行为，但 token 不挑会话。按需使用场景仍可用 dsh-output-shape 里的 ponytail 技能（按需加载、零常驻）。
+
 ## 1.9.7 — 2026-09-20 · 修 CI 红：verify-session-gate 的断言基线不再取自真实安装文件
 
 **现象**：v1.9.4/v1.9.5 推上 GitHub 后 Actions 三档 Node **全红**（run #5/#6），本机却 39/39 —— 正是守则 R6"本机绿 ≠ 干净机器绿"的反例，被自己抓到。
