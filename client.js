@@ -1,20 +1,21 @@
 // ============================================================================
 // dsh-cache-control · Client half
 //
-// 设置页七块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里）：
-//   * ① 省缓存 —— 改写 standard preset 的 compaction 参数
+// 设置页七块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里；**标题不带序号**）：
+//   * 省缓存 —— 改写 standard preset 的 compaction 参数
 //     （保存后作用于"之后新建的会话"）。
-//   * ② 会话守则 —— 把 session-gate.md 常驻注入 system prompt
+//   * 会话守则 —— 把 session-gate.md 常驻注入 system prompt
 //     （每个 model step 重新组装，故对已打开的会话下一步即生效，且不被压缩稀释）。
-//   * ③ ponytail —— 第二段常驻规则（编码纪律），与守则互不影响。
-//   * ④ 自动审查 —— 注册**按需技能** auto-code-review：一个字都不进 system prompt；
+//   * ponytail —— 第二段常驻规则（编码纪律），与守则互不影响。
+//   * 自动审查 —— 注册**按需技能** auto-code-review：一个字都不进 system prompt；
 //     审什么文件、按哪条规则，每次现向外部 ocr（open-code-review）的 delegate 模式取。
-//   * ⑤ 气泡置顶 —— 最近一条「我的提问」钉顶（圆角矩形毛玻璃底衬随这条提问的实际长度
+//   * 气泡置顶 —— 最近一条「我的提问」钉顶（圆角矩形毛玻璃底衬随这条提问的实际长度
 //     伸缩，长文限高 38vh、滚轮在气泡内滚，模糊度可调）、我的气泡透明。
-//   * ⑥ 对话页 —— 固定会话列宽（原 bg-atelier「底图工坊 · 对话页」区，2026-09-07 移入）。
-//   * ⑦ 存储 —— 各用途占盘统计与清理。
-// 分区编号 v1.10.2 起重排为连续圈符（ponytail 曾是 "②b"，导致页面上出现两个 ②）；
-// v1.11.0 在 ponytail 之后插入「④ 自动审查」，后面依次顺延。
+//   * 对话页 —— 固定会话列宽（原 bg-atelier「底图工坊 · 对话页」区，2026-09-07 移入）。
+//   * 存储 —— 各用途占盘统计与清理。
+// 为什么 v1.11.1 起去掉圈符编号：编号是"位置属性"，插一张卡就得把全部下游引用重排一遍 ——
+// v1.10.2（ponytail 曾写作 "②b" ⇒ 页面上出现两个 ②）与 v1.11.0（插入自动审查令后面全部顺延）
+// 已经为此返工两次。指代某块请直接说名字。
 // 各块互不隶属：面板里各自一条开关，各说各的生效语义。
 //
 // 仿 dsh-bg-atelier 的 __ModuleLoader__ 封装；状态经 host HTTP 接口读写。
@@ -87,13 +88,13 @@ window.__ModuleLoader__.load({
       '.cc-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);height:26px;padding:0 10px;border-radius:7px;font-size:12px;cursor:pointer}',
       '.cc-btn:hover{border-color:var(--dsw-alias-border-l3)}',
       '.cc-btn:disabled{opacity:.55;cursor:default}',
-      // 常用宽度快捷按钮（⑥ 对话页）：与 cc-btn 同族但更矮更轻，选中态用品牌色描边
+      // 常用宽度快捷按钮（对话页卡）：与 cc-btn 同族但更矮更轻，选中态用品牌色描边
       '.cc-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}',
       '.cc-mini{border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));background:transparent;color:var(--dsw-alias-label-secondary);height:22px;padding:0 8px;border-radius:6px;font-size:11.5px;line-height:1;cursor:pointer;transition:border-color .12s,color .12s}',
       '.cc-mini:hover{border-color:var(--dsw-alias-border-l3)}',
       '.cc-mini.on{border-color:var(--dsw-alias-brand-primary,#4d6bfe);color:var(--dsw-alias-brand-primary,#4d6bfe)}',
       '.cc-textarea{width:100%;box-sizing:border-box;min-height:220px;resize:vertical;font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:12px;line-height:1.65;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base,#fff);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:10px}',
-      // ---- 设置页「说明」抽屉: 默认收起, 点按钮才展开正文 (样式参照 ②门禁「编辑规则」的点开式) ----
+      // ---- 设置页「说明」抽屉: 默认收起, 点按钮才展开正文 (样式参照会话守则卡「编辑规则」的点开式) ----
       '.cc-fold{margin-top:6px;padding-top:8px;border-top:1px dashed var(--dsw-alias-border-l1,rgba(127,127,127,.25))}',
       '.cc-foldBtn{display:inline-flex;align-items:center;gap:4px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.5;cursor:pointer;padding:0;border-radius:4px}',
       '.cc-foldBtn:hover{color:var(--dsw-alias-label-primary)}',
@@ -1222,7 +1223,7 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------- 隐藏原生拖拽条（两个开关）--
     // DSH 的框架里有两类 `cursor:*-resize` 的把手，v1.7.0 起**各归一个开关**：
     //   ① 会话区两竖杠（宽度把手，实测 ._8JRpoa_widthHandle，左右各一条，hover 才亮发光条）
-    //      —— 本插件把会话列宽钉成固定百分比之后（⑥ 对话页），拖它不再改变列宽，
+    //      —— 本插件把会话列宽钉成固定百分比之后（对话页卡），拖它不再改变列宽，
     //      只剩"鼠标扫过去冒出两竖杠、拖了却什么都不动"的体验（用户 2026-09-14 反馈）。
     //      键名沿用 v1.6.0 的 hideResizer（盘上已有 true 的存量，语义收窄为只管这两条）。
     //   ② 侧栏/详情栏分隔条（实测 ._1tdjgG_handle，8px 宽，挂在 AppFrame 的 grid 列缝上）
@@ -1612,7 +1613,7 @@ window.__ModuleLoader__.load({
             '会话守则是"必须遵守的规则"，不是"模型无法违反"——它约束行为，不产生技术硬拦截。')))
     }
 
-    // ---------------------------------------- 设置页：自动代码审查卡（④） --
+    // ------------------------------------------------ 设置页：自动审查卡 --
     function ReviewCard() {
       var s = useCache()
       return h('div', { className: 'cc-card' },
@@ -1769,7 +1770,7 @@ window.__ModuleLoader__.load({
             + '写内联 width），复制/时间行再绝对定位到最后一行的字尾，所以框贴文字、键贴文末。')))
     }
 
-    // ------------------------------------------------ 设置页：对话页卡（⑥） --
+    // ------------------------------------------------ 设置页：对话页卡 --
     // 常用宽度快捷键（bg-atelier 原样搬来）
     var WIDTH_PRESETS = [60, 70, 80, 90, 100]   // v1.5.0: 原 px 快捷键(1280/1600/1920/2560/3840) → 百分比
 
@@ -1817,7 +1818,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * ⑦ 存储（v1.8.0；v1.10.2 起编号 ⑥，v1.11.0 插入「④ 自动审查」后顺延为 ⑦）：各用途分别占多少盘；清理**先给候选清单**再动手。
+     * 「存储」卡（v1.8.0）：各用途分别占多少盘；清理**先给候选清单**再动手。
      * 清理走"移到回收目录"而不是删（不可逆操作先从可回溯开始），回收目录自己再单独清。
      */
     function fmtBytes(bytes) {
@@ -1943,35 +1944,38 @@ window.__ModuleLoader__.load({
     function CacheControlPage() {
       var s = useCache()
       // 名称一律压到 2–4 字（用户 2026-09-07）：目录里一眼能读完，细节写在每卡正文。
+      // **分区标题不带序号**（v1.11.1）：序号是"位置属性"、名字是"身份属性"，插一张卡就得把
+      // 全部下游引用重排一遍（v1.10.2 修"两个 ②"、v1.11.0 插自动审查，已经为此返工两次）。
+      // 顺序由下面 section 的书写顺序决定；要指代某块直接说名字（气泡置顶 / 对话页 …）。
       return h('div', { className: 'cc-page' },
         h('section', null,
           h('h3', { className: 'cc-h' }, '会话策略'),
           h(Fold, { label: '总述' },
-            h('p', { className: 'cc-sub' }, '七块互相独立的开关：① 压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；② 会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；③ ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；④ 自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；⑤ 气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；⑥ 对话页只管会话列宽（原底图工坊里的同名区块）；⑦ 存储管各用途占盘与清理。'))),
+            h('p', { className: 'cc-sub' }, '七块互相独立的开关（无编号，按下面卡片的顺序）：压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；对话页只管会话列宽（原底图工坊里的同名区块）；存储管各用途占盘与清理。'))),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '① 省缓存'),
+          h('h3', { className: 'cc-h' }, '省缓存'),
           CacheCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '② 会话守则'),
+          h('h3', { className: 'cc-h' }, '会话守则'),
           GateCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '③ ponytail'),
+          h('h3', { className: 'cc-h' }, 'ponytail'),
           PonytailCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '④ 自动审查'),
+          h('h3', { className: 'cc-h' }, '自动审查'),
           ReviewCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '⑤ 气泡置顶'),
+          h('h3', { className: 'cc-h' }, '气泡置顶'),
           AppearanceCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '⑥ 对话页'),
+          h('h3', { className: 'cc-h' }, '对话页'),
           ChatPageCard()),
         h('section', null,
-          h('h3', { className: 'cc-h' }, '⑦ 存储'),
+          h('h3', { className: 'cc-h' }, '存储'),
           StorageCard()),
         h('section', null,
           h(Fold, { label: '关于本页' },
-            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则开关只决定规则段是否为空（空段在提示词渲染时被丢弃）；⑤⑥ 两项纯界面，只改样式与 CSS 变量。规则文本见上列路径。'))))
+            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则开关只决定规则段是否为空（空段在提示词渲染时被丢弃）；「气泡置顶」与「对话页」两项纯界面，只改样式与 CSS 变量。规则文本见上列路径。'))))
     }
 
     // ------------------------------------------ 输入工具条 chip + 弹出面板 --
@@ -2095,11 +2099,11 @@ window.__ModuleLoader__.load({
         h('span', null, '会话策略'),
         h('button', { className: 'cc-close', 'aria-label': '关闭', onClick: function () { setOpen(false) } }, '✕'))
 
-      // ① 省缓存
+      // 省缓存
       var cacheSection = [
         h('div', { className: 'cc-sect', key: 'h', style: { borderTop: 'none', paddingTop: '0' } },
           h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
-            h('span', { className: 'cc-sectTitle' }, '① 省缓存'), OnOff(s.enabled)),
+            h('span', { className: 'cc-sectTitle' }, '省缓存'), OnOff(s.enabled)),
           h('span', { className: 'cc-sectHint' }, '新会话生效')),
         h(React.Fragment, { key: 'on' }, Switch('启用（之后新建的会话）', s.enabled, setEnabled)),
         h(React.Fragment, { key: 'tr' }, SliderC('压缩触发点', s.triggerPct, 5, 95, setTrigger)),
@@ -2107,10 +2111,10 @@ window.__ModuleLoader__.load({
         h(React.Fragment, { key: 'au' }, Switch('自动压缩（关 = 仅手动 /compact）', s.auto, setAuto)),
       ]
 
-      // ② 会话守则 —— 同一个框内，独立开关
+      // 会话守则 —— 同一个框内，独立开关
       var gateSection = [
         h('div', { className: 'cc-sect', key: 'h' },
-          h('span', { className: 'cc-sectTitle' }, '② 会话守则'),
+          h('span', { className: 'cc-sectTitle' }, '会话守则'),
           h('span', { className: 'cc-sectHint' }, '下一步即生效')),
         h(React.Fragment, { key: 'on' }, Switch('启用（规则 R1–R3 研判提问分工 / R5–R7 少犯错·查证·谨慎）', s.gateEnabled, setGateEnabled, !s.gateReady)),
         s.gateReady ? h('div', { key: 'meta' }, GateSummary(s))
@@ -2128,10 +2132,10 @@ window.__ModuleLoader__.load({
           s.gateSaving ? h('span', { className: 'cc-muted', key: 'hint' }, '规则处理中…') : null),
       ]
 
-      // ③ ponytail —— 独立开关，与门禁同族（v1.10.0；v1.10.2 起编号从 ②b 改为 ③，见 CHANGELOG）
+      // ponytail —— 独立开关，与门禁同族（v1.10.0 加入；曾写作 "②b"，v1.11.1 起标题不带编号）
       var ponySection = [
         h('div', { className: 'cc-sect', key: 'h' },
-          h('span', { className: 'cc-sectTitle' }, '③ ponytail'),
+          h('span', { className: 'cc-sectTitle' }, 'ponytail'),
           h('span', { className: 'cc-sectHint' }, '下一步即生效')),
         h(React.Fragment, { key: 'on' }, Switch('启用编码纪律（YAGNI / 梯子 / 修根因）', s.ponytailEnabled, setPonytailEnabled, !s.ponytailReady)),
         s.ponytailReady ? h('div', { key: 'meta' }, RuleSummary(s, 'ponytail'))

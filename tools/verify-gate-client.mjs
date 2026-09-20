@@ -217,7 +217,7 @@ const pageExp = expanded(c)
 let chipHtml = render(c.chip)
 let parts = chipParts(chipHtml)
 ok('设置页渲染成功', pageHtml.length > 500, pageHtml.length + ' chars')
-ok('两块卡都在（名称已压到 2–4 字）', pageHtml.includes('① 省缓存') && pageHtml.includes('② 会话守则'),
+ok('两块卡都在（名称已压到 2–4 字，无编号）', pageHtml.includes("cc-h\">省缓存") && pageHtml.includes("cc-h\">会话守则"),
   'h3=' + (pageHtml.match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).join(' '))
 ok('门禁卡显示规则体积与行数', /\d+(\.\d+)?\s(B|KB)\s·\s\d+\s行/.test(pageHtml), (pageHtml.match(/\d+(\.\d+)?\s(B|KB)\s·\s\d+\s行/) || [''])[0])
 ok('门禁卡列出内置规则路径（展开说明可见）', pageExp.includes('session-gate.md'))
@@ -243,7 +243,7 @@ ok('介绍里写清了"点这一段=直接开/关"与生效范围',
   chipHtml.includes('点这一段 = 直接开/关') && chipHtml.includes('只影响之后新建的') && chipHtml.includes('下一个请求'))
 ok('▾ 带 aria-expanded（未展开为 false）', /aria-expanded="false"/.test(chipHtml))
 ok('容器是 span 不是 button（避免 button 套 button）', /<span class="cc-chip/.test(chipHtml))
-ok('⑤ 气泡置顶卡存在（含可调模糊度滑杆）', pageHtml.includes('⑤ 气泡置顶') && pageHtml.includes('钉顶底衬模糊度'),
+ok('气泡置顶卡存在（含可调模糊度滑杆）', pageHtml.includes('钉顶底衬模糊度') && /cc-h">气泡置顶/.test(pageHtml),
   'h3=' + (pageHtml.match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).join(' '))
 ok('外观两开关可用且默认关（新 host 会带回这两个字段）',
   checked(pageHtml, L_PIN) === false && checked(pageHtml, L_CLEAR) === false && disabled(pageHtml, L_PIN) === false)
@@ -338,7 +338,7 @@ const panelTag = (opened.match(/<div class="cc-panel"[^>]*>/) || [''])[0]
 ok('展开时面板被 portal 到 document.body',
   portalTargets.length === 1 && portalTargets[0] === bodyStub, 'targets=' + portalTargets.length)
 ok('面板含标题与两个分区（正文没被裁掉的等价证据；分区名同样已缩短）',
-  panelTag !== '' && opened.includes('会话策略') && opened.includes('① 省缓存') && opened.includes('② 会话守则'))
+  panelTag !== '' && opened.includes('会话策略') && opened.includes('省缓存') && opened.includes('会话守则'))
 ok('面板带 data-cache-control-panel 便于对账', panelTag.includes('data-cache-control-panel="1"'))
 ok('面板用 bottom 定位（往 chip 上方开，不开到屏幕外）',
   /left:\d+px/.test(panelTag) && /bottom:\d+px/.test(panelTag) && !/;top:\d+px/.test(panelTag), panelTag.slice(0, 120))
@@ -349,25 +349,27 @@ ok('展开渲染无 React 警告', warnings.length === 0, warnings[0] ? warnings
 console.log('\n— H. 本轮四项改动（名称长度 / 底衬形态 / 徽标无背景 / 对话页搬过来了）—')
 const ALLCSS = injectedCss.join('\n')
 const clientSrc = fs.readFileSync(PLUGIN + 'client.js', 'utf8')
-// ① 设置页名称：导航条目与四个分区标题都要 2–4 字（编号圈符不算名字的一部分）
-//    先写一份"新 host 全字段 + 对话页宽度开着"的盘，④ 卡里的滑杆才会渲染出来。
+// ① 设置页名称：导航条目与分区标题都要 2–4 字。
+//    先写一份"新 host 全字段 + 对话页宽度开着"的盘，对话页卡里的滑杆才会渲染出来。
 fs.writeFileSync(settingsFile, JSON.stringify({
   enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true,
   pinLastUser: true, clearBubble: true, pinBlur: 12, chatWidth: 90, chatWidthEnabled: true,
 }))
 c = await bootClient('h' + Date.now())
 const navLabel = c.pageEntry ? String(c.pageEntry.label) : ''
-const h3s = (render(c.page).match(/<h3[^>]*>([^<]*)<\/h3>/g) || [])
-  .map((s) => s.replace(/<[^>]+>/g, '').replace(/^[①②③④⑤⑥⑦]\s*/, ''))
-ok('导航条目名 ≤4 字', navLabel.length > 0 && navLabel.length <= 4, navLabel + ' (' + navLabel.length + ')')
-ok('分区标题都 ≤4 字', h3s.length >= 7 && h3s.filter((x) => x !== 'ponytail').every((x) => x.length <= 4), JSON.stringify(h3s))
-// v1.10.2：编号必须是从 ① 起连续的圈符，不许再出现 "②b" 这类插队写法（用户看到过两个 ②）
 const pageH3Raw = (render(c.page).match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).map((s) => s.replace(/<[^>]+>/g, ''))
-const circled = '①②③④⑤⑥⑦'
-const sectNums = pageH3Raw.filter((x) => /^[①②③④⑤⑥⑦]/.test(x)).map((x) => x[0])
-ok('分区编号连续无重复（①–⑦）',
-  sectNums.length === 7 && sectNums.every((ch, i) => ch === circled[i]), JSON.stringify(sectNums))
-ok('没有 ②b / 字母后缀这类混编编号', !/[①②③④⑤⑥][a-z]/i.test(pageH3Raw.join('|')), pageH3Raw.join('|'))
+const h3s = pageH3Raw.slice()
+ok('导航条目名 ≤4 字', navLabel.length > 0 && navLabel.length <= 4, navLabel + ' (' + navLabel.length + ')')
+ok('分区标题都 ≤4 字', h3s.length >= 8 && h3s.filter((x) => x !== 'ponytail').every((x) => x.length <= 4), JSON.stringify(h3s))
+// v1.11.1：**标题一律不带序号**。编号是位置属性，插一张卡就得把全部下游引用重排一遍 ——
+// v1.10.2（ponytail 曾写作 "②b" ⇒ 页面上出现两个 ②）与 v1.11.0（插入自动审查令后面全部顺延）
+// 已经为此返工两次。这条断言就是防止以后又有人往标题里加圈符或字母后缀。
+ok('分区标题里没有圈符编号（含总述/关于本页那两处文案）',
+  !/[①②③④⑤⑥⑦⑧⑨]/.test(pageH3Raw.join('|') + render(c.page).replace(/<[^>]+>/g, '')),
+  pageH3Raw.join('|'))
+ok('七个分区名字齐全且顺序正确（顺序即页面顺序，不靠编号表达）',
+  ['省缓存', '会话守则', 'ponytail', '自动审查', '气泡置顶', '对话页', '存储']
+    .every((nm, i) => pageH3Raw.indexOf(nm) === i + 1), JSON.stringify(pageH3Raw))
 // ② 钉顶底衬：从"整行铺毛玻璃"改成"定长圆角矩形画在 ::before 上"，模糊度走 CSS 变量
 const pinRule = (ALLCSS.match(/html\[data-cc-pin-last-user="1"\] \[data-cc-pin="1"\]\{[^}]*\}/) || [''])[0]
 const plateRule = (ALLCSS.match(/html\[data-cc-pin-last-user="1"\] \[data-cc-pin="1"\]::before\{[^}]*\}/) || [''])[0]
@@ -409,12 +411,12 @@ ok('chip 内徽标无背景（面板里的同名徽标不受影响）',
   && /\.cc-chip \.cc-badge\.dim\{background:transparent/.test(ALLCSS)
   && baseBadgeRules.length > 0 && !baseBadgeRules.some((l) => /background:transparent/.test(l)),
   '基础规则 ' + baseBadgeRules.length + ' 条：' + baseBadgeRules.join(' ').slice(0, 90))
-// ⑥ 对话页固定宽度：整节已从底图工坊移进本插件，那边不再碰这三个变量（v1.11.0 起编号为 ⑥）
+// 对话页固定宽度：整节已从底图工坊移进本插件，那边不再碰这三个变量
 const pageHtml4 = render(c.page)
-ok('设置页出现「⑥ 对话页」卡（开关 + 30–100% 滑杆 + 常用百分比快捷键）',
-  pageHtml4.includes('⑥ 对话页') && /min="30"/.test(pageHtml4) && /max="100"/.test(pageHtml4)
+ok('设置页出现「对话页」卡（开关 + 30–100% 滑杆 + 常用百分比快捷键）',
+  /cc-h">对话页/.test(pageHtml4) && /min="30"/.test(pageHtml4) && /max="100"/.test(pageHtml4)
   && pageHtml4.includes('90%') && pageHtml4.includes('启用固定对话页宽度'),
-  'has=' + pageHtml4.includes('⑥ 对话页'))
+  'has=' + /cc-h">对话页/.test(pageHtml4))
 // 对面插件(dsh-bg-atelier)的交叉断言：装了才判，没装就跳过（开源仓库不能硬依赖别人的路径）。
 const bgaPath = process.env.DSH_BGA_CLIENT || 'D:/DeepSeek/dsh-plugins/dsh-desktop-wallpaper/client.js'
 if (fs.existsSync(bgaPath)) {
