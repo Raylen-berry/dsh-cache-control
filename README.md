@@ -38,12 +38,27 @@
   代价不划算」四类必须指出，且反对要可核查（对象 + 理由 + 替代方案）；最终裁决权在用户，
   但不可逆损失（删数据、覆盖无备份、改生产、花钱、对外发布）必须先确认。
 - **R2 必要提问**：只有「不同理解会改变结果」且「答案查不到」时才停下来问；能查的先查；
-  一轮最多三问、带候选项与推荐；拿不准但可回滚就先做完再标注。
+  一轮最多三问、带候选项与推荐；拿不准但可回滚就先做完再标注。v1.9.6 起补两条时机细化
+  （蒸自 Claude Code "Delivering work" 条款，MIT）：改变方案形状的缺口问在动手前，
+  只影响实现细节的按默认假设做完再标注；阻塞式提问是最后手段，否则先做完不依赖答案的部分。
 - **R3 分工固定**：用户定目标、补真实情况、判定可用性；助手负责搜索、执行、制作、验证、交付。
   交付必须可判断（改动路径 + 依据 + 未覆盖项 + 风险与回退）。
+- **R5 少犯错优先（编码行为四原则）**：蒸馏自 [multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills)
+  （214K★，Karpathy 诊断、Jiayuan Chang 成文，v1.9.2 起收录）——动手前说假设 / 最小实现 /
+  只动必须动的行 / 任务转成可验证目标。与 R1 互补：R1 管"敢反对"，R5 管"少犯错"。
+- **R6 查证再下结论**：蒸馏自 [duolahypercho/andrej-karpathy-skills](https://github.com/duolahypercho/andrej-karpathy-skills)
+  第 4 条的验证口径（v1.9.4 起收录）——先查证再断言、未验证标【假设】、完成前跑验收动作并附证据、
+  没跑检查就明说没跑。
+- **R7 谨慎执行**：蒸馏自 Claude Code 出厂条款 "Executing actions with care"（经
+  [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts)，MIT，
+  v1.9.5 起收录）——不可逆/共享状态动作先确认、授权只按当次范围算、破坏性操作不当绕路捷径、
+  不认识的状态当用户半成品（能移不删）。git status 一条刻意未收：DSH 的沙箱与审批门已覆盖大半。
 
 界面上：
 
+- **控件用宿主官方原子（v1.9.3）**：开/关行是「说明在左 + `dsh-client-ui-primitives` 的 Switch 在右」，
+  按钮走宿主 Button —— 随宿主主题与明暗自动一致。primitives 取不到时**软回退**到自带的 checkbox/`.cc-btn`，
+  功能两种情况完全一致（同一 require 失败只影响观感，不影响开关）。
 - **启用开关**独立于省缓存开关，勾选框各管各的。chip 是固定版式的两段状态：
   `省缓存 [开/关] ｜ 提问 [开/关]`，`[开/关]` 复用同一个徽标元件（`.cc-badge`），面板里两个分区头也用它。
 - **面板**（输入框右侧）里两块用分隔线分区，可「查看规则」直接看当前生效文本。
@@ -252,7 +267,7 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 任一套非 0 退出 ⇒ `npm test` 退出码 1 ⇒ CI 变红。CI 用 Node 20/22/24 三档矩阵、windows-latest。
 
 干净环境实测（`DSH_HOME` / `APPDATA` / `LOCALAPPDATA` / `USERPROFILE` / `DSH_APP_MODULES` 全指空目录，
-独立下载的 node），三档（Node 20/22/24）结果一致 —— **4/4 套件通过**：
+独立下载的 node），三档（Node 20/22/24）结果一致 —— **5/5 套件通过**：
 
 | 套件 | 结果 |
 | --- | --- |
@@ -260,14 +275,20 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 | `tools/verify-host-width.mjs` | 全部 PASS |
 | `tools/verify-settings-payload.mjs` | 9 项通过（v1.7.0 起含 hideDivider 对齐断言） |
 | `tools/verify-panel-and-resizer.mjs` | 25 项通过（v1.7.0 起两类把手分开关断言） |
+| `tools/verify-session-gate.mjs` | 39 项通过（v1.9.4 起纳入；本机跑时另加真实 home 对照 3 条） |
 
 > `verify-panel-and-resizer.mjs` 原来因为"要本机 DSH 安装目录的 `node_modules/react`"被排除。
 > 现在 `react` 进 `devDependencies`，`run-all.mjs` 把 `DSH_APP_MODULES` 指向**仓库自己的 `node_modules/`**，
 > 于是本地与 CI 都不再依赖任何人的安装路径（反向证据：把 `DSH_APP_MODULES` 指回空目录，
 > 该套件立刻报 `ERR_MODULE_NOT_FOUND: Cannot find module '<空目录>/react/index.js'`）。
 
+> `verify-session-gate.mjs` 被排除的原因（v1.9.4 已消除两条）：① `DEPLOYMENT_PERSONA TypeError`
+> ——根因是断言引用了宿主从未导出的符号名，套件在段序断言处崩、后面 20+ 条从没跑过；② 读 `%APPDATA%`
+> 真实 preset/settings ——换成仓库内最小夹具 + 「真实 home 存在才比对」。它 import 的
+> `@deepseek-ai/dsh-system-prompt` 走**自己 devDependencies** 里那份（createRequire 从仓库 package.json
+> 解析，版本与本安装宿主一致），所以把 `DSH_APP_MODULES` 指到空目录仍 39/39。
+
 **未纳入 CI** 的套件（原因同时写在 `tools/run-all.mjs` 的 `EXCLUDED` 里）：
-`verify-session-gate.mjs`（既有失败：`DEPLOYMENT_PERSONA` TypeError，与本检查无关）、
 `verify-gate-client.mjs` / `verify-ui-appearance.mjs` / `verify-gate-http.mjs`
 （要 `%APPDATA%` 下的真实 preset/settings.json）。
 
@@ -596,9 +617,8 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
   但引擎侧是**比例式阈值**，实际触发点仍按窗口同比变化。token 数为 token-meter 的估算口径。
 - v1.2.0 起 chip 固定为三段：`省缓存 [开/关] ｜ 提问 [开/关] ｜ ▾`，前两段点击即切换、
   ▾ 弹滑杆与规则面板；标签不随状态改名（v1.1.0 那套"两个都开就叫会话策略"已去掉）。
-- **`tools/verify-session-gate.mjs` 目前是红的，且是既有问题、与本轮改动无关**
-  （2026-09-14 用 `git worktree` 在改动前的 HEAD 上跑，报同一个
-  `TypeError: Cannot read properties of undefined (reading 'DEPLOYMENT_PERSONA')`，行号相同）。
-  它从宿主包里取 `FIRST_PARTY_SECTION_ORDER` 来断言段序，宿主改过这个导出的形状后它取到 undefined
-  —— 是**测试脚本跟宿主脱节**，不是门禁功能坏了（段序功能本身由 `verify-gate-client` 67 条守着）。
-  按"先取基线再归因"的规矩记在这里，别下次又当成新 bug 查一遍。
+- **`tools/verify-session-gate.mjs` 的既有失败已于 v1.9.4 修复并纳入 CI**（此前记录：从宿主包取
+  `FIRST_PARTY_SECTION_ORDER.DEPLOYMENT_PERSONA`，而该导出名从未存在 ⇒ 段序断言处崩、后面 20+ 条从没跑过）。
+  修法见 CHANGELOG 1.9.4：段序判据改读已解析包的源码文本数值（persona=0 / plan=500），
+  preset 依赖换成仓库内最小夹具。这段留在这里是提醒：**测试脚本与宿主导出脱节时，崩在中途的套件
+  会伪装成"只坏了前半截"** —— 排除理由里写"既有失败"之前先数一下它到底跑到了第几行。

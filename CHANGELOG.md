@@ -2,6 +2,60 @@
 
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
 
+## 1.9.6 — 2026-09-20 · ② 会话守则：R2 补两行「提问时机前置 / 阻塞式提问是最后手段」（C 项收尾）
+
+**需求**（用户 2026-09-20）：可行性分析 v2 的 C 项 —— 蒸 Claude Code 出厂条款 "Delivering work at full scope"（ccVersion 2.1.218，经 Piebald-AI/claude-code-system-prompts 收录，MIT）。
+**做法**：不新开节，两条并入现有 R2（+334 B）：① 会改变**方案形状**的缺口问在动手前、只影响实现细节的按默认假设做完再标注；② 阻塞式提问只在"任何假设都会不安全或作废"时用，否则先做完不依赖答案的部分。刻意未收同条款里的"疑虑说一句就继续交付""拒绝要克制"——那些偏对话风格，且与 R1/R3 已有内容重叠。
+**验证**：注入实测 6,666 B / 16,384 B、未截断（宿主 `/cc/gate.json` 实读，两行均在）；`run-all` 5/5；`verify-session-gate` 39/39。存盘即生效，无需重启。
+**至此守则成型**：R1–R3（原创）· R5（Karpathy 四原则）· R6（查证）· R7（谨慎执行）+ R2 时机细化 ≈ 1,670 tokens/请求。
+
+## 1.9.5 — 2026-09-20 · ② 会话守则：新增 R7「谨慎执行」（Claude Code care 条款蒸馏）
+
+**需求**（用户 2026-09-20）：可行性分析 v2 的 B 项 —— 蒸 [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts)（MIT）收录的 Claude Code 出厂条款 "Executing actions with care"（ccVersion 2.1.200）。
+**做法**：
+- `session-gate.md` 新增 `## R7 谨慎执行：看清可逆性再动手`（959 B，原稿 1,131 B 砍掉 git status 一条——DSH 沙箱与审批门已覆盖大半，且 R1 裁决条款已有不可逆先确认；保留其独有的三条：**授权按当次范围算 / 破坏性操作不当捷径 / 不认识的状态当半成品、能移不删**）。
+- 开头写明与既有机制的关系：R1 的可操作版 + DSH 审批门是硬拦截、本节管拦之前怎么选——避免读者以为它替代 approval gate。
+- client.js 四处文案同步成六条（规则说明抽屉、面板开关标签、note、chip title）。
+- `verify-session-gate.mjs` 防误删断言扩到 R5/R6/R7。
+**验证**：注入实测 6,332 B / 16,384 B、未截断（宿主 `/cc/gate.json` 实读）；`run-all` 5/5；`verify-gate-client` 74/74；`verify-session-gate` 39/39。**client.js 文案改动要重启 DSH Desktop 才可见**（规则文本本身存盘即生效）。
+**成本**：+959 B ≈ 240 tokens/请求（含子代理与 workflow 子会话各乘一份）。
+
+## 1.9.4 — 2026-09-20 · ② 会话守则：新增 R6「查证再下结论」；verify-session-gate 修好并挪回 CI
+
+**需求**（用户 2026-09-20）：可行性分析 v2 的 A 项 —— R6 蒸馏自 [duolahypercho/andrej-karpathy-skills](https://github.com/duolahypercho/andrej-karpathy-skills) 第 4 条（"最窄的有意义验证；没跑检查就明说"）。
+**做法**：
+- `session-gate.md` 新增 `## R6 查证再下结论`（437 B）：先查证再断言、未验证标【假设】、完成前跑验收动作并附证据、没跑检查就明说。注入实测 5,372 B / 16,384 B，未截断，存盘即生效。
+- **顺手治好一个老排除项**：`verify-session-gate.mjs` 长期 EXCLUDED 的理由是「DEPLOYMENT_PERSONA TypeError + 要读 %APPDATA%」。根因：断言引用了宿主从未导出的 `FIRST_PARTY_SECTION_ORDER.DEPLOYMENT_PERSONA`（真名 `DEPLOYMENT_PERSONA_PREFIX`），套件一直在段序断言处崩 ⇒ **后面 20+ 条从没跑过**。修法：段序判据改从已解析包源码文本取数值；preset 依赖换成仓库内最小夹具（托管块逐字节对照 `compactionConfigLines` 形态）；真实 home 存在才做"未被改动"对照（CI 上 SKIP 并如实打印）。devDependencies 补 `@deepseek-ai/dsh-system-prompt@^0.1.5-rc.2` 及其运行时闭包（cordis/schemastery/dsh-scope/dsh-invariants，版本与本安装宿主一致；`.npmrc` registry 钉死不变，测试执行期仍不出网 —— `npm ci --offline` 通过）。
+- 体积断言的 token 换算从 `/2.6` 修正为中文口径 `/4`，且相对 `GATE_MAX_BYTES` 展示。
+**验证**：`verify-session-gate` **39/39**（首次完整跑通全部 7 节）；`run-all` **5/5 套件通过**；该套件在 `DSH_APP_MODULES` 指向空目录时仍 39/39（证明不再依赖本机安装路径）。
+**生效范围**：仅规则文本与测试基建，插件代码零改动 ⇒ 不需要重启 DSH。
+
+## 1.9.3 — 2026-09-20 · UI：开关/按钮改用宿主官方原子（primitives），并修两条陈旧断言
+
+**需求**（用户 2026-09-20）：可行性分析方案 1 —— 设置页控件与宿主原生一致、随主题与明暗。
+**做法**：
+- `client.js` 软 require `@deepseek-ai/dsh-client-ui-primitives`（仿 dsh-note-changes：拿不到就退回自带控件）。
+- `Switch()` 改为「说明文字在左 + 宿主 Switch 在右」（新 `.cc-swRow`/`.cc-swLabel`），禁用态再兜一层 no-op；
+  `Btn()` 包住全部 8 处原 `cc-btn` 按钮（门禁卡 4、存储卡 3、滑杆面板 2）。checkbox 回退路径原样保留。
+- 顺带把面板/提示文案里"规则三条 R1–R3"补成含 R5（v1.9.2 遗留的文案漂移）。
+- **修两条 6 KB 年代写死的断言**（本次全量复跑才暴露，与本轮改动无关的陈旧失败）：
+  `verify-gate-client` E2 段的 19998→5839/上限 6144 改为**相对 host 响应生成**；
+  `verify-gate-http` 第 6 段样本 7000 B 不再超 16 KB 上限 ⇒ 样本改 20,000 B、判据改 `< host.GATE_MAX_BYTES`。
+  这正是 v1.9.0 对 truncation 套件做过的"数字相对上限生成"改造，补齐到剩下两个套件。
+**验证**：`verify-gate-client` **74/74**（新增一条守卫断言：primitives 桩未装载即红，防"只测了回退路径"的假绿）；
+`verify-gate-http` 43/43；`verify-ui-appearance` 50/50；`run-all` 4/4；双路径渲染探针实测
+primitives 在场 = 8×`role="switch"` + 3×宿主 Button、零 checkbox；不在场 = 恰好镜像（8 checkbox + 3 cc-btn）。
+**生效范围**：client 半改动要**重启一次 DSH Desktop**（启动时 compose）；重启前页面照常工作（旧 client 缓存）。
+
+## 1.9.2 — 2026-09-20 · ② 会话守则：新增 R5 编码行为四原则（蒸馏自 multica-ai/andrej-karpathy-skills）
+
+**需求**（用户 2026-09-20）：调研 GitHub 上同类开源实现并蒸馏更新。
+**做法**：
+- `session-gate.md` 新增 `## R5 少犯错优先：编码行为四原则`：动手前说假设 / 最小实现 / 只动必须动的行 / 任务转成可验证目标。中文重写、压成与 R1–R3 同格式的条目，来源在节标题下署名（MIT）。
+- README「② 会话守则」补 R5 一行；同步说明与 R1 的分工（R1 敢反对，R5 少犯错）。
+- 规则文件存盘即生效（mtime+size 记忆化），无需重启。注入实测 4,934 B / 上限 16,384 B，未截断。
+**验证**：`verify-gate-truncation` 30/30、`verify-panel-and-resizer` 25/25、`verify-settings-payload` 9/9、`run-all` 全绿；`GET /cc/gate.json` 实测 `truncated=false` 且文本含 R5。
+
 ## 1.9.1 — 2026-09-16 · ② 会话守则：R4 输出形状摘出，交给 dsh-output-shape
 
 **需求**（用户 2026-09-16）：给 ADHD 规则做了独立插件 `dsh-output-shape`（含 chip 与设置页），并要求它**默认常驻开启**。此时若 R4 还留在本文件，同一套规则会在每个请求注入两遍（约 3.4 KB + 4.9 KB）。
