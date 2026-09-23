@@ -1,6 +1,114 @@
 # 变更记录
 
+## 1.12.4 — 2026-09-21 · 修三段规则的冲突与交叉（跨段去重，口径不降）
+
+起因（用户）："这些多规则的是否会有冲突或者功能交叉？"——查完确实有 3 处真冲突 + 4 处内容交叉。
+本版按 **B 档**处理：修冲突 + 合并交叉，**不砍任何约束**（用户口径：质量只能多不能少）。
+
+**冲突（都已消除，可复核）**
+- **C1 同一事实两处真源**：ponytail 原自带一节「输出形状」（代码优先 / 之后最多三行短话），与 shape-gate 的
+  P1+P10 是同一件事的第二份写法。现在 ponytail 只留**代码与解释的比例**（那是它独有的措辞），
+  回复形状的十条 + 破例全部由 `shape-gate.md` 独家提供，ponytail 里写明真源在哪。
+- **C2 优先关系没有单一裁决点**：三份文件原本各带一节"与其他规则的关系"，互相指三个不同方向
+  （ponytail 指 session-gate 的 R5/R6、shape-gate 指 R1–R3、session-gate R4 指 shape-gate）。
+  现在只有 session-gate R4 一处声明：**宿主 system / developer > 用户当前指令 > R1–R7 > ponytail 段 > 形状段**，
+  另两段不再各写一份（shape-gate 破例 6 改成指回 R4）。
+- **C3 卡面文案与实际不符**：门禁卡写"规则六条"却列到 R7、ponytail 卡写"四原则"而正文是 6 条硬规则。
+  已改为"规则七条 R1–R7（R4 是归属与裁决声明，不是行为规则）"与"三原则"（R5 现存 3 条）。
+
+**交叉（已合并到一处，另一处只留一句引用）**
+- 最小实现：R5 原第 2 条与 ponytail 梯子第 7 级重复 → 完整口径只在 ponytail，R5 一条指针。
+- 只动必须动的行 / 无关死代码别删：R5 原第 3 条与 ponytail 硬规则第 4 条逐字重复
+  （**这条是用户点名删的**，理由"没看出作用"）→ 只留 ponytail 那一份，R5 的指针里点明。
+- 验证/完成要求：R6 与 ponytail「懒代码没带检查 = 没完工」保持分工（R6 管"交差前要跑并附证据"，
+  ponytail 管"哪类代码必须留最小检查"），措辞已错开，不再各写一遍同一句话。
+
+**体积**：12,569 → 12,285 B（−284 B）。三段起始 17,094 B，累计 −4,809 B（**−28.1%**，≈每请求少 1.2K token）。
+本轮省得少是必然的——冲突修复本身要**增加**那段唯一的裁决声明，能省的是被合并掉的重复。
+
+**主动不做**：没有为了省 token 删任何一条约束。设置页卡面文案同步后，`verify-gate-client` 的渲染断言口径未变。
+
+**验证**：`npm test` 9/9 通过。
+
+## 1.12.3 — 2026-09-21 · 瘦身续：加载器收工厂、载荷对账改成行为断言、清掉 850 KB 探针产物
+
+接 1.12.2 清完用户点名的清单，逐条结果（含**撤回**与**主动不做**的，免得下一个人照单重做）：
+
+- **三段规则加载器收成一个工厂**（做）：`loadGate/Ponytail/ShapeSync` + 三个 async 包装原本是逐字复制的
+  三对函数，收成 `makeRuleLoader(builtinFile, overrideFile, cache)`。
+  ⚠ 收的时候踩了一次：override 路径**必须传函数、每次现取**，不能传已求值的字符串 ——
+  三个套件都是"先 import 本模块、再改写 `process.env.DSH_HOME`"，模块加载期把路径定下来的话，
+  测试写的 override 落在临时目录、加载器却还看真实 home，`verify-ponytail-gate` 第 2 组当场红了 5 条。
+  `index.js` 里已写明这条约束。
+- **载荷对账从"扫源码"改成"抓真请求"**（做）：`verify-settings-payload` 新增第 4 组 —— 真起 http 服务、
+  真装载 client 半、真翻一次开关，抓实际 PUT 的请求体与 `host.DEFAULTS` 比。这类断言不依赖源码文本，
+  不会再出现"实现换了形态、断言假失败"。同时待对齐字段改为直接读 `host.DEFAULTS`，
+  本文件不再维护第二份白名单与 `EXCLUDE`。静态那一组保留作快速失败（两条口径一强一快）。
+- **删掉 849.6 KB 探针产物**（做）：`tools/cc-appear-out/`、`tools/userrow-out/` 都是 gitignore 内的产
+  物、未入库，跑 `probe-userrow` / `cc-appear-probe` 可重建。
+- **终端编码"问题"不存在，撤回**：上一轮记的"run-all 中文乱码需 `chcp 65001`"是我看错了 ——
+  `node -e "console.log('中文 ✅')"` 经管道到 pwsh 完全正常；乱码只出在我用 `Get-Content`（按 GBK 解码）
+  渲染出来的**回读**上，与脚本无关。故 run-all.mjs 一行未改。
+- **主动不做**：三段 prompt 文本构造器（`gatePromptText`/`ponytailPromptText`/`shapePromptText`）没合并 ——
+  三个函数合计 22 行，但"默认开 vs 默认关"的判断（`=== true` 与 `!== false`）是这个插件最容易写错的语义，
+  抽掉后差异会藏进参数里、可读性变差。收益（约 10 行）小于代价，留原样。
+- 回归：`npm test` 9/9 通过；`verify-settings-payload` 从 12 项增至 16 项（新增 4 项运行时断言）。
+
+## 1.12.2 — 2026-09-21 · 瘦身：三段常驻规则减 26%，规则卡与路由样板去重
+
+**需求**（用户）：代码瘦身，不影响现有使用；能改进／该新增的另列清单。
+
+**常驻注入文本（每请求重发的部分，改动直接省 token）**：三段共 16,915 B → 12,569 B（−4,346 B，−26%）。
+`session-gate.md` 6,990→4,719、`ponytail-gate.md` 5,143→3,661、`shape-gate.md` 4,961→4,189。
+只压措辞与重复交代（R4 从 5 段并成 1 段、删掉"为什么这么整形"整节、例子合并），**R1–R7、七级梯子、
+十条形状规则与六条破例的约束内容一条没减**；verify 套件盯的锚点（各节标题、关键短语、R4 的归属声明）全部保留。
+顺带把设置页里写死的体积数（"2–3K""1.2K / 4,867 B"）改成按 host 回来的字节数实时算 —— 以后改文本不会再留假账。
+
+**代码去重（不动行为）**：
+- `client.js`：设置页三张规则卡（会话守则 / ponytail / 输出形状）是逐字复制的同一套骨架，合成一个
+  `RuleCard(facts)`，差异（文案、字段前缀、警示行、说明内容）全部走参数；`gateTruncated ? h('p'…)` 那三处
+  硬编码警示换成 `warnings: [{field, text}]` 数据。
+- `client.js`：`fetch + JSON.stringify` 与 `fetch→r.json()` 两条样板链在 9 处重复，收成 `putJson` / `jsonFetch`。
+- `index.js`：三条规则路由（gate / ponytail / shape）逐字同构，收成一张 `ruleRoutes` 表 + 一个注册循环。
+
+**验证**：`node --check client.js index.js` exit 0；`npm test` 9/9 套件通过（含 verify-gate-client 真实渲染 80 项）。
+两处源码级断言因实现形态变了而同步改口径（不是放宽）：verify-gate-truncation 第 ⑧ 组改盯 `field: 'Truncated'`
+数据形态，verify-settings-payload 的载荷锚点从 `body: JSON.stringify({` 改到 `putJson('/cc/settings.json', {`。
+
+**没做 / 风险**：`client.js.bak-20260910-143611`（87 KB）与 `session-gate.R4-backup-2026-09-16.md` 是**已入库**的
+历史件，删它们要动 git 历史语义，留着；`tools/cc-appear-out`、`tools/userrow-out`（850 KB）已在 .gitignore 内，
+本地可删。改动生效不需要重启：插件是 junction 到本仓库，host 半下次请求即读新文本；设置页卡片需要刷新页面。
+
+## 2026-09-21 · 本地维护：并发设置保存与测试隔离
+
+- 设置与自动审查入口共用保存队列，防止并发读取旧设置后互相覆盖；设置文件通过临时文件原子替换，避免读取半份 JSON。
+- compactionBackup 只由宿主管理；主设置入口修改审查开关时同步注册或注销技能。
+- 新增并发保存回归验证；客户端测试改用独立临时目录，不再清理写死的本机目录。
+- 保留此前未提交的客户端外观修改。
+
 （本仓库此前没有 changelog，从这一轮开始记。更早的历史见 README 与 `git log`。）
+
+## 1.12.1 — 2026-09-20 · 空会话「工作区行」与输入卡左边对齐（DeepSeek / 标准模式 那一行）
+
+**需求**（用户）：截图上那一行（DeepSeek、标准模式、PPT、生图）要和输入框对齐。
+
+**根因**：宿主 `.wSkVaW_heroWorkspaceRow` 自带 `padding:0 20px`，左边缘贴的是 composer 列；而输入卡在
+`.uV2eYG_root`（`padding:0 var(--dsh-composer-side-clearance)`）里按 `--dsh-composer-card-max-width` 居中 ——
+两边缩进不同源，卡片比这一行多缩进一截。实测（composer 列宽 1052.6 / clearance 16 / card-max-width 90%）：
+行内容左 340.7、卡片左 387.7，差 47px。
+
+**做法**：`CSS` 数组末尾两条基础样式（无条件生效，不加开关 —— 这是"对齐到输入卡"的不变量）：
+这一行补上同一圈内边距，第一个子项再按同一个 `--dsh-composer-card-max-width` 推出等宽的居中量。
+两者的百分比基准同为「列内容宽 − 2×clearance」，所以 card-max-width 无论是对话页钉的 90% 还是宿主默认的
+`calc(--dsh-chat-content-width + 32px)` 都成立。选择器只留 CSS-module 的**本地名后缀**
+（`[class*="heroWorkspaceRow"]`）—— 哈希前缀一升级就变，这与本仓库隐藏拖拽把手时的做法一致。
+
+**验证**：真浏览器实测改后 —— 行首项左 387.72 / 输入卡左 387.73 / MemSearch 胶囊左 387.72（三者一致）；
+`node --check client.js` exit 0；`npm test` 8/8 套件通过（含 verify-gate-client 80 项）。
+
+**没做 / 风险**：宿主若把 `heroWorkspaceRow` 这个本地类名改掉，这条会静默失效（表现 = 回到 47px 错位，
+照本节注释重钉即可）；`dsh-approval-gate` 里那条横幅仍用旧的
+`max-width:calc(--dsh-composer-card-max-width − 2×dock-inset)` 公式，按同理会比卡片窄 16px，本次不动它。
 
 ## 1.12.0 — 2026-09-21 · 并入独立插件 dsh-output-shape：第三段常驻规则「输出形状」+ 两条按需技能
 

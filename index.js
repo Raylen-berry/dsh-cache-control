@@ -624,8 +624,30 @@ function readSettingsSync() {
 
 async function writeSettings(settings) {
   await fs.mkdir(SETTINGS_DIR(), { recursive: true })
-  await fs.writeFile(SETTINGS_FILE(), JSON.stringify(settings, null, 2), 'utf8')
+  const file = SETTINGS_FILE()
+  const temporary = file + '.' + process.pid + '.' + (++settingsWriteId) + '.tmp'
+  try {
+    await fs.writeFile(temporary, JSON.stringify(settings, null, 2), { encoding: 'utf8', flag: 'wx' })
+    await fs.rename(temporary, file)
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => {})
+  }
   invalidateSettings()
+}
+
+let settingsWriteId = 0
+let settingsMutation = Promise.resolve()
+function mutateSettings(task) {
+  const pending = settingsMutation.then(task)
+  settingsMutation = pending.catch(() => {})
+  return pending
+}
+
+function settingsPayload(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('settings must be an object')
+  // The original preset backup is maintained exclusively by the host.
+  const { compactionBackup, ...patch } = parsed
+  return patch
 }
 
 /**
@@ -696,29 +718,28 @@ function cacheInto(cache, key, record) {
   return cache.text
 }
 
-function loadGateSync() {
-  return loadRuleFile(GATE_BUILTIN_FILE, GATE_OVERRIDE_FILE(), gateCache, GATE_MAX_BYTES)
+/**
+ * 一个规则段的加载器对（同步给 assemble 热路径、异步给路由与元信息）。
+ * 三段各有一份**独立缓存**，不能共用：共用会让"改了 ponytail.md"把门禁段的缓存顶掉
+ * （反之亦然），热路径上表现为无谓重读，且两边的 record 会互相串。
+ * 三段之前是逐字复制的三对函数，收成这个工厂。
+ *
+ * ⚠ overrideFile 收的是**函数**不是路径：必须在每次读取时现求值。三个套件都是先 import
+ * 本模块、再改写 process.env.DSH_HOME 指向临时目录，模块加载期就把路径定下来的话，
+ * 它们写的 override 全都落在测试自己的临时目录里、而加载器还在看真实 home —— 表现为
+ * "override 明明写了却读回内置正文"（v1.12.2 收工厂时踩过，verify-ponytail-gate 第 2 组红）。
+ */
+function makeRuleLoader(builtinFile, overrideFile, cache) {
+  const sync = () => loadRuleFile(builtinFile, overrideFile(), cache, GATE_MAX_BYTES)
+  const load = async () => {
+    try { return sync() } catch { return '' }
+  }
+  return [sync, load]
 }
 
-async function loadGate() {
-  try { return loadGateSync() } catch { return '' }
-}
-
-function loadPonytailSync() {
-  return loadRuleFile(PONY_BUILTIN_FILE, PONY_OVERRIDE_FILE(), ponyCache, GATE_MAX_BYTES)
-}
-
-async function loadPonytail() {
-  try { return loadPonytailSync() } catch { return '' }
-}
-
-function loadShapeSync() {
-  return loadRuleFile(SHAPE_BUILTIN_FILE, SHAPE_OVERRIDE_FILE(), shapeCache, GATE_MAX_BYTES)
-}
-
-async function loadShape() {
-  try { return loadShapeSync() } catch { return '' }
-}
+const [loadGateSync, loadGate] = makeRuleLoader(GATE_BUILTIN_FILE, GATE_OVERRIDE_FILE, gateCache)
+const [loadPonytailSync, loadPonytail] = makeRuleLoader(PONY_BUILTIN_FILE, PONY_OVERRIDE_FILE, ponyCache)
+const [loadShapeSync, loadShape] = makeRuleLoader(SHAPE_BUILTIN_FILE, SHAPE_OVERRIDE_FILE, shapeCache)
 
 /**
  * 「内置 + override」两段共用的加载器。loadGateSync 与 loadPonytailSync 都是它的一行特化，
@@ -1278,14 +1299,19 @@ export async function apply(ctx) {
       if (req.method === 'PUT' || req.method === 'POST') {
         try {
           const parsed = JSON.parse(await readBody(req))
-          const before = await readSettings()
-          const settings = sanitize({ ...before, ...parsed })
-          await writeSettings(settings)
-          // 只有压缩字段真的变了才去动 standard 组装文件：那个文件是用户的 preset，
-          // 里面有他自己的压缩配置。旧实现无条件 applyToStandard ⇒ 只改外观开关
-          // （钉顶 / 气泡 / 宽度 / 拖拽条）或门禁，也会把用户原有的压缩配置抹成插件这一套。
-          const touched = compactionFieldsChanged(before, settings)
-          const result = touched ? await applyToStandard(settings) : null
+          const patch = settingsPayload(parsed)
+          const { settings, touched, result } = await mutateSettings(async () => {
+            const before = await readSettings()
+            const settings = sanitize({ ...before, ...patch })
+            await writeSettings(settings)
+            // 只有压缩字段真的变了才去动 standard 组装文件：那个文件是用户的 preset，
+            // 里面有他自己的压缩配置。旧实现无条件 applyToStandard ⇒ 只改外观开关
+            // （钉顶 / 气泡 / 宽度 / 拖拽条）或门禁，也会把用户原有的压缩配置抹成插件这一套。
+            const touched = compactionFieldsChanged(before, settings)
+            const result = touched ? await applyToStandard(settings) : null
+            if (before.reviewSkillEnabled !== settings.reviewSkillEnabled) await syncReviewSkill()
+            return { settings, touched, result }
+          })
           send(res, 200, {
             ok: true,
             // result !== null 即"这次保存动到了 standard 组装文件"（外观/门禁单独保存时为 null）
@@ -1305,122 +1331,55 @@ export async function apply(ctx) {
     },
   }), 'dsh-cache-control: settings route')
 
-  // ---- 门禁规则文本：GET 读当前生效文本，PUT 写入或清除 override ----
-  ctx.effect(() => webServer.register({
-    kind: 'exact',
-    path: GATE_PATH,
-    handler: async (req, res) => {
-      if (req.method === 'GET') {
-        try {
-          send(res, 200, { ok: true, gate: await gateMeta(await readSettings()) })
-        } catch (err) {
-          send(res, 500, { ok: false, error: String((err && err.message) || err) })
+  /**
+   * 三段规则文本路由（门禁 / ponytail / 输出形状）逐字同构，只是键名与读写函数不同：
+   * GET 返回 meta，PUT/POST 写 override 并回带同一份 meta。合并前这三条各 ~38 行。
+   */
+  const ruleRoutes = [
+    { path: GATE_PATH, key: 'gate', label: 'gate route', write: writeGateOverride, meta: gateMeta },
+    { path: PONY_PATH, key: 'ponytail', label: 'ponytail route', write: writePonytailOverride, meta: ponytailMeta },
+    { path: SHAPE_PATH, key: 'shape', label: 'shape route', write: writeShapeOverride, meta: shapeMeta },
+  ]
+  for (const r of ruleRoutes) {
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: r.path,
+      handler: async (req, res) => {
+        if (req.method === 'GET') {
+          try {
+            send(res, 200, { ok: true, [r.key]: await r.meta(await readSettings()) })
+          } catch (err) {
+            send(res, 500, { ok: false, error: String((err && err.message) || err) })
+          }
+          return
         }
-        return
-      }
-      if (req.method === 'PUT' || req.method === 'POST') {
-        try {
-          const parsed = JSON.parse(await readBody(req))
-          await writeGateOverride(parsed && parsed.text)
-          const settings = await readSettings()
-          // 响应直接带出截断状态：刚保存完就该知道规则有没有被砍（原 N 字节 → 保留 M 字节）。
-          // 字段与 gateMeta 同源，老字段（bytes / lines / source / enabled）一个不少。
-          const gate = await gateMeta(settings)
-          send(res, 200, {
-            ok: true,
-            bytes: gate.bytes,
-            lines: gate.lines,
-            source: gate.source,
-            enabled: gate.enabled,
-            maxBytes: gate.maxBytes,
-            truncated: gate.truncated,
-            originalBytes: gate.originalBytes,
-            keptBytes: gate.keptBytes,
-          })
-        } catch (err) {
-          send(res, 400, { ok: false, error: String((err && err.message) || err) })
+        if (req.method === 'PUT' || req.method === 'POST') {
+          try {
+            const parsed = JSON.parse(await readBody(req))
+            await r.write(parsed && parsed.text)
+            // 响应直接带出截断状态：刚保存完就该知道规则有没有被砍（原 N 字节 → 保留 M 字节）。
+            // 字段与 meta 同源，老字段（bytes / lines / source / enabled）一个不少。
+            const m = await r.meta(await readSettings())
+            send(res, 200, {
+              ok: true,
+              bytes: m.bytes,
+              lines: m.lines,
+              source: m.source,
+              enabled: m.enabled,
+              maxBytes: m.maxBytes,
+              truncated: m.truncated,
+              originalBytes: m.originalBytes,
+              keptBytes: m.keptBytes,
+            })
+          } catch (err) {
+            send(res, 400, { ok: false, error: String((err && err.message) || err) })
+          }
+          return
         }
-        return
-      }
-      send(res, 405, { ok: false, error: 'method not allowed' })
-    },
-  }), 'dsh-cache-control: gate route')
-
-  // ---- ponytail 规则文本：GET 读当前生效文本，PUT 写入或清除 override（与门禁同构）----
-  ctx.effect(() => webServer.register({
-    kind: 'exact',
-    path: PONY_PATH,
-    handler: async (req, res) => {
-      if (req.method === 'GET') {
-        try {
-          send(res, 200, { ok: true, ponytail: await ponytailMeta(await readSettings()) })
-        } catch (err) {
-          send(res, 500, { ok: false, error: String((err && err.message) || err) })
-        }
-        return
-      }
-      if (req.method === 'PUT' || req.method === 'POST') {
-        try {
-          const parsed = JSON.parse(await readBody(req))
-          await writePonytailOverride(parsed && parsed.text)
-          const ponytail = await ponytailMeta(await readSettings())
-          send(res, 200, {
-            ok: true,
-            bytes: ponytail.bytes,
-            lines: ponytail.lines,
-            source: ponytail.source,
-            enabled: ponytail.enabled,
-            maxBytes: ponytail.maxBytes,
-            truncated: ponytail.truncated,
-            originalBytes: ponytail.originalBytes,
-            keptBytes: ponytail.keptBytes,
-          })
-        } catch (err) {
-          send(res, 400, { ok: false, error: String((err && err.message) || err) })
-        }
-        return
-      }
-      send(res, 405, { ok: false, error: 'method not allowed' })
-    },
-  }), 'dsh-cache-control: ponytail route')
-
-  // ---- 输出形状规则文本（v1.12.0）：与上面两条路由逐字同构，只是键名换成 shape ----
-  ctx.effect(() => webServer.register({
-    kind: 'exact',
-    path: SHAPE_PATH,
-    handler: async (req, res) => {
-      if (req.method === 'GET') {
-        try {
-          send(res, 200, { ok: true, shape: await shapeMeta(await readSettings()) })
-        } catch (err) {
-          send(res, 500, { ok: false, error: String((err && err.message) || err) })
-        }
-        return
-      }
-      if (req.method === 'PUT' || req.method === 'POST') {
-        try {
-          const parsed = JSON.parse(await readBody(req))
-          await writeShapeOverride(parsed && parsed.text)
-          const shape = await shapeMeta(await readSettings())
-          send(res, 200, {
-            ok: true,
-            bytes: shape.bytes,
-            lines: shape.lines,
-            source: shape.source,
-            enabled: shape.enabled,
-            maxBytes: shape.maxBytes,
-            truncated: shape.truncated,
-            originalBytes: shape.originalBytes,
-            keptBytes: shape.keptBytes,
-          })
-        } catch (err) {
-          send(res, 400, { ok: false, error: String((err && err.message) || err) })
-        }
-        return
-      }
-      send(res, 405, { ok: false, error: 'method not allowed' })
-    },
-  }), 'dsh-cache-control: shape route')
+        send(res, 405, { ok: false, error: 'method not allowed' })
+      },
+    }), 'dsh-cache-control: ' + r.label)
+  }
 
   // ---- 自动代码审查（v1.11.0）：状态查询 + 开关切换 ----
   ctx.effect(() => webServer.register({
@@ -1439,11 +1398,15 @@ export async function apply(ctx) {
       if (req.method === 'PUT' || req.method === 'POST') {
         try {
           const parsed = JSON.parse(await readBody(req))
-          const next = sanitize(Object.assign({}, await readSettings(), {
-            reviewSkillEnabled: !(parsed && parsed.enabled === false),
-          }))
-          await writeSettings(next)
-          const registered = await syncReviewSkill()
+          settingsPayload(parsed)
+          const { next, registered } = await mutateSettings(async () => {
+            const next = sanitize(Object.assign({}, await readSettings(), {
+              reviewSkillEnabled: parsed.enabled !== false,
+            }))
+            await writeSettings(next)
+            const registered = await syncReviewSkill()
+            return { next, registered }
+          })
           send(res, 200, { ok: true, review: await reviewMeta(next, reviewState, registered) })
         } catch (err) {
           send(res, 400, { ok: false, error: String((err && err.message) || err) })

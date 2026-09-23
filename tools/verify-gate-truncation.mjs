@@ -236,8 +236,11 @@ ok('⑧ client 读 host 的显式标记与两个长度（不再自己比长度�
 ok('⑧ client 侧没有"用 gateBytes/maxBytes 比大小反推截断"的写法',
   !/gateTruncated:\s*[^,\n]*gateBytes[^,\n]*>=[^,\n]*[mM]ax/.test(clientSrc)
   && !/gateTruncated:\s*Number\(g\.bytes\)\s*>=/.test(clientSrc))
+// 卡片骨架自 v1.12.2 起因三张卡合并成 RuleCard 而变成数据驱动，所以这里按"数据"口径盯：
+// 门禁卡必须登记 Truncated 这条警示、正文里必须有原始与保留两个字节数。
+// 渲染层的行为断言仍在 verify-gate-client 第 E2 组（那里真的渲染 HTML 并查文字）。
 ok('⑧ 截断提示里带上了原始与保留两个字节数',
-  /gateTruncated \? h\('p'/.test(clientSrc) && /s\.gateOriginalBytes/.test(clientSrc) && /s\.gateKeptBytes/.test(clientSrc))
+  /field:\s*'Truncated'/.test(clientSrc) && /s\.gateOriginalBytes/.test(clientSrc) && /s\.gateKeptBytes/.test(clientSrc))
 
 fs.rmSync(HOME, { recursive: true, force: true })
 console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败')

@@ -3,9 +3,11 @@
 // 证明：磁盘设置 → 路由 → STORE → DOM；两个开关互不牵连；chip 版式＝两段标签+徽标+竖线。
 const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
 const APP = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/';
-const ROOT = process.env.DSH_TOOL_HOME || 'D:/DeepSeek/03-调试临时/gate-client-e2e-home';
 const fs = await import('node:fs')
 const pathMod = await import('node:path')
+const os = await import('node:os')
+const ROOT = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'cc-gate-client-'))
+process.on('exit', () => fs.rmSync(ROOT, { recursive: true, force: true }))
 const http = await import('node:http')
 
 let pass = 0, fail = 0
@@ -19,7 +21,6 @@ const ok = (name, cond, extra = '') => {
 // 下的 agent.cordis.yml、收尾又读真实 settings.json 做对照 —— 本机绿纯属"这台机器装过 DSH"。
 // 本套件的 client 侧断言只消费 preset 的**文本结构**（compaction-basic 行块），仓库自带夹具足够；
 // "真实文件未被改动"的守护在真实 home 存在时照比，不存在就 SKIP 并如实打印 ⇒ CI/干净机器可跑。
-fs.rmSync(ROOT, { recursive: true, force: true })
 const presetDir = pathMod.join(ROOT, 'profiles/node_modules/@deepseek-ai/dsh-agent-presets/presets/standard')
 fs.mkdirSync(presetDir, { recursive: true })
 fs.mkdirSync(pathMod.join(ROOT, 'dsh-cache-control'), { recursive: true })

@@ -28,6 +28,7 @@ const urlPath = (p) => {
 const CHECKS = []                       // node --check（纯语法门禁）；本仓库原来没有，故为空
 
 const SUITES = [
+  'tools/verify-settings-concurrency.mjs',
   'tools/verify-gate-truncation.mjs',
   'tools/verify-host-width.mjs',
   'tools/verify-settings-payload.mjs',

@@ -535,8 +535,7 @@ window.__ModuleLoader__.load({
     }
 
     function load() {
-      fetch('/cc/settings.json', { cache: 'no-store' })
-        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+      jsonFetch('/cc/settings.json')
         .then(pull)
         .catch(function (e) {
           STORE.set({ loading: false, error: '加载失败: ' + String(e) })
@@ -571,15 +570,29 @@ window.__ModuleLoader__.load({
         .catch(function () { STORE.set({ reviewReady: false }) })
     }
 
+    /**
+     * 宿主路由的两种调用形状，全插件只此一份实现：
+     * - putJson：PUT 一段 JSON，resolve 出响应体（HTTP 层不管，交给调用方判 ok）
+     * - jsonFetch：GET 并回读，404/非 2xx 直接抛（调用方靠错误文本判"接口不存在"）
+     * 合并前这两条链在 9 处逐字重复。
+     */
+    function putJson(url, body) {
+      return fetch(url, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+    }
+
+    function jsonFetch(url) {
+      return fetch(url, { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+    }
+
     /** 切审查技能开关：走 /cc/review.json，host 侧负责注册/注销，不等主设置那条防抖保存。 */
     function setReviewEnabled(v) {
       STORE.set({ reviewSaving: true, reviewError: '', reviewEnabled: v })
-      fetch('/cc/review.json', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ enabled: v === true }),
-      })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+      putJson('/cc/review.json', { enabled: v === true })
         .then(function (res) {
           if (!res.ok || !res.j || res.j.ok !== true) throw new Error((res.j && res.j.error) || ('http ' + res.j.status))
           var rv = res.j.review || {}
@@ -606,10 +619,7 @@ window.__ModuleLoader__.load({
     }
     function saveNow() {
       var s = STORE.state
-      fetch('/cc/settings.json', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+      putJson('/cc/settings.json', {
           enabled: s.enabled,
           triggerPct: s.triggerPct,
           retainPct: s.retainPct,
@@ -633,17 +643,14 @@ window.__ModuleLoader__.load({
           reviewSkillEnabled: s.reviewEnabled,
           // v1.12.0：输出形状（并入自 dsh-output-shape）。第三个"拨得动就必须落盘"的开关。
           shapeEnabled: s.shapeEnabled,
-        }),
-      })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+        })
         .then(function (res) {
           if (!res.ok || !res.j || res.j.ok !== true) {
             throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
           }
           STORE.set({ saving: false, error: '', triggerTokens: res.j.triggerTokens, retainTokens: res.j.retainTokens })
-          return fetch('/cc/settings.json', { cache: 'no-store' })
+          return jsonFetch('/cc/settings.json')
         })
-        .then(function (r) { return r.json() })
         .then(function (res) {
           // 只回读同步状态，不动 gateDraft（可能正在编辑）。
           STORE.set({
@@ -661,20 +668,14 @@ window.__ModuleLoader__.load({
     /** 写规则文本；text 为 '' 表示删除 override、回到插件内置。 */
     function saveGateText(text) {
       STORE.set({ gateSaving: true, gateError: '' })
-      fetch('/cc/gate.json', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: text }),
-      })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+      putJson('/cc/gate.json', { text: text })
         .then(function (res) {
           if (!res.ok || !res.j || res.j.ok !== true) {
             throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
           }
           STORE.set({ gateSaving: false, gateError: '', gateDraft: null })
-          return fetch('/cc/gate.json', { cache: 'no-store' })
+          return jsonFetch('/cc/gate.json')
         })
-        .then(function (r) { return r.json() })
         .then(function (res) { if (res && res.gate) pull({ settings: res.settings || null, gate: res.gate }) })
         .catch(function (e) {
           STORE.set({ gateSaving: false, gateError: '规则保存失败: ' + String(e) })
@@ -682,8 +683,7 @@ window.__ModuleLoader__.load({
     }
 
     function reloadGate() {
-      fetch('/cc/gate.json', { cache: 'no-store' })
-        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+      jsonFetch('/cc/gate.json')
         .then(function (res) {
           if (!res || !res.gate) throw new Error('no gate payload')
           var g = res.gate
@@ -1523,20 +1523,14 @@ window.__ModuleLoader__.load({
     /** 写 ponytail 规则文本；text 为 '' 表示删除 override、回到插件内置。 */
     function savePonytailText(text) {
       STORE.set({ ponytailSaving: true, ponytailError: '' })
-      fetch('/cc/ponytail.json', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: text }),
-      })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+      putJson('/cc/ponytail.json', { text: text })
         .then(function (res) {
           if (!res.ok || !res.j || res.j.ok !== true) {
             throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
           }
           STORE.set({ ponytailSaving: false, ponytailError: '', ponytailDraft: null })
-          return fetch('/cc/ponytail.json', { cache: 'no-store' })
+          return jsonFetch('/cc/ponytail.json')
         })
-        .then(function (r) { return r.json() })
         .then(function (res) { if (res && res.ponytail) pull({ settings: null, ponytail: res.ponytail }) })
         .catch(function (e) {
           STORE.set({ ponytailSaving: false, ponytailError: '规则保存失败: ' + String(e) })
@@ -1544,8 +1538,7 @@ window.__ModuleLoader__.load({
     }
 
     function reloadPonytail() {
-      fetch('/cc/ponytail.json', { cache: 'no-store' })
-        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+      jsonFetch('/cc/ponytail.json')
         .then(function (res) {
           if (!res || !res.ponytail) throw new Error('no ponytail payload')
           var p = res.ponytail
@@ -1570,20 +1563,14 @@ window.__ModuleLoader__.load({
     /** 写输出形状规则文本；text 为 '' 表示删除 override、回到插件内置（与 ponytail 逐字同构）。 */
     function saveShapeText(text) {
       STORE.set({ shapeSaving: true, shapeError: '' })
-      fetch('/cc/shape.json', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: text }),
-      })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+      putJson('/cc/shape.json', { text: text })
         .then(function (res) {
           if (!res.ok || !res.j || res.j.ok !== true) {
             throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
           }
           STORE.set({ shapeSaving: false, shapeError: '', shapeDraft: null })
-          return fetch('/cc/shape.json', { cache: 'no-store' })
+          return jsonFetch('/cc/shape.json')
         })
-        .then(function (r) { return r.json() })
         .then(function (res) { if (res && res.shape) pull({ settings: null, shape: res.shape }) })
         .catch(function (e) {
           STORE.set({ shapeSaving: false, shapeError: '规则保存失败: ' + String(e) })
@@ -1591,8 +1578,7 @@ window.__ModuleLoader__.load({
     }
 
     function reloadShape() {
-      fetch('/cc/shape.json', { cache: 'no-store' })
-        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+      jsonFetch('/cc/shape.json')
         .then(function (res) {
           if (!res || !res.shape) throw new Error('no shape payload')
           var p = res.shape
@@ -1631,6 +1617,69 @@ window.__ModuleLoader__.load({
 
     function GateSummary(s) {
       return RuleSummary(s, 'gate')
+    }
+
+    /**
+     * 编辑框下面那行提示：三段规则卡逐字相同，唯一变量是上限字节数。
+     * 这里是**输入侧**的比长度（草稿自己 vs 上限），与"靠结果长度反推截断"是两回事：
+     * 提前告诉用户"存下去会被砍"，而不是存完再猜砍没砍。
+     */
+    function ruleTextHint(draftBytes, maxBytes) {
+      return '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(maxBytes) +
+        (draftBytes > maxBytes ? '（超出 ' + (draftBytes - maxBytes) + ' B，保存后会被截断）' : '') +
+        '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。'
+    }
+
+    /**
+     * 三段常驻规则（会话守则 / ponytail / 输出形状）共用的卡：开关 → 摘要 → 警示行 →
+     * 编辑按钮 → textarea → 说明抽屉。合并前三张卡是逐字复制的同一套骨架（各 ~45 行），
+     * 唯一差异收敛进入参：文案、字段前缀、就绪兜底、以及各自特有的警示行与说明内容
+     * （summary / notReadyText / closing 都是函数，因为要拿 host 回来的当前值）。
+     */
+    function RuleCard(f) {
+      var s = useCache()
+      var pre = f.key
+      var editing = s[pre + 'Draft'] !== null
+      var text = s[pre + 'Text']
+      var draft = editing ? s[pre + 'Draft'] : text
+      var maxBytes = s[pre + 'MaxBytes']
+      var draftBytes = new Blob([draft || '']).size
+      var saving = s[pre + 'Saving']
+      var setDraft = f.setDraft
+      return h('div', { className: 'cc-card' },
+        Switch(f.title, s[pre + 'Enabled'], f.setEnabled, !s[pre + 'Ready']),
+        s[pre + 'Ready'] ? RuleSummary(s, pre)
+          : h('div', { className: 'cc-err' }, f.notReadyText(s, pre)),
+        (f.warnings || []).map(function (w) {
+          return s[pre + w.field] ? h('p', { className: 'cc-warn', key: w.field }, w.text(s, pre)) : null
+        }),
+        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+          h(Btn, {
+            disabled: !s[pre + 'Ready'],
+            onClick: function () { STORE.set(setDraft(editing ? null : text)) },
+          }, editing ? '取消编辑' : '编辑规则'),
+          editing ? h(Btn, {
+            disabled: saving,
+            onClick: function () { f.save(s[pre + 'Draft']) },
+          }, saving ? '保存中…' : '保存并生效') : null,
+          editing && s[pre + 'Source'] === 'override' ? h(Btn, {
+            disabled: saving,
+            onClick: function () { f.save('') },
+          }, '清除自定义，回到内置') : null,
+          h(Btn, { onClick: f.reload }, '重新读取')),
+        editing ? h('div', null,
+          h('textarea', {
+            className: 'cc-textarea', value: draft, spellCheck: false,
+            onChange: function (e) { STORE.set(setDraft(e.target.value)) },
+          }),
+          h('div', { className: 'cc-muted', style: { marginTop: '6px' } }, ruleTextHint(draftBytes, maxBytes))) : null,
+        s[pre + 'Error'] ? h('p', { className: 'cc-err' }, s[pre + 'Error']) : null,
+        h(Fold, { label: '规则说明' },
+          h('div', { className: 'cc-note' }, f.summary(s, pre)),
+          h('div', { className: 'cc-path' }, '内置规则：' + (s[pre + 'BuiltinPath'] || '（未就绪）')),
+          h('div', { className: 'cc-path' }, '自定义副本：' + (s[pre + 'OverridePath'] || '（未就绪）') +
+            (s[pre + 'Source'] === 'override' ? '（当前生效）' : '（尚未创建）')),
+          f.closing ? f.closing(s, pre) : null))
     }
 
     /** 说明抽屉: 默认收起 (测试可经 internals.setFoldsOpen 让其默认展开)。 */
@@ -1675,57 +1724,36 @@ window.__ModuleLoader__.load({
 
     // ---------------------------------------------------- 设置页：门禁卡 --
     function GateCard() {
-      var s = useCache()
-      var editing = s.gateDraft !== null
-      var draft = editing ? s.gateDraft : s.gateText
-      var draftBytes = new Blob([draft || '']).size
-      return h('div', { className: 'cc-card' },
-        Switch('启用会话守则（下一个请求即生效，含已打开的会话）', s.gateEnabled, setGateEnabled, !s.gateReady),
-        s.gateReady ? GateSummary(s)
-          : h('div', { className: 'cc-err' }, '会话守则未装载：旧版 host 半仍在运行，请重启桌面应用后再操作（重启前请不要再动本面板的压缩开关，否则新字段会被旧版写盘逻辑抹掉）。'),
-        // 截断要说人话：原文多少、实际注入多少、超了多少 —— 只说"已截断"用户不知道自己丢了多少内容。
-        s.gateTruncated ? h('p', { className: 'cc-warn' },
-          '你的规则被截断了：原文 ' + s.gateOriginalBytes + ' 字节，实际注入 ' + s.gateKeptBytes +
-          ' 字节（上限 ' + s.gateMaxBytes + ' 字节，超出 ' + Math.max(0, s.gateOriginalBytes - s.gateKeptBytes) +
-          ' 字节未进入提示词）。请精简规则或把大段内容拆到别处。') : null,
-        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-          h(Btn, {
-            disabled: !s.gateReady,
-            onClick: function () { STORE.set({ gateDraft: editing ? null : s.gateText }) },
-          }, editing ? '取消编辑' : '编辑规则'),
-          editing ? h(Btn, {
-            disabled: s.gateSaving,
-            onClick: function () { saveGateText(s.gateDraft) },
-          }, s.gateSaving ? '保存中…' : '保存并生效') : null,
-          editing && s.gateSource === 'override' ? h(Btn, {
-            disabled: s.gateSaving,
-            onClick: function () { saveGateText('') },
-          }, '清除自定义，回到内置') : null,
-          h(Btn, {
-            onClick: reloadGate,
-          }, '重新读取')),
-        editing ? h('div', null,
-          h('textarea', {
-            className: 'cc-textarea', value: draft, spellCheck: false,
-            onChange: function (e) { STORE.set({ gateDraft: e.target.value }) },
-          }),
-          h('div', { className: 'cc-muted', style: { marginTop: '6px' } },
-            '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(s.gateMaxBytes) +
-            // 这里是**输入侧**的比长度（草稿自己 vs 上限），与"靠结果长度反推截断"是两回事：
-            // 提前告诉用户"存下去会被砍"，而不是存完再猜砍没砍。
-            (draftBytes > s.gateMaxBytes ? '（超出 ' + (draftBytes - s.gateMaxBytes) + ' B，保存后会被截断）' : '') +
-            '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。')) : null,
-        s.gateError ? h('p', { className: 'cc-err' }, s.gateError) : null,
-        h(Fold, { label: '规则说明' },
-          h('div', { className: 'cc-note' },
-            '规则六条：R1 独立研判（允许并要求反对你，不默认你正确）；R2 不确定就提问（只问查不到、且会改变结果的那些）；R3 分工固定（你定目标/补真实情况/判定可用性，我搜索·执行·制作·验证·交付）；R5 少犯错优先（说假设/最小实现/只动该动的行/任务转成可验证目标，蒸馏自 Karpathy 四原则）；R6 查证再下结论（先验证再断言，没跑检查就明说）；R7 谨慎执行（不可逆动作先确认，授权按当次范围算）。'),
-          h('div', { className: 'cc-path' }, '内置规则：' + (s.gateBuiltinPath || '（未就绪）')),
-          h('div', { className: 'cc-path' }, '自定义副本：' + (s.gateOverridePath || '（未就绪）') +
-            (s.gateSource === 'override' ? '（当前生效）' : '（尚未创建）')),
-          h('div', { className: 'cc-note' },
+      return RuleCard({
+        key: 'gate',
+        title: '启用会话守则（下一个请求即生效，含已打开的会话）',
+        setEnabled: setGateEnabled,
+        setDraft: function (v) { return { gateDraft: v } },
+        save: saveGateText,
+        reload: reloadGate,
+        notReadyText: function () {
+          return '会话守则未装载：旧版 host 半仍在运行，请重启桌面应用后再操作（重启前请不要再动本面板的压缩开关，否则新字段会被旧版写盘逻辑抹掉）。'
+        },
+        warnings: [{
+          field: 'Truncated',
+          // 截断要说人话：原文多少、实际注入多少、超了多少 —— 只说"已截断"用户不知道自己丢了多少内容。
+          // 字段名显式写出来（不走 pre 拼接）：verify-gate-truncation 第 ⑧ 组按源码口径盯的就是这两个名字。
+          text: function (s) {
+            return '你的规则被截断了：原文 ' + s.gateOriginalBytes + ' 字节，实际注入 ' + s.gateKeptBytes +
+              ' 字节（上限 ' + s.gateMaxBytes + ' 字节，超出 ' + Math.max(0, s.gateOriginalBytes - s.gateKeptBytes) +
+              ' 字节未进入提示词）。请精简规则或把大段内容拆到别处。'
+          },
+        }],
+        summary: function () {
+          return '规则七条 R1–R7（R4 是归属与裁决声明，不是行为规则）：R1 独立研判（允许并要求反对你，不默认你正确）；R2 不确定就提问（只问查不到、且会改变结果的那些）；R3 分工固定（你定目标/补真实情况/判定可用性，我搜索·执行·制作·验证·交付）；R4 形状真源在另一段、并声明三段之间的裁决顺序；R5 少犯错优先（先说假设、任务转成可验证目标；最小实现那几条的完整口径在 ponytail 段，不在此处重复）R6 查证再下结论（先验证再断言，没跑检查就明说）；R7 谨慎执行（不可逆动作先确认，授权按当次范围算）。'
+        },
+        closing: function () {
+          return h('div', { className: 'cc-note' },
             '生效范围：注入 system prompt 的一个段（排在 persona 之后、工具说明之前）。它随 system prompt 每请求重发，' +
             '不进对话历史，因此不受上面压缩策略的影响；代价是每次请求（含子代理、工作流子会话）都多这几 KB token。' +
-            '会话守则是"必须遵守的规则"，不是"模型无法违反"——它约束行为，不产生技术硬拦截。')))
+            '会话守则是"必须遵守的规则"，不是"模型无法违反"——它约束行为，不产生技术硬拦截。')
+        },
+      })
     }
 
     // ------------------------------------------------ 设置页：自动审查卡 --
@@ -1762,114 +1790,89 @@ window.__ModuleLoader__.load({
 
     // ---------------------------------------------- 设置页：ponytail 编码纪律卡 --
     function PonytailCard() {
-      var s = useCache()
-      var editing = s.ponytailDraft !== null
-      var draft = editing ? s.ponytailDraft : s.ponytailText
-      var draftBytes = new Blob([draft || '']).size
-      return h('div', { className: 'cc-card' },
-        Switch('启用 ponytail 编码纪律（下一个请求即生效，含已打开的会话）', s.ponytailEnabled, setPonytailEnabled, !s.ponytailReady),
-        s.ponytailReady ? RuleSummary(s, 'ponytail')
-          : h('div', { className: 'cc-err' }, '未装载：当前运行的 host 还没有 /cc/ponytail.json，请重启桌面应用后再操作。'),
-        s.ponytailTruncated ? h('p', { className: 'cc-warn' },
-          '你的规则被截断了：原文 ' + s.ponytailOriginalBytes + ' 字节，实际注入 ' + s.ponytailKeptBytes +
-          ' 字节（上限 ' + s.ponytailMaxBytes + ' 字节）。请精简规则。') : null,
-        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-          h(Btn, {
-            disabled: !s.ponytailReady,
-            onClick: function () { STORE.set({ ponytailDraft: editing ? null : s.ponytailText }) },
-          }, editing ? '取消编辑' : '编辑规则'),
-          editing ? h(Btn, {
-            disabled: s.ponytailSaving,
-            onClick: function () { savePonytailText(s.ponytailDraft) },
-          }, s.ponytailSaving ? '保存中…' : '保存并生效') : null,
-          editing && s.ponytailSource === 'override' ? h(Btn, {
-            disabled: s.ponytailSaving,
-            onClick: function () { savePonytailText('') },
-          }, '清除自定义，回到内置') : null,
-          h(Btn, { onClick: reloadPonytail }, '重新读取')),
-        editing ? h('div', null,
-          h('textarea', {
-            className: 'cc-textarea', value: draft, spellCheck: false,
-            onChange: function (e) { STORE.set({ ponytailDraft: e.target.value }) },
-          }),
-          h('div', { className: 'cc-muted', style: { marginTop: '6px' } },
-            '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(s.ponytailMaxBytes) +
-            (draftBytes > s.ponytailMaxBytes ? '（超出 ' + (draftBytes - s.ponytailMaxBytes) + ' B，保存后会被截断）' : '') +
-            '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。')) : null,
-        s.ponytailError ? h('p', { className: 'cc-err' }, s.ponytailError) : null,
-        h(Fold, { label: '规则说明' },
-          h('div', { className: 'cc-note' },
-            'ponytail（蒸馏自 GitHub DietrichGebert/ponytail，MIT）：最懒资深工程师的编码纪律——七级梯子' +
+      return RuleCard({
+        key: 'ponytail',
+        title: '启用 ponytail 编码纪律（下一个请求即生效，含已打开的会话）',
+        setEnabled: setPonytailEnabled,
+        setDraft: function (v) { return { ponytailDraft: v } },
+        save: savePonytailText,
+        reload: reloadPonytail,
+        notReadyText: function () {
+          return '未装载：当前运行的 host 还没有 /cc/ponytail.json，请重启桌面应用后再操作。'
+        },
+        warnings: [{
+          field: 'Truncated',
+          text: function (s, pre) {
+            return '你的规则被截断了：原文 ' + s[pre + 'OriginalBytes'] + ' 字节，实际注入 ' + s[pre + 'KeptBytes'] +
+              ' 字节（上限 ' + s[pre + 'MaxBytes'] + ' 字节）。请精简规则。'
+          },
+        }],
+        summary: function () {
+          return 'ponytail（蒸馏自 GitHub DietrichGebert/ponytail，MIT）：最懒资深工程师的编码纪律——七级梯子' +
             '（YAGNI → 复用库内已有 → 标准库 → 平台原生 → 已装依赖 → 一行 → 最少代码）、修 bug 先 grep 全部调用方修根因、' +
-            '禁没要求的抽象、故意简化留 ponytail: 注释标升级路径。只对编码任务生效，非编码请求不适用该节。'),
-          h('div', { className: 'cc-path' }, '内置规则：' + (s.ponytailBuiltinPath || '（未就绪）')),
-          h('div', { className: 'cc-path' }, '自定义副本：' + (s.ponytailOverridePath || '（未就绪）') +
-            (s.ponytailSource === 'override' ? '（当前生效）' : '（尚未创建）')),
-          h('div', { className: 'cc-note' },
-            '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 2–3K token/请求，' +
+            '禁没要求的抽象、故意简化留 ponytail: 注释标升级路径。只对编码任务生效，非编码请求不适用该节。' +
+            '回复形状本身不在这里，在「输出形状」段（真源 shape-gate.md）。'
+        },
+        closing: function (s) {
+          return h('div', { className: 'cc-note' },
+            '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 ' +
+            Math.round((s.gateBytes + s.ponytailBytes) / 4 / 100) / 10 + 'K token/请求（按当前生效文本实测），' +
             '且读图、写文案之类的会话也会看到它（正文里已写明"非编码任务不适用"来兜底）。' +
-            '平时不用可以关着，需要时来这里或点 chip 打开。')))
+            '平时不用可以关着，需要时来这里或点 chip 打开。')
+        },
+      })
     }
 
     // ------------------------------------------- 设置页：输出形状卡（v1.12.0）--
     function ShapeCard() {
-      var s = useCache()
-      var editing = s.shapeDraft !== null
-      var draft = editing ? s.shapeDraft : s.shapeText
-      var draftBytes = new Blob([draft || '']).size
-      return h('div', { className: 'cc-card' },
-        Switch('启用输出形状（下一个请求即生效，含已打开的会话；默认开）', s.shapeEnabled, setShapeEnabled, !s.shapeReady),
-        s.shapeReady ? RuleSummary(s, 'shape')
-          : h('div', { className: 'cc-err' }, '未装载：当前运行的 host 还没有 /cc/shape.json，请重启桌面应用后再操作。'),
-        // 逃生开关压过设置：开关开着却一个字都没进提示词，必须说出来（否则用户会以为规则生效了）。
-        s.shapeDisabledByEnv ? h('p', { className: 'cc-warn' },
-          '环境变量 DSH_OUTPUT_SHAPE_DISABLE=1 正在强制关闭本段：开关状态照旧记录，但规则不会注入提示词。' +
-          '去掉这个变量并重启桌面应用才会恢复。') : null,
-        s.shapeTruncated ? h('p', { className: 'cc-warn' },
-          '你的规则被截断了：原文 ' + s.shapeOriginalBytes + ' 字节，实际注入 ' + s.shapeKeptBytes +
-          ' 字节（上限 ' + s.shapeMaxBytes + ' 字节）。请精简规则。') : null,
-        h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-          h(Btn, {
-            disabled: !s.shapeReady,
-            onClick: function () { STORE.set({ shapeDraft: editing ? null : s.shapeText }) },
-          }, editing ? '取消编辑' : '编辑规则'),
-          editing ? h(Btn, {
-            disabled: s.shapeSaving,
-            onClick: function () { saveShapeText(s.shapeDraft) },
-          }, s.shapeSaving ? '保存中…' : '保存并生效') : null,
-          editing && s.shapeSource === 'override' ? h(Btn, {
-            disabled: s.shapeSaving,
-            onClick: function () { saveShapeText('') },
-          }, '清除自定义，回到内置') : null,
-          h(Btn, { onClick: reloadShape }, '重新读取')),
-        editing ? h('div', null,
-          h('textarea', {
-            className: 'cc-textarea', value: draft, spellCheck: false,
-            onChange: function (e) { STORE.set({ shapeDraft: e.target.value }) },
-          }),
-          h('div', { className: 'cc-muted', style: { marginTop: '6px' } },
-            '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(s.shapeMaxBytes) +
-            (draftBytes > s.shapeMaxBytes ? '（超出 ' + (draftBytes - s.shapeMaxBytes) + ' B，保存后会被截断）' : '') +
-            '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。')) : null,
-        s.shapeError ? h('p', { className: 'cc-err' }, s.shapeError) : null,
-        h(Fold, { label: '规则说明' },
-          h('div', { className: 'cc-note' },
-            '输出形状（蒸自 GitHub ayghri/i-have-adhd，MIT）：把回复整形成"读完就能动手"的形状——' +
+      return RuleCard({
+        key: 'shape',
+        title: '启用输出形状（下一个请求即生效，含已打开的会话；默认开）',
+        setEnabled: setShapeEnabled,
+        setDraft: function (v) { return { shapeDraft: v } },
+        save: saveShapeText,
+        reload: reloadShape,
+        notReadyText: function () {
+          return '未装载：当前运行的 host 还没有 /cc/shape.json，请重启桌面应用后再操作。'
+        },
+        warnings: [
+          // 逃生开关压过设置：开关开着却一个字都没进提示词，必须说出来（否则用户会以为规则生效了）。
+          {
+            field: 'DisabledByEnv',
+            text: function () {
+              return '环境变量 DSH_OUTPUT_SHAPE_DISABLE=1 正在强制关闭本段：开关状态照旧记录，但规则不会注入提示词。' +
+                '去掉这个变量并重启桌面应用才会恢复。'
+            },
+          },
+          {
+            field: 'Truncated',
+            text: function (s, pre) {
+              return '你的规则被截断了：原文 ' + s[pre + 'OriginalBytes'] + ' 字节，实际注入 ' + s[pre + 'KeptBytes'] +
+                ' 字节（上限 ' + s[pre + 'MaxBytes'] + ' 字节）。请精简规则。'
+            },
+          },
+        ],
+        summary: function () {
+          return '输出形状（蒸自 GitHub ayghri/i-have-adhd，MIT）：把回复整形成"读完就能动手"的形状——' +
             '首行给下一步、多步编号、状态复述、跑题后置、时间给量级、战果可见、报错讲因果、展示分组、无开场白无客套，' +
             '外加六条破例（要解释就讲透、破坏性操作先确认、连续三轮不对就换假设、真歧义先问一句、任务赢形状留、' +
-            'system 指令优先）。'),
-          h('div', { className: 'cc-note' },
-            '来源：本节原先由独立插件 dsh-output-shape 提供（段名 dsh-output-shape:output-shape）。' +
-            '2026-09-21 并入本插件后那个插件已下线，段名改为 dsh-cache-control:shape-gate，order 仍是 410。' +
-            '会话守则里的 R4 只留了一句归属声明，两者不会重复注入。'),
-          h('div', { className: 'cc-path' }, '内置规则：' + (s.shapeBuiltinPath || '（未就绪）')),
-          h('div', { className: 'cc-path' }, '自定义副本：' + (s.shapeOverridePath || '（未就绪）') +
-            (s.shapeSource === 'override' ? '（当前生效）' : '（尚未创建）')),
-          h('div', { className: 'cc-note' },
-            '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 1.2K token/请求' +
-            '（4,867 B 中文按 4 B/token 估），' +
-            '任何会话都会看到（读图、写文案也照带）。并入前它是默认开的，所以升级后不会变；不想付这份 token 就关掉它。' +
-            '技能 i-have-adhd 与 ponytail 用的是同一份正文，关掉本节不影响按需调用技能。')))
+            'system 指令优先）。'
+        },
+        closing: function (s, pre) {
+          return [
+            h('div', { className: 'cc-note', key: 'src' },
+              '来源：本节原先由独立插件 dsh-output-shape 提供（段名 dsh-output-shape:output-shape）。' +
+              '2026-09-21 并入本插件后那个插件已下线，段名改为 dsh-cache-control:shape-gate，order 仍是 410。' +
+              '会话守则里的 R4 只留了一句归属声明，两者不会重复注入。'),
+            h('div', { className: 'cc-note', key: 'cost' },
+              '代价与提醒：开着时这段规则随 system prompt **每请求重发**（含子代理），约 ' +
+              (Math.round(s[pre + 'Bytes'] / 4 / 100) / 10 || 1.2) + 'K token/请求' +
+              '（' + s[pre + 'Bytes'] + ' B 中文按 4 B/token 估），' +
+              '任何会话都会看到（读图、写文案也照带）。并入前它是默认开的，所以升级后不会变；不想付这份 token 就关掉它。' +
+              '技能 i-have-adhd 与 ponytail 用的是同一份正文，关掉本节不影响按需调用技能。'),
+          ]
+        },
+      })
     }
 
     /**
