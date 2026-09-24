@@ -25,7 +25,7 @@ const urlPath = (p) => {
   return s.startsWith('/') ? s.slice(1) : s
 }
 
-const CHECKS = []                       // node --check（纯语法门禁）；本仓库原来没有，故为空
+const CHECKS = ['index.js', 'client.js', 'save-token-host.js', 'save-token-core.js']
 
 const SUITES = [
   'tools/verify-settings-concurrency.mjs',
@@ -49,6 +49,12 @@ const SUITES = [
   // 不再依赖能读到宿主真包源码（读不到只打一行 NOTE，断言口径不变）；③ react-dom 补进 devDeps。
   // 反向证据见 README「验证」：APPDATA 指向空目录 + DSH_APP_MODULES 指仓库 node_modules ⇒ 74/0。
   'tools/verify-gate-client.mjs',
+  // v1.13.0：省 token（并入 dsh-plugin-save-token v2.4.1 的宿主半边）——
+  // 嵌套挂载、arm 3（compaction assist）整段不在、/cc/st 路由改名、手写的
+  // save_token_expand 定义、压缩必须能逐字节取回原文、无 spillStore 时一个字不动。
+  // 假 ctx 冒充 Cordis + 假 spillStore，离线，不碰真实 DSH_HOME。
+  'tools/verify-save-token.mjs',
+  'tools/verify-token-lifecycle.mjs',
 ]
 
 const EXCLUDED = [

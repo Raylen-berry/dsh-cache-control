@@ -22,3 +22,22 @@ dsh-cache-control
    不下载、不自动安装该 CLI；探测不到时界面如实显示"没找到 ocr"，技能跑到第一步也会停下说明。
 
 上游许可证全文见其仓库 LICENSE（Apache-2.0）与 https://www.apache.org/licenses/LICENSE-2.0 。
+
+本插件的「省 token」能力（save-token-host.js 与 save-token-core.js）嵌入自：
+    dsh-plugin-save-token — https://github.com/vibe-any/dsh-plugin-save-token
+    Copyright (c) playwithai / vibe-any · MIT License
+    上游版本 v2.4.1，源文件 src/index.js（host 半）与 src/compress.js（纯函数核）
+
+关于这次嵌入的三点说明：
+
+1. **改动范围有据可查。** 两个文件都带 `VENDORED INTO dsh-cache-control` 文件头，逐条列了相对
+   上游删掉了什么。唯一一处功能删减是上游的 compaction assist（上游 "arm 3"：`agent/pre-step`
+   压力触发、水位线、冷却期、`compactStats`、`ctx.get('compaction')`）—— 它和本插件自己的
+   「省缓存」抢同一个压缩引擎，两套阈值同时改写同一个 preset 行必然互相打架，所以整段删除而不是
+   默认关掉（默认关掉只是把冲突藏起来）。压缩契约（触发点 / 尾部保留 / 自动压缩）仍只由本插件持有。
+2. **没有装上游的 composer.dock 常驻小条。** 那个槽位由 dsh-bill 占用（它在同一位置画每会话费用
+   行），同一格塞两块 UI 会互相挤掉。统计仍在，只是改由设置页的「省 token」卡呈现。
+3. **统计只留计数与字节数。** 与上游一致，不落盘任何 prompt 文本；计数与两个开关都在内存里，
+   重启归零、回到默认开。
+
+上游许可证全文见其仓库 LICENSE（MIT）。

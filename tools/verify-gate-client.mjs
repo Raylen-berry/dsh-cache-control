@@ -227,7 +227,7 @@ ok('两块卡都在（名称已压到 2–4 字，无编号）', pageHtml.includ
 ok('门禁卡显示规则体积与行数', /\d+(\.\d+)?\s(B|KB)\s·\s\d+\s行/.test(pageHtml), (pageHtml.match(/\d+(\.\d+)?\s(B|KB)\s·\s\d+\s行/) || [''])[0])
 ok('门禁卡列出内置规则路径（展开说明可见）', pageExp.includes('session-gate.md'))
 ok('说明默认收进抽屉：总述与各卡长说明正文不在默认页面上',
-  !pageHtml.includes('八块互相独立的开关') && !pageHtml.includes('出厂默认（压力达窗口 80% 压缩')
+  !pageHtml.includes('九块互相独立的开关') && !pageHtml.includes('出厂默认（压力达窗口 80% 压缩')
   && !pageHtml.includes('不产生技术硬拦截') && !pageHtml.includes('三项都是纯界面开关'))
 ok('展开后说明正文可见', pageExp.includes('不产生技术硬拦截') && pageExp.includes('三项都是纯界面开关'))
 ok('门禁开关已勾选', checked(pageHtml, L_GATE) === true)
@@ -370,15 +370,18 @@ const navLabel = c.pageEntry ? String(c.pageEntry.label) : ''
 const pageH3Raw = (render(c.page).match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).map((s) => s.replace(/<[^>]+>/g, ''))
 const h3s = pageH3Raw.slice()
 ok('导航条目名 ≤4 字', navLabel.length > 0 && navLabel.length <= 4, navLabel + ' (' + navLabel.length + ')')
-ok('分区标题都 ≤4 字', h3s.length >= 9 && h3s.filter((x) => x !== 'ponytail').every((x) => x.length <= 4), JSON.stringify(h3s))
+// v1.13.0：第 9 张卡标题是「省 token」。它和 ponytail 同属"专名/术语压不成 2–4 字"的例外，
+// 所以 ≤4 字那条要显式放行这两个；其余标题仍照旧（编号一律不许进标题，见下一条）。
+ok('分区标题都 ≤4 字',
+  h3s.length >= 10 && h3s.filter((x) => x !== 'ponytail' && x !== '省 token').every((x) => x.length <= 4), JSON.stringify(h3s))
 // v1.11.1：**标题一律不带序号**。编号是位置属性，插一张卡就得把全部下游引用重排一遍 ——
 // v1.10.2（ponytail 曾写作 "②b" ⇒ 页面上出现两个 ②）与 v1.11.0（插入自动审查令后面全部顺延）
 // 已经为此返工两次。这条断言就是防止以后又有人往标题里加圈符或字母后缀。
 ok('分区标题里没有圈符编号（含总述/关于本页那两处文案）',
   !/[①②③④⑤⑥⑦⑧⑨]/.test(pageH3Raw.join('|') + render(c.page).replace(/<[^>]+>/g, '')),
   pageH3Raw.join('|'))
-ok('八个分区名字齐全且顺序正确（顺序即页面顺序，不靠编号表达）',
-  ['省缓存', '会话守则', 'ponytail', '输出形状', '自动审查', '气泡置顶', '对话页', '存储']
+ok('九个分区名字齐全且顺序正确（顺序即页面顺序，不靠编号表达）',
+  ['省缓存', '省 token', '会话守则', 'ponytail', '输出形状', '自动审查', '气泡置顶', '对话页', '存储']
     .every((nm, i) => pageH3Raw.indexOf(nm) === i + 1), JSON.stringify(pageH3Raw))
 // v1.12.0：输出形状卡——并入自 dsh-output-shape 的那一段必须在页面上看得见、能改、说清归属。
 const shapePageExp = expanded(c)
@@ -518,6 +521,128 @@ ok('旧 host（无 originalBytes/keptBytes）⇒ 界面不出现 NaN，退化成
   (oldHostHtml.match(/已截断[^<]*/) || [''])[0])
 oldGateServer.closeAllConnections?.()
 await new Promise((r) => oldGateServer.close(r))
+
+console.log('\n— I. 并入 save-token 的「省 token」卡（喂夹具渲染纯视图）—')
+// v1.13.0：这张卡由两半组成 —— 取数（SaveTokenCard：useEffect 里 fetch + 2.5s 轮询）和
+// 纯视图（SaveTokenView）。本套件跑 renderToStaticMarkup ⇒ effect 永不执行，取数那半截
+// 在这里根本验不了（它归 host 半的 verify-save-token.mjs：路由、开关、expand 字节往返
+// 都在那边），所以这里直接给视图喂夹具。KPI 换算 / 字节条宽度 / 活动表配色 / 三种降级
+// 文案全是视图内的分支，两份夹具就能全覆盖 —— 不用引 jsdom，也不用真跑 effect。
+const SV = c.ex.internals.SaveTokenView
+ok('测试缝在（internals.SaveTokenView 是函数）', typeof SV === 'function')
+const FIX = {
+  uptimeSec: 3725,
+  flags: { compress: true, dedupe: false, expandTool: true },
+  spillReady: true, lastSkip: null,
+  totals: { requests: 40, auxRequests: 3, inputTokens: 120000, cachedTokens: 30000, outputTokens: 8000,
+    reasoningTokens: 900, avoidedTokens: 40000, estPromptTokens: 400000 },
+  reliefPct: 31, cacheHitPct: 20, estRatio: 3.6,
+  compression: { count: 12, bytesBefore: 204800, bytesAfter: 51200, dedupeHits: 4, dedupeSavedBytes: 3072,
+    replays: 7, losslessEncodes: 9, tabularWindows: 3, topLevelCalls: 10, nestedCalls: 2 },
+  byTool: [{ name: 'read', count: 6, savedBytes: 102400 }, { name: 'grep', count: 6, savedBytes: 51200 }],
+  series: [{ p: 100, a: 20, aux: 0 }, { p: 80, a: 10, aux: 1 }],
+  recent: [{ ts: 1700000000000, kind: 'compress', label: 'read', detail: '200 KB→50 KB', saved: 15000 },
+    { ts: 1700000001000, kind: 'skip', label: 'grep', detail: '低于阈值', saved: 0 }],
+}
+const fixHtml = render(SV(FIX, {}))
+ok('卡头：名称 + 运行时长（秒→分钟）+ expand 可取回标记',
+  fixHtml.includes('结构感知 · 无损优先') && fixHtml.includes('已运行 62 分钟')
+  && fixHtml.includes('save_token_expand 可取回'), (fixHtml.match(/已运行[^<]*/) || [''])[0])
+ok('两个内存开关按 flags 显示开/关（压缩开 · 去重关）',
+  fixHtml.includes('压缩：开') && fixHtml.includes('去重：关'))
+ok('四个 KPI 按 host 口径换算（输入 = 输入 token + 缓存 token）',
+  fixHtml.includes('150k') && fixHtml.includes('40') && fixHtml.includes('8k')
+  && fixHtml.includes('40k') && fixHtml.includes('缓存命中 20%') && fixHtml.includes('其中 30k 走缓存')
+  && fixHtml.includes('单次调用上下文平均轻 31%'),
+  (fixHtml.match(/150k|40k|8k/g) || []).join(','))
+ok('平均提示 / 平均省下按请求数折算（400000/40、40000/40）',
+  fixHtml.includes('平均提示 ~10k tok') && fixHtml.includes('平均省下 ~1k tok/次'))
+ok('压缩行给出重塑次数、字节前后与节省比例（1 - 51200/204800 = 75%）',
+  fixHtml.includes('12 次重塑，平均 -75% 字节（200 KB → 50 KB）') && fixHtml.includes('顶层 10 · 嵌套 2'))
+ok('无损 / 去重 / 估算比三行都在（估算比只在 host 给 estRatio 时出现）',
+  fixHtml.includes('9 次重编码（结构化数组，零损失）') && fixHtml.includes('3 个抽采样窗口')
+  && fixHtml.includes('4 次命中重复调用') && fixHtml.includes('省 3 KB')
+  && fixHtml.includes('字节→token ×3.6') && fixHtml.includes('7 次回放对照实际计费'))
+ok('省字节条按最大值归一（102400 → 100%，51200 → 50%，下限 4%）',
+  /width:100%/.test(fixHtml) && /width:50%/.test(fixHtml), (fixHtml.match(/width:\d+%/g) || []).join(','))
+ok('活动表：时间 + 中文类型标签 + 末尾只给省下的量',
+  /class="cc-tag"[^>]*>压缩</.test(fixHtml) && /class="cc-tag"[^>]*>跳过</.test(fixHtml)
+  && fixHtml.includes('-15k') && fixHtml.includes('200 KB→50 KB') && fixHtml.includes('低于阈值'),
+  (fixHtml.match(/class="cc-tag"[^>]*>[^<]*/g) || []).join(' '))
+ok('sparkline 是内联 SVG（灰=送出 / 绿=省下），无外部图表依赖',
+  /<svg[^>]*preserveAspectRatio="none"/.test(fixHtml) && fixHtml.includes('fill="var(--dsw-alias-label-success,#2da44e)"'))
+// 点开关的回调真的接到了取数那半截：遍历元素树取出按钮元素，直接调它的 onClick。
+// （本套件不跑 effect ⇒ 不能靠"点了之后看页面变了"，只能验"点击回调把正确的键与目标值送出去"。）
+const clickables = (node, out = []) => {
+  if (!node || typeof node !== 'object') return out
+  if (Array.isArray(node)) { node.forEach((n) => clickables(n, out)); return out }
+  if (node.props && typeof node.props.onClick === 'function') out.push(node)
+  if (node.props) clickables(node.props.children, out)
+  return out
+}
+const calls = []
+const btns = clickables(SV(FIX, {
+  onToggle: (k, v) => calls.push(['toggle', k, v]),
+  onReset: () => calls.push(['reset']),
+}))
+const btnTxt = (t) => btns.find((b) => b.props.children === t)
+ok('开关按钮真的回调（压缩：开 ⇒ 点一下送 compress=false；去重：关 ⇒ 送 true）', (() => {
+  const t = btnTxt('压缩：开'), d = btnTxt('去重：关'), r = btnTxt('重置计数')
+  if (!t || !d || !r) return false
+  t.props.onClick(); d.props.onClick(); r.props.onClick()
+  return JSON.stringify(calls) === JSON.stringify([['toggle', 'compress', false], ['toggle', 'dedupe', true], ['reset']])
+})(), JSON.stringify(calls))
+// 降级①：spillStore 不可用 ⇒ 压缩自动关、原样进上下文，并带上原因
+const noSpill = render(SV(Object.assign({}, FIX, {
+  spillReady: false, lastSkip: '磁盘写入失败',
+  flags: { compress: false, dedupe: false, expandTool: false },
+}), {}))
+ok('spillStore 不可用 ⇒ 警示 + 原因 + 压缩/expand 都显式标成关（不假装在工作）',
+  noSpill.includes('可逆存储（spillStore）当前不可用') && noSpill.includes('原因：磁盘写入失败')
+  && noSpill.includes('压缩：关') && noSpill.includes('expand 不可用')
+  && noSpill.includes('工具输出原样进上下文'),
+  (noSpill.match(/<p class="cc-err">[^<]*/) || [''])[0].slice(0, 90))
+// 降级②：什么都没发生过（新装的插件、刚重启）⇒ 空态文案，且不许冒出 NaN
+const empty = render(SV({
+  uptimeSec: 0, flags: { compress: true, dedupe: true, expandTool: true }, spillReady: true, lastSkip: null,
+  totals: {}, compression: {}, byTool: [], recent: [], series: [], estRatio: null, reliefPct: 0, cacheHitPct: 0,
+}, {}))
+ok('空态：三处"还没有"文案 + 已运行 0 秒，且不出现 NaN / undefined / [object',
+  empty.includes('还没触发过（输出需大于阈值）') && empty.includes('还没有压缩记录')
+  && empty.includes('还没有活动记录') && empty.includes('已运行 0 秒')
+  && !/NaN|undefined|\[object/.test(empty), (empty.match(/NaN|undefined|\[object/g) || []).join(','))
+ok('空态不渲染"估算比"行（host 没给 estRatio 就别占位）', !empty.includes('估算比'))
+// 冲突面：嵌入不许再抢槽位。省 token 是**同一张卡里的一块**，不是第二次 slots 注册。
+ok('client 半只注册一次 settings.section（嵌入不是再加一个设置页）',
+  (clientSrc.match(/slots\.inject\('settings\.section'/g) || []).length === 1,
+  'settings.section 注册 ' + (clientSrc.match(/slots\.inject\('settings\.section'/g) || []).length + ' 次')
+ok('没有第二次 slots 注册（composer.dock 那个槽位留给 dsh-bill，只在注释里提过半句）',
+  !clientSrc.includes("inject('conversation.composer.dock'") && !clientSrc.includes("register('conversation.composer.dock'"))
+ok('client 半完全没有 compaction assist 的开关/字段（冲突面在源码层面就不存在，不是靠默认值关掉）',
+  !/compactAssist|compact-assist|compactionAssist/.test(clientSrc))
+ok('省 token 卡默认（说明收起时）不出现 compression/compaction 字样',
+  !/compaction|compression/i.test(fixHtml) && !/compaction|compression/i.test(empty))
+ok('展开说明里交代了归属与取回契约（省 token = 统计台，压缩只在 post-execute 发生一次）', (() => {
+  // 卡里的「说明」抽屉在**视图**里，而页面上的这张卡还没拿到数据（effect 不跑）⇒ 只能展开后
+  // 渲染视图本身；顺带验一句真话：说明文字里必须有归属、隐私口径与取回路径。
+  c.ex.internals.setFoldsOpen(true)
+  const exp = render(SV(FIX, {}))
+  c.ex.internals.setFoldsOpen(false)
+  return !/compaction|compression/i.test(fixHtml) && exp.includes('save_token_expand')
+    && exp.includes('不含任何 prompt 文本') && exp.includes('重启归零回到默认开')
+    && exp.includes('整段删除') && exp.includes('spillStore')
+})())
+// v1.13.1 补的两个洞：这两条都不是"功能对不对"，而是"上一版整页白屏为什么没被测出来"。
+// 白屏原因：取数那半截写成 h(SaveTokenView, { d, … }) —— React 把 props 对象当第一个实参，
+// 视图按 (夹具, 回调) 读 d.flags ⇒ undefined。而套件一直只调 internals.SaveTokenView(夹具)（位置调用，
+// 与失败的那次调用**不同口径**），于是 40 条全绿、页面上一个字都没有。
+ok('取数半截按位置调用视图（(夹具, 回调) 口径与套件一致，不是 h(SaveTokenView, …)）', (() => {
+  // 先剥注释：这一版正好在代码旁写了"别写成 h(SaveTokenView, …)"，不剥就会拿注释判自己失败。
+  const codeSrc = clientSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  return /return renderSaveTokenView\(d, \{/.test(codeSrc) && !/h\((?:render)?SaveTokenView\b/.test(codeSrc)
+})(), /h\(SaveTokenView\b/.test(clientSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')) ? '元素调用（会把 props 当夹具）' : '位置调用')
+ok('设置页有错误边界（单卡抛错把原因显示在面板里，不再被槽静默吞成白屏）',
+  /class PageBoundary extends/.test(clientSrc) && /h\(PageBoundary, null, h\(CacheControlPage\)\)/.test(clientSrc))
 
 console.log('\n— F. 收尾 —')
 gServer.close()

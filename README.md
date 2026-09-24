@@ -1,16 +1,25 @@
-# dsh-cache-control（会话策略：省缓存 / 会话守则 / ponytail / 输出形状 / 自动审查 / 气泡置顶 / 对话页 / 存储）
+# dsh-cache-control（会话策略：省缓存 / 省 token / 会话守则 / ponytail / 输出形状 / 自动审查 / 气泡置顶 / 对话页 / 存储）
 
-给 DSH Desktop（dsh 0.7.2-alpha，web profile）加**八个互相独立的开关**，设置页名称就叫
-**会话策略**（4 字，八个分区标题 省缓存 / 会话守则 / ponytail / 输出形状 / 自动审查 / 气泡置顶 /
+给 DSH Desktop（web profile）加**九个独立功能区，含压缩、去重开关与统计台**，设置页名称就叫
+**会话策略**（4 字，九个分区标题 省缓存 / 省 token / 会话守则 / ponytail / 输出形状 / 自动审查 / 气泡置顶 /
 对话页 / 存储 一律 2–4 字，**不带序号** —— v1.11.1 起去掉编号，理由见下面「为什么分区标题没有编号」）：
-chip 上 省缓存 / 提问 / 懒码 / 形状 四段各自可点，自动审查、气泡置顶、对话页、存储全部走设置页。
+chip 上 省缓存 / 提问 / 懒码 / 形状 四段各自可点，自动审查、气泡置顶、对话页、存储、省 token 全部走设置页。
 
-| | 省缓存 · 压缩策略 | 会话守则 · 长期规则 | ponytail · 编码纪律 | 输出形状 · 回复形状 | 自动审查 · 按需技能 |
-|---|---|---|---|---|---|
-| 动的是什么 | standard preset 里 `@deepseek-ai/dsh-compaction-basic` 的 config | system prompt 里一个常驻段（规则文本） | system prompt 里的第二个常驻段（与守则同构、独立开关） | system prompt 里的第三个常驻段（同上，但**默认开**） | 宿主 `skills` 目录里的一个条目（**不进 system prompt**） |
-| 生效时机 | **之后新建的会话**（preset 按组装文件 mtime 分代） | **所有会话的下一个 model step**（含当前会话，无需重启） | 同「会话守则」 | 同「会话守则」 | 模型/用户调用技能那一刻 |
-| 会被压缩冲掉吗 | — | 不会：压缩只折叠对话历史，system prompt 每请求重发 | 同「会话守则」 | 同「会话守则」 | 不适用（压根不在 prompt 里） |
-| 代价 | 无额外 token | 约 1.1K token/请求 × 所有会话（4,375 B） | 约 0.9K token/请求 × 所有会话（3,729 B） | 约 1.0K token/请求 × 所有会话（4,181 B，默认就开着） | **注册零 token**；成本只在真调用时 |
+| | 省缓存 · 压缩策略 | 省 token · 结构化压缩 | 会话守则 · 长期规则 | ponytail · 编码纪律 | 输出形状 · 回复形状 | 自动审查 · 按需技能 |
+|---|---|---|---|---|---|---|
+| 动的是什么 | standard preset 里 `@deepseek-ai/dsh-compaction-basic` 的 config | 工具输出本身（`tools/post-execute` 改写一次）+ 注册一个模型工具 `save_token_expand` | system prompt 里一个常驻段（规则文本） | system prompt 里的第二个常驻段（与守则同构、独立开关） | system prompt 里的第三个常驻段（同上，但**默认开**） | 宿主 `skills` 目录里的一个条目（**不进 system prompt**） |
+| 生效时机 | **之后新建的会话**（preset 按组装文件 mtime 分代） | 每次工具输出返回时（当次请求就生效，不用重启） | **所有会话的下一个 model step**（含当前会话，无需重启） | 同「会话守则」 | 同「会话守则」 | 模型/用户调用技能那一刻 |
+| 会被压缩冲掉吗 | — | 折叠掉的是改写后的短文本，原文在 `spillStore` 里，`save_token_expand` 取回内存中的完整原文；超长原文或重启后可能需按提示路径调用 `read` | 不会：压缩只折叠对话历史，system prompt 每请求重发 | 同「会话守则」 | 同「会话守则」 | 不适用（压根不在 prompt 里） |
+| 代价 | 无额外 token | 工具表多一行（唯一一个模型工具）；统计只存计数与字节数，两个开关存内存、重启回默认开 | 约 1.1K token/请求 × 所有会话（4,375 B） | 约 0.9K token/请求 × 所有会话（3,729 B） | 约 1.0K token/请求 × 所有会话（4,181 B，默认就开着） | **注册零 token**；成本只在真调用时 |
+
+
+## 1.13.2 检查与生效范围（2026-09-24）
+
+- 取回：不再把超过 262,144 字符的内存预览当作完整结果；支持同步/异步读回，当前宿主没有读回接口时明确给出原文路径。重置计数保留取回、去重及回放索引。
+- 界面：请求完成后才安排下一轮；修改开关使旧读取失效；写入后回读完成才解锁；失败和超时可见，初次失败可重试；退出页面取消请求。重启语义直接展示，KPI 随可用宽度换列。
+- 测试：4 项语法检查、11 套离线测试；save-token 47 项、React 生命周期 18 项，gate-client 本机 101 项。生命周期测试真正挂载组件并执行 effect，和 SSR 格式测试互补。
+- client.js 保存后刷新页面生效；save-token-host.js 需要重启 DSH Desktop。本轮没有自动重启，避免清掉当前进程中的取回映射与统计。
+- 不新增确定性压缩兜底，不改变 compaction-basic 所有权。字节变化只能证明体积变化，不能证明摘要保留了全部关键事实。
 
 ## 为什么分区标题没有编号（v1.11.1）
 
@@ -19,7 +28,7 @@ v1.10.2 修的是 ponytail 曾写作 "②b" 导致页面上出现两个 ②；v1
 （README、CHANGELOG、跨插件指路、测试断言各扫一遍）。v1.11.1 起标题只留名字，顺序由卡片书写顺序决定，
 **插一张卡只改一处**。要指代某块直接说名字。
 
-`verify-gate-client.mjs` 里两条断言钉住这件事：① 页面（含抽屉正文）不许出现圈符；② 八个名字必须齐全且顺序正确。
+`verify-gate-client.mjs` 里两条断言钉住这件事：① 页面（含抽屉正文）不许出现圈符；② 九个名字必须齐全且顺序正确。
 注意这里只剩**行文里的列举序号**不算违规 —— 断言扫的是渲染出的整页文本，所以 README/注释以外，
 client.js 里给用户看的字符串也不能带圈符。
 
@@ -321,6 +330,45 @@ ocr delegate rule --format json <path>...   # 这些文件命中哪些规则（g
 且**先给候选清单再动手**、动作是**移入回收**而非删除；`purge` 才清空回收目录。
 host 三条路由：`GET /cc/storage`、`POST /cc/storage/clean`、`POST /cc/storage/purge`。
 
+## 省 token · 结构化压缩（v1.13.0，并入原 dsh-plugin-save-token）
+
+**来源**：并入自原独立插件 `dsh-plugin-save-token` v2.4.1（MIT，© playwithai / vibe-any），
+上游 host 半 `src/index.js` 与纯函数核 `src/compress.js` 原样搬进本仓库
+（`save-token-host.js` / `save-token-core.js`，两个文件头都写着相对上游删了什么）。
+署名、改动范围与"为什么这样改"见 `NOTICE`。**它不再是独立插件**：没有自己的 roster 条目，
+由 `index.js` 以 `ctx.plugin(saveToken, config)` **嵌套挂载**，是这张设置页卡片的 host 半。
+
+**做什么**：在 `tools/post-execute` 上把工具输出改写一次 —— 结构感知压缩（JSON / 表格类先认结构再
+重排）、无损重编码（同一份数据换更短的表示，零损失）、重复调用去重 —— 原文写进 `spillStore`，
+改写后的短文本留在上下文里，并附一条取回提示。模型需要原样内容时调 `save_token_expand`（按 locator
+从 `spillStore` 逐字节取回）。**压缩只在这一个点上发生一次**：不去改写历史消息，已发出的请求前缀
+逐字节不变，缓存命中不受影响。
+
+- **唯一一个模型工具**：`save_token_expand`。此前本插件在工具表上是零占位，v1.13.0 起多一行。
+- **依赖 `spillStore`**：拿不到它（宿主没提供 / 磁盘写不进去）时压缩**永久关闭**、工具输出原样进
+  上下文，设置页那张卡会显式写出"可逆存储（spillStore）当前不可用"与原因 —— 宁可不用，也不做
+  一份取不回来的压缩。
+- **路由**（前缀注册 `/cc/st`，只服务本插件自己的设置页）：`GET /cc/st/api/dashboard`、
+  `POST /cc/st/api/set-enabled`、`POST /cc/st/api/reset`。GET 的响应里没有 `ok` 字段（判断取数成功
+  看 `flags`），POST 返回 `{ok:true|false}`；未知端点 404、内部错误 500。
+- **设置页卡片**：4 个 KPI（模型请求 / 输入 token / 输出 token / 省下 token）+ 一条内联 SVG
+  sparkline（灰=实际送出、绿=省下）+ 按工具归一化的省字节条 + 最近活动表（时间、中文类型标签、
+  只给省下的量）+ 「说明」抽屉。每 2.5 秒拉一次 dashboard，卡收起时照拉（数字要活着），卸载时清掉定时器。
+- **两个开关存内存**：`压缩` 与 `去重`（默认都开）**不写 `settings.json`**，重启回默认；
+  计数同理（重启归零）。这是刻意的：这两个开关是"这一轮我想不想让它插手"的临时闸，不是配置。
+  ⚠ 它与本插件别处的开关不一样，别去 `settings.json` 里找它们，也别指望导出/导入带走。
+
+**主动不做的三件事**（都是真做过判断的，不是漏了）：
+
+1. **上游的 compaction assist 整段删除**（上游 "arm 3"：`agent/pre-step` 压力触发、水位线、冷却期、
+   `compactStats`、`ctx.get('compaction')`）。它和本插件自己的「省缓存」抢同一个压缩引擎 ——
+   两套阈值同时改写同一个 preset 行必然互相打架。**删除而不是默认关掉**：默认关掉只是把冲突藏起来，
+   以后谁手滑打开就又撞上。压缩契约（触发点 / 尾部保留 / 自动压缩）仍只由「省缓存」持有。
+2. **上游的 `conversation.composer.dock` 常驻小条不装**。那个槽位归 dsh-bill（它在同一位置画每会话
+   费用行），同一格塞两块 UI 会互相挤掉；统计仍在，只是改由设置页这张卡呈现。
+3. **不落盘任何 prompt 文本**（与上游口径一致：只留计数与字节数）。别名/标签可能出现在活动表里，
+   正文不会。
+
 ## 安装
 
 前提：DSH Desktop（`dsh` CLI 可用），并在装完后**重启桌面应用一次**。DSH 关闭状态下任选其一：
@@ -382,6 +430,10 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 > 多出 `verify-ponytail-gate.mjs`（23 项，v1.10.0 纳入）、`verify-shape-gate.mjs`
 > （60 项，v1.12.0 纳入）与 `verify-gate-client.mjs`
 > （v1.12.0 起本机 80 项 / 无真实 home 时 78 项 + SKIP，夹具化见下面那条）。
+> **v1.13.0 起是 10 套**：再加 `verify-save-token.mjs`（40 项；`verify-settings-concurrency.mjs`
+> 更早已在列，本条只补上面漏掉的那 8→10 差额）；`verify-gate-client.mjs` 本机 **101 项**
+> （v1.13.0 加 I 组 19 条；v1.13.1 再加 2 条源码守卫 —— 位置调用口径 + 设置页错误边界，
+> 两条守的都是"1.13.0 整页白屏为什么 99 条没拦住"）。
 
 > `verify-panel-and-resizer.mjs` 原来因为"要本机 DSH 安装目录的 `node_modules/react`"被排除。
 > 现在 `react` 进 `devDependencies`，`run-all.mjs` 把 `DSH_APP_MODULES` 指向**仓库自己的 `node_modules/`**，
@@ -435,7 +487,9 @@ client 半在**服务启动时**才 compose 进图（依据见上一节），所
 **仓库里没有它们**，因此换机器后要重新打开：
 「省缓存」「会话守则」「ponytail」「气泡置顶」「对话页」—— 否则会表现为"插件装了但什么都没发生"。
 （「自动审查」与「输出形状」按 DEFAULTS **默认开**，换机器不用拨：前者只注册一个技能，ocr 没装也不报错，
-只是用到时第一步会停下说明；后者是常驻规则，不想要那份 token 才需要去关。）
+只是用到时第一步会停下说明；后者是常驻规则，不想要那份 token 才需要去关。
+「省 token」的压缩/去重两个开关**不写 settings.json**、只活在 host 进程内存里，换机器后本来就是默认开，
+所以它既不用拨、也不会被导入导出漏掉。）
 
 **D. 「省缓存」改的是 preset，不是插件目录**
 它把参数写进 `$DSH_HOME/profiles/**/standard/agent.yml` 里 `compaction-basic` 那一行
@@ -475,7 +529,8 @@ node tools/settings.mjs import D:\cc-settings.json --yes    # 新机器（覆盖
 
 ```powershell
 node tools/verify-audit.mjs 2>$null; node tools/verify-host-width.mjs   # 期望全绿 / 无 FAIL
-# 设置页应出现「会话策略」八个分区（标题无编号）；对话页默认 80%（百分比，v1.5.0 起）
+# 设置页应出现「会话策略」九个分区（标题无编号）；对话页默认 80%（百分比，v1.5.0 起）
+# 「省 token」那张卡应显示 4 个 KPI、按工具省字节条与最近活动；没跑过工具时是"还没有…"空态
 ```
 
 ## 验证
@@ -493,11 +548,30 @@ node tools/verify-gate-client.mjs     # client 半真渲染：磁盘 → 路由 
 node tools/verify-ui-appearance.mjs   # 外观引擎 + 置顶跟随滚动选条 + chip 点击语义 + 对话页宽度钉法
 node tools/verify-host-width.mjs      # host：字段钳制 + 从底图工坊的一次性迁移（临时 DSH_HOME）
 node tools/verify-gate-truncation.mjs # 规则截断：原/留长度 + 显式标记 + 边界与两个 HTTP 响应契约
+node tools/verify-save-token.mjs      # 省 token（v1.13.0）：嵌套挂载面、expand 工具、字节往返、/cc/st 路由
 ```
+
+「省 token」（v1.13.0）的断言分两处：host 半在 `verify-save-token.mjs`（真压缩一份 15,862 B 的
+工具输出 → 6,526 B，再用 `save_token_expand` 逐字节还原比对；无 `spillStore` 时原样透传；
+`/cc/st/api/*` 三个端点含 404 与开关键名），client 半在 `verify-gate-client.mjs` 的 I 组
+（喂夹具渲染纯视图：KPI 换算 / 字节条归一 / 空态 / spillStore 不可用降级 / 点击回调送出正确的键与值）。
+取数那半步（`useEffect` 里的 fetch + 2.5s 轮询）在 SSR 套件里**跑不到**（`renderToStaticMarkup` 不执行
+effect），1.13.2 起由 `verify-token-lifecycle.mjs` 用真实 React 挂载补齐：取数、竞态、点击回调、卸载中止、
+超时与重试共 18 条；视图因此拆成独立的纯函数 `renderSaveTokenView`（组件 `SaveTokenCard` 负责连接取数与
+视图，`internals.SaveTokenView` 是它的旧名别名）。
+
+> **本机自检：改 client 半不必重启 DSH**（v1.13.1 实测）。`__DSH_BOOT__.entries[].rev` 是**整包一次修订**
+> （本机 66 个条目共用前缀 `d168e781a0c293b0-` + 各自序号，不是逐文件哈希）：内容一变前缀就变，所以
+> 改完 `client.js` 存盘、刷新页面即加载新代码，还能用
+> `fetch('/plugins/??<id>/client.js&rev=<新 rev>')` 读出自己刚加的字符串自证。**host 半相反**：
+> `index.js` / `save-token-host.js` 只有 `name`/`inject`/`group` 变了才重新 import，改函数体
+> 必须重启 DSH Desktop。**但"白屏"与"跑不到"是两回事**：client 半的新代码即使加载成功，
+> 渲染期抛错在 production React + 槽的错误边界下**一个字都不打**（1.13.0 就是这样白屏的），
+> 所以排障第一步是刷新后把 `console.error` 钩住、或直接看面板里 `PageBoundary` 是否吐了堆栈。
 
 「自动审查」（v1.11.0）没有独立套件，断言分挂在两处：**payload 对齐**（`reviewSkillEnabled` 必须
 出现在主 PUT 载荷里 —— 这条正是 v1.6.0 `hideResizer` 那个"拨得动不落盘"bug 的守门人）与
-**client 渲染**（八个分区标题名字齐全且顺序正确、页面里不许出现圈符编号）。ocr 探测本身是
+**client 渲染**（九个分区标题名字齐全且顺序正确、页面里不许出现圈符编号）。ocr 探测本身是
 子进程调用，不进套件（CI 上没有 ocr，且它属于"环境事实"而不是逻辑）；改探测逻辑时手工跑一次
 `node -e "import('./index.js').then(h=>h.probeOcr().then(console.log))"` 看结果。
 
@@ -541,6 +615,22 @@ node tools/cc-appear-fixture.mjs      # 同一批判定的 CDP 版
 3. 重启应用。插件停用/卸载后不残留任何行为改动（`gate.md` override 与 `settings.json` 是数据，需自行删除）。
 
 ## 版本与变更记录
+
+> 下面这份清单**停在 v1.7.x**（1.8–1.12 的条目都在 `CHANGELOG.md` 里，没往回补）。新增条目往头上加。
+
+- **v1.13.1**（修 1.13.0 的回归：设置页点「会话策略」整页白屏）—— 详见 `CHANGELOG.md` 的 1.13.1 条目。
+  要点：`SaveTokenCard` 把纯视图误写为元素调用 `h(SaveTokenView, { d, … })`，视图签名是 `(夹具, 回调)`，
+  props 对象被当夹具 ⇒ 读 `d.flags.expandTool` 抛错 ⇒ `CacheControlPage` 整棵树消失；production React
+  在槽的错误边界里不打日志，所以"一片空白而且控制台干净"。改为同口径的位置调用 + 新增 `PageBoundary`
+  （抛错把堆栈显示在面板里并 `console.error`）。`verify-gate-client` 99 → 101 条（两条源码守卫：
+  调用口径、错误边界），版本 → 1.13.1。
+
+- **v1.13.0**（并入原 dsh-plugin-save-token；本插件第一次有模型工具）—— 详见上面「省 token · 结构化压缩」
+  与 `CHANGELOG.md` 的 1.13.0 条目。要点：`save-token-host.js` / `save-token-core.js` 两个文件原样入库
+  （MIT，`NOTICE` 有署名与删改清单），以 `ctx.plugin()` 嵌套挂载；上游 compaction assist 整段删除
+  （与「省缓存」抢同一个引擎），上游 `composer.dock` 小条不装（那个槽位是 dsh-bill 的）；
+  新增工具 `save_token_expand` 与 `/cc/st/api/*` 三条路由；`files` 补两个文件、版本 → 1.13.0；
+  `npm test` 10/10 通过（新增 `verify-save-token.mjs` 40 条 + `verify-gate-client` I 组 19 条）。
 
 - **v1.7.0**（把"隐藏拖拽条"拆成**两个开关**：两竖杠与侧栏分隔条分开管）
   - **起因**：v1.6.0 的 `hideResizer` 一条开关按 `cursor:*-resize` 语义标记，实测会同时命中**三类**元素：

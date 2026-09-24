@@ -1,5 +1,118 @@
 # 变更记录
 
+## 1.13.2 — 2026-09-24 · 取回完整性、统计卡生命周期与界面反馈
+
+- 修复超过 262,144 字符的原文返回截断预览却被当作完整结果的问题：有读回能力时兼容同步和异步接口；无接口、读取失败或读回仍截断时返回完整原文路径，供 read 工具继续取回。当前本机宿主没有 readText，超长结果走路径提示。
+- 重置计数只清统计，不清原文缓存、去重缓存及回放索引。修正文档里内存 id→locator 索引被称为跨重启持久化的说法。
+- 统计卡按请求完成时间安排轮询；写入使旧读取失效；写入成功后等回读再解锁；卸载中止请求；HTTP/超时错误可见，首次读取失败有重试按钮。
+- 纯视图改用 renderSaveTokenView 名称，和 React 组件区分；卡片通过 React 元素挂载。新增真实组件生命周期测试，覆盖异步加载后的渲染和竞态，保留原有静态渲染断言。
+- 压缩/去重开关补 aria-pressed，显示保存进度；重启后恢复默认的提示移到正文；KPI 自适应列宽，卡片操作行允许换行；纠正“无开关统计台”与实际功能不符的表述。
+- 缩短插件元数据说明；package.json 与 lockfile 同步到 1.13.2；补齐四个运行文件的语法门禁。
+
+验证：旧实现新增取回断言 6 条失败 → 修复后 verify-save-token 47/47；verify-token-lifecycle 18/18；完整检查结果见本轮报告。桌面截图接口报 SetIsBorderRequired/0x80004002，点击报 geometry unavailable；未把自动化渲染当作桌面视觉验收。
+
+本轮没做的：保留“不做确定性压缩兜底”的决定。未增加第二压缩实现或抢占 request-error；未添加仅凭压缩字节数判断语义丢失的面板；未改用户的常驻规则和默认开关。
+
+
+## 1.13.1 — 2026-09-23 · 修「会话策略」整页白屏（1.13.0 的回归）
+
+现象（用户重启后报）：设置页点「会话策略」，右侧一片空白 —— 只剩标题栏与关闭按钮，
+控制台一个字都没有。**不是槽没注册**（左栏目录里那一项在，`__DSH_BOOT__` 里 rev 也是新的），
+而是整页渲染抛错被槽静默吞掉：production React 在错误边界里不打日志，所以"什么都没看见"。
+
+**根因**：`SaveTokenCard` 把纯视图写成元素调用 `h(SaveTokenView, { d, … })`，而
+`SaveTokenView` 的签名一直是 `(夹具, 回调)` —— React 把 props 对象当第一个实参传进来，
+视图照旧读 `d.flags.expandTool` ⇒ `Cannot read properties of undefined`。一处卡片抛错，
+`CacheControlPage` 整棵树跟着没了，于是九块一起白屏。
+
+**为什么 1.13.0 的 99 条断言没拦住**：套件里只按**位置调用**喂夹具（`internals.SaveTokenView(FIX, {})`），
+也就是"测试用的口径"和"页面里失败的那次调用"不是同一个 —— 40 条 I 组全绿，页面上一个字没有。
+这类洞靠加断言堵不住"没跑过的调用形式"，只能靠**页面上真看得见**。
+
+**改法**（都在 `client.js`）
+
+- 取数半截改成与套件同口径的位置调用：`SaveTokenView(d, { busy, error, onToggle, onReset })`，
+  旁边写明"别写成 `h(SaveTokenView, …)`"，把 2026-09-23 这次白屏记在原地。
+- 新增 `PageBoundary`（与既有的 `ChipBoundary` 同一套办法）：整页抛错时把 `error.stack`
+  显示在面板里并 `console.error`，**不再静默白屏**。槽是别人的，日志开关不在我们手里，
+  那就把错误搬到自己能看见的地方。
+
+**套件**：`verify-gate-client.mjs` 99 → **101 项**
+
+- 取数半截按位置调用视图（源码守卫；匹配前先剥注释，否则会拿旁边那句说明判自己失败）。
+- 设置页有错误边界（源码守卫，锁住"抛错要可见"）。
+
+`npm test` → 语法门禁 0/0、**套件 10/10 通过**（verify-gate-client 101 条、verify-save-token 40 条）。
+版本 → 1.13.1。
+
+**顺带查到的一条环境事实**（写进 README「本机自检」）：client 半的 `?rev=` 是**内容哈希**，
+改完 `client.js` 存盘、刷新页面就加载新代码 —— 不必重启 DSH Desktop。host 半（`index.js` /
+`save-token-host.js`）才需要重启，因为模块只在 `name`/`inject`/`group` 变化时重新 import。
+
+## 1.13.0 — 2026-09-23 · 并入 dsh-plugin-save-token：本插件第一次有模型工具
+
+起因（用户）：蒸餾一遍"上下文医生 / save-token / dsh-context / memos / distillly 及同类高星项目"，
+再决定各能力**嵌进哪个已有插件**（前提：不能互相冲突、不能功能重复）。这一版只落 save-token 那一条：
+**整套嵌进来，但砍掉它的 compaction assist**。其余四个的判断结果在末尾「本轮没做的」。
+
+**怎么嵌的**
+
+- 上游 host 半 `src/index.js` → `save-token-host.js`，纯函数核 `src/compress.js` → `save-token-core.js`
+  （25 KB，零 import）。**不是新的 roster 条目**：`index.js` 里以 `ctx.plugin(saveToken, config)`
+  嵌套挂载，`inject` 仍是 `['webServer']`，日志 `host up (…) saveToken=mounted|absent` 交代挂没挂上。
+- 挂载点是 `tools/post-execute`（prepend）+ `llm/stream`，以及 `spillStore`（`ctx.get()` 懒取，可选）。
+- 路由从 `/save-token/*` 改到 `/cc/st/*`（前缀注册，与自家 `/cc/*` 同族）：`api/dashboard` /
+  `api/set-enabled` / `api/reset`。
+- client 半**合成一张卡**写进既有 `client.js`，没有第二次 `.load({id})`：上游的 `settings.section`
+  面板（order 430）与本插件既有的 order 58 合成同一张「省 token」卡（页面里第 2 块，紧跟「省缓存」）。
+  跨模块没法两个 bundle 拼一张卡，所以是**改写**而不是搬运。
+
+**冲突面（用户的原话是"不能互相冲突"，逐条交代）**
+
+- **删掉上游 compaction assist 整段**（`agent/pre-step` 压力触发、水位线、冷却期、`compactStats`、
+  `ctx.get('compaction')`，以及喂它的 per-session estimate/billed 表）。理由：本插件「省缓存」已经是
+  那个引擎的唯一所有者（triggerPct / retainPct / auto + 逐字节 backup/restore），两套阈值抢同一个
+  preset 行必然打架。**删除而非默认关**——默认关只是把冲突藏起来。组合断言钉住这一点：
+  client 源码里 `/compactAssist|compact-assist|compactionAssist/` 一处都不许有（不是"值为 false"）。
+- **不装上游的 `conversation.composer.dock` 常驻小条**：那个槽位是 dsh-bill 的（它在同一位置画每
+  会话费用行），同一格两块 UI 互相挤。断言：client 源码里不许出现 `inject('conversation.composer.dock'`。
+- **`settings.section` 仍只注册一次**（断言计数 === 1）：省 token 是**同一张卡里的一块**，不是第二个设置页。
+
+**主动砍的（不是漏的）**
+
+- 上游面板的英文/中英双语文案 → 全中文（本仓库别处都是中文）。
+- 没有加"刷新"按钮：卡片本来就 2.5 秒轮询一次，按钮是冗余（YAGNI）。
+- 两个开关（压缩 / 去重）**存内存、不写 `settings.json`**、重启回默认开；计数同理。它们是临时闸不是配置。
+  代价已在 README 与卡面说明里写明（换机器不用拨、导出导入也搬不走）。
+
+**验证**
+
+- 新增 `tools/verify-save-token.mjs`：**40 条**。真跑压缩（15,862 B → 6,526 B）再用
+  `save_token_expand` 逐字节还原比对；无 `spillStore` 时原样透传（可逆性优先）；`/cc/st/api/*`
+  三端点含 404 与开关键名；嵌套挂载面用假 ctx 覆盖。
+- `verify-gate-client.mjs` 加 **I 组共 19 条**：视图被拆出独立的 `SaveTokenView`（取数那半步在
+  `useEffect` 里，SSR 跑不到）后喂夹具渲染——KPI 换算、字节条归一（100% / 50% / 下限 4%）、
+  活动表配色、sparkline 是内联 SVG、点击回调送出的键与值、三种降级（spillStore 不可用 / 空态 /
+  没有 estRatio 时不占位），以及上面三条冲突面断言。分区数 8 → 9，两处断言口径同步。
+- `npm test` → 语法门禁 0/0、**套件 10/10 通过**（verify-gate-client 99 条、verify-save-token 40 条）。
+
+**分发面（这次真的动了打包）**
+
+- `package.json`：`files` 补 `save-token-host.js` + `save-token-core.js`（**漏了就是装上去就崩**，
+  它们是 `index.js` 的静态 import），版本 1.12.4 → **1.13.0**，description 同步九块。
+- `NOTICE` 追加 save-token 的 MIT 署名 + 改动范围（删了哪一段、为什么、没装哪个槽位）。
+- 这是本插件第一次**注册模型工具**（工具表多一行 `save_token_expand`）、第一次**依赖 disk spill**、
+  第一次在 `/cc` 下开非 settings 路由 —— 三件事都在上一版都没有。
+
+**本轮没做的（判断结果，写给下一个接手的人）**
+
+- **dsh-context 不吸收**：它的上下文事件能力只在 dsh-bill 里加一条**只读时间线**（计数级、不含正文），
+  本次未落；实际内容浏览（Context Browser）**不许**搬进 dsh-bill（那边 README 承诺过只统计不读正文）。
+- **上下文医生 → 本插件**：它的确定性压缩兜底（compaction 失败时按确定性规则降级）已列入候选表，
+  但**不在本轮三个已答问题里**，未动。要做先问。
+- **memos**：只取 `rejected_solution`（否决过的方案）这一类记忆进 MemSearch，未落。
+- **distillly / distill**：自动反思 + 归属 frontmatter（`distilled-by`）进 MemSearch，未落。
+
 ## 2026-09-23 · 本地维护：清出两个入库备份
 
 - 删除 `client.js.bak-20260910-143611`（87 KB，2026-09-10 的客户端快照）与

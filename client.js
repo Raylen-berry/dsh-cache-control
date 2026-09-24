@@ -84,6 +84,13 @@ window.__ModuleLoader__.load({
       '.cc-warn{font-size:12px;color:var(--dsw-alias-label-warning,#b8860b)}',
       '.cc-ok{font-size:12px;color:var(--dsw-alias-label-success,#2da44e)}',
       '.cc-muted{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
+      // ---- 省 token 卡（v1.13.0）的 KPI 小格与字节条（其余页面元素全复用上面已有的类）----
+      '.cc-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,128px),1fr));gap:10px}',
+      '.cc-kpi{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 12px;min-width:0;display:flex;flex-direction:column;gap:3px}',
+      '.cc-kpiV{font-size:19px;font-weight:650;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.cc-kpiS{font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.35}',
+      '.cc-barTrack{flex:1;height:8px;border-radius:4px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.15));overflow:hidden}',
+      '.cc-barFill{height:100%;background:var(--dsw-alias-brand-primary,#4d6bfe);opacity:.85}',
       '.cc-path{font-size:11px;color:var(--dsw-alias-label-tertiary);word-break:break-all;line-height:1.6}',
       '.cc-tag{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;border:1px solid var(--dsw-alias-border-l1);font-size:11px;color:var(--dsw-alias-label-secondary)}',
       '.cc-tag.warn{border-color:var(--dsw-alias-label-warning,#b8860b);color:var(--dsw-alias-label-warning,#b8860b)}',
@@ -1722,6 +1729,242 @@ window.__ModuleLoader__.load({
           : h('p', { className: 'cc-ok' }, s.saving ? '正在保存…' : (s.enabled === s.applied ? '压缩参数已与磁盘一致（下一个新建会话生效）' : '压缩参数待同步…')))
     }
 
+    // ------------------------------------------------- 设置页：省 token 卡 --
+    /**
+     * v1.13.0：并入 dsh-plugin-save-token v2.4.1 的面板（上游客户端 347 行双语 React）。
+     * 相对上游砍掉三样，理由与 host 侧同步：
+     *   ① compaction assist 开关 + compaction 卡整块不要 —— host 那条分支已删（压缩契约
+     *      只归「省缓存」），面板上留个拨了没反应的开关比没有更糟；
+     *   ② 不装上游的 composer.dock 常驻小条 —— 那个槽位是 dsh-bill 的地盘（同一位置它
+     *      已经在画每会话费用行），两个 2.5s 轮询器抢一个槽就是重复；
+     *   ③ 双语 STR 表退成中文 —— 本页其余九块都是中文，唯独它跟 locale 走反而突兀。
+     * 口径与 host 对齐：数字全来自 /cc/st/api/dashboard，只回计数与字节数，不含 prompt 文本。
+     */
+    var ST_KIND = {
+      compress: ['压缩', 'var(--dsw-alias-brand-primary,#4d6bfe)'],
+      lossless: ['无损', 'var(--dsw-alias-label-success,#2da44e)'],
+      dedupe: ['去重', 'var(--dsw-alias-label-warning,#b8860b)'],
+      request: ['请求', 'var(--dsw-alias-label-secondary)'],
+      aux: ['辅助', 'var(--dsw-alias-label-secondary)'],
+      skip: ['跳过', 'var(--dsw-alias-label-danger,#e5534b)'],
+      config: ['配置', 'var(--dsw-alias-label-secondary)'],
+    }
+
+    function stTime(ts) {
+      try { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }) } catch (e) { return '' }
+    }
+
+    function stKpi(label, value, sub, green) {
+      return h('div', { className: 'cc-kpi' },
+        h('div', { className: 'cc-muted' }, label),
+        h('div', { className: 'cc-kpiV', style: green ? { color: 'var(--dsw-alias-label-success,#2da44e)' } : null }, value),
+        sub ? h('div', { className: 'cc-kpiS' }, sub) : null)
+    }
+
+    function stStat(label, main, sub) {
+      return h('div', { className: 'cc-row' },
+        h('span', { style: { minWidth: '86px' } }, label),
+        h('span', { style: { flex: '1', minWidth: 0 } }, main),
+        h('span', { className: 'cc-val' }, sub || ''))
+    }
+
+    /** 单次请求上下文重量：灰 = 实际送出的提示词，绿 = 这次省下的。 */
+    function stSpark(series) {
+      var i, max = 1, H = 48, W = Math.max(1, series.length) * 7
+      for (i = 0; i < series.length; i++) max = Math.max(max, (series[i].p || 0) + (series[i].a || 0))
+      var bars = []
+      for (i = 0; i < series.length; i++) {
+        var p = series[i].p || 0, a = series[i].a || 0
+        var ph = p > 0 ? Math.max(2, Math.round(p / max * 40)) : 0
+        var ah = Math.round(a / max * 40)
+        if (ph > 0) bars.push(h('rect', { key: 'p' + i, x: i * 7, y: H - 4 - ph - ah, width: 5, height: ph, fill: 'var(--dsw-alias-border-l2,#c7cbd1)' }))
+        if (ah > 0) bars.push(h('rect', { key: 'a' + i, x: i * 7, y: H - 4 - ah, width: 5, height: ah, fill: 'var(--dsw-alias-label-success,#2da44e)' }))
+      }
+      return h('svg', { width: '100%', height: H, viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'none' }, bars)
+    }
+
+    // One owner for reads, writes and disposal. Poll only after completion;
+    // a mutation invalidates an older GET even if its transport ignores abort.
+    function createTokenFeed(merge) {
+      var alive = true, busy = false, revision = 0, timer, controller
+      function cancelRead() {
+        revision++
+        clearTimeout(timer)
+        if (controller) controller.abort()
+      }
+      function schedule() {
+        if (alive && !busy) timer = setTimeout(load, 2500)
+      }
+      async function request(action, body) {
+        var c = new AbortController(), timedOut = false
+        controller = c
+        var deadline = setTimeout(function () { timedOut = true; c.abort() }, 10000)
+        try {
+          var response = await fetch('/cc/st/api/' + action, body === undefined
+            ? { cache: 'no-store', signal: c.signal }
+            : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: c.signal })
+          if (!response.ok) throw new Error('HTTP ' + response.status)
+          return await response.json()
+        } catch (e) {
+          if (timedOut) throw new Error('请求超时，请重试')
+          throw e
+        } finally {
+          clearTimeout(deadline)
+          if (controller === c) controller = null
+        }
+      }
+      async function readData(ticket) {
+        var data = await request('dashboard')
+        if (!data || !data.flags || typeof data.flags !== 'object') throw new Error('返回值缺少 flags')
+        if (alive && ticket === revision) merge({ data: data, error: '' })
+      }
+      async function load() {
+        if (!alive || busy) return
+        cancelRead()
+        var ticket = revision
+        try { await readData(ticket) }
+        catch (e) { if (alive && ticket === revision) merge({ error: String(e.message || e) }) }
+        finally { if (alive && ticket === revision) schedule() }
+      }
+      async function post(action, body) {
+        if (!alive || busy) return
+        busy = true
+        cancelRead()
+        var ticket = revision
+        merge({ busy: action, error: '' })
+        try {
+          var result = await request(action, body)
+          if (!result || result.ok !== true) throw new Error('接口拒绝了这次改动')
+          if (alive && ticket === revision) await readData(ticket)
+        } catch (e) {
+          if (alive && ticket === revision) merge({ error: String(e.message || e) })
+        } finally {
+          if (alive && ticket === revision) { busy = false; merge({ busy: '' }); schedule() }
+        }
+      }
+      return { load: load, post: post, dispose: function () { alive = false; cancelRead() } }
+    }
+
+    function SaveTokenCard() {
+      var pair = React.useState({ data: null, error: '', busy: '' })
+      var st = pair[0], set = pair[1], feed = React.useRef(null)
+      React.useEffect(function () {
+        var current = createTokenFeed(function (patch) {
+          set(function (prev) { return Object.assign({}, prev, patch) })
+        })
+        feed.current = current
+        current.load()
+        return function () { current.dispose(); feed.current = null }
+      }, [])
+      function post(action, body) { if (feed.current) return feed.current.post(action, body) }
+
+      var d = st.data
+      if (!d) {
+        return h('div', { className: 'cc-card' },
+          h('div', { className: 'cc-sub', role: st.error ? 'alert' : 'status' }, st.error ? '读取失败：' + st.error : '正在读取 token 统计…'),
+          st.error ? h(Btn, { onClick: function () { if (feed.current) feed.current.load() } }, '重新读取') : null)
+      }
+      // Lowercase render helper distinguishes its positional arguments from
+      // a React component's props. Lifecycle tests also exercise this call.
+      return renderSaveTokenView(d, {
+        busy: st.busy,
+        error: st.error,
+        onToggle: function (key, value) { post('set-enabled', { key: key, value: value }) },
+        onReset: function () { post('reset', {}) },
+      })
+    }
+
+    /**
+     * 纯视图负责展示；createTokenFeed 负责请求生命周期，SaveTokenCard 连接两者。
+     * 静态渲染测试覆盖格式，verify-token-lifecycle 覆盖真实 React 挂载、取数及点击。
+     */
+    function renderSaveTokenView(d, opts) {
+      opts = opts || {}
+      var busy = opts.busy || '', error = opts.error || ''
+      var t = d.totals || {}, c = d.compression || {}
+      var ratio = c.bytesBefore > 0 ? Math.round((1 - c.bytesAfter / c.bytesBefore) * 100) : 0
+      var maxSaved = 1
+      ;(d.byTool || []).forEach(function (x) { maxSaved = Math.max(maxSaved, x.savedBytes || 0) })
+      var uptime = Math.round(d.uptimeSec || 0)
+      function toggle(key, label) {
+        var on = !!d.flags[key]
+        return h(Btn, {
+          key: key,
+          disabled: busy !== '',
+          'aria-pressed': on,
+          title: on ? '已启用，点击关闭' : '已停用，点击启用',
+          onClick: function () { opts.onToggle(key, !on) },
+        }, label + '：' + (on ? '开' : '关'))
+      }
+
+      return h('div', { className: 'cc-card' },
+        h('div', { className: 'cc-row', style: { flexWrap: 'wrap' } },
+          h('span', { style: { fontWeight: 600 } }, '结构感知 · 无损优先'),
+          h('span', { className: 'cc-muted' }, '已运行 ' + (uptime >= 60 ? Math.round(uptime / 60) + ' 分钟' : uptime + ' 秒')),
+          h('span', { className: 'cc-tag' }, d.flags.expandTool ? 'save_token_expand 可取回' : 'expand 不可用'),
+          h('span', { style: { flex: '1' } }),
+          toggle('compress', '压缩'),
+          toggle('dedupe', '去重'),
+          h(Btn, { key: 'reset', disabled: busy !== '', onClick: function () { opts.onReset() } }, '重置计数')),
+        h('p', { className: 'cc-muted' }, '统计与压缩、去重开关仅在本次运行有效，重启后计数归零、开关恢复默认开启。重置计数不影响原文取回。'),
+        busy ? h('p', { className: 'cc-muted', role: 'status' }, '正在保存并确认…') : null,
+        d.spillReady === false
+          ? h('p', { className: 'cc-err' }, '可逆存储（spillStore）当前不可用 → 压缩保持关闭，工具输出原样进上下文。'
+            + (d.lastSkip ? '原因：' + d.lastSkip : ''))
+          : null,
+        h('div', { className: 'cc-kpis' },
+          stKpi('模型请求', fmt(t.requests || 0), '+' + fmt(t.auxRequests || 0) + ' 次辅助（标题 / 摘要）'),
+          stKpi('输入 token（实际计费）', fmt((t.inputTokens || 0) + (t.cachedTokens || 0)),
+            '缓存命中 ' + (d.cacheHitPct || 0) + '% · 其中 ' + fmt(t.cachedTokens || 0) + ' 走缓存'),
+          stKpi('输出 token（实际计费）', fmt(t.outputTokens || 0), fmt(t.reasoningTokens || 0) + ' 为推理'),
+          stKpi('省下的 token（估算）', fmt(t.avoidedTokens || 0), '单次调用上下文平均轻 ' + (d.reliefPct || 0) + '%', true)),
+        h('div', null,
+          h('div', { className: 'cc-muted' }, '单次请求的上下文重量：灰 = 实际送出，绿 = 已省下（最近 60 次）'),
+          stSpark(d.series || []),
+          h('div', { className: 'cc-muted', style: { marginTop: '6px' } },
+            '平均提示 ~' + fmt(t.requests ? Math.round((t.estPromptTokens || 0) / t.requests) : 0) + ' tok'
+            + ' · 平均省下 ~' + fmt(t.requests ? Math.round((t.avoidedTokens || 0) / t.requests) : 0) + ' tok/次')),
+        h('div', null,
+          stStat('压缩', c.count ? c.count + ' 次重塑，平均 -' + ratio + '% 字节（'
+            + fmtBytes(c.bytesBefore) + ' → ' + fmtBytes(c.bytesAfter) + '）' : '还没触发过（输出需大于阈值）',
+            c.count ? '顶层 ' + (c.topLevelCalls || 0) + ' · 嵌套 ' + (c.nestedCalls || 0) : ''),
+          stStat('无损', (c.losslessEncodes || 0) + ' 次重编码（结构化数组，零损失）',
+            (c.tabularWindows || 0) + ' 个抽采样窗口'),
+          stStat('去重', (c.dedupeHits || 0) + ' 次命中重复调用（同一份内容重放）',
+            '省 ' + fmtBytes(c.dedupeSavedBytes || 0)),
+          d.estRatio ? stStat('估算比', '字节→token ×' + d.estRatio, (c.replays || 0) + ' 次回放对照实际计费') : null),
+        h('div', null,
+          h('div', { className: 'cc-muted' }, '省字节最多的工具'),
+          (d.byTool || []).length === 0
+            ? h('div', { className: 'cc-sub' }, '还没有压缩记录')
+            : (d.byTool || []).map(function (tool) {
+              return h('div', { className: 'cc-row', key: tool.name },
+                h('span', { style: { minWidth: '132px', maxWidth: '132px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: tool.name }, tool.name),
+                h('div', { className: 'cc-barTrack' },
+                  h('div', { className: 'cc-barFill', style: { width: Math.max(4, Math.round((tool.savedBytes || 0) * 100 / maxSaved)) + '%' } })),
+                h('span', { className: 'cc-val' }, fmtBytes(tool.savedBytes || 0) + ' / ' + tool.count + ' 次'))
+            })),
+        h('div', null,
+          h('div', { className: 'cc-muted' }, '近期活动（最多 18 条）'),
+          h('div', { style: { maxHeight: '190px', overflowY: 'auto' } },
+            (d.recent || []).length === 0
+              ? h('div', { className: 'cc-sub' }, '还没有活动记录')
+              : (d.recent || []).map(function (r, i) {
+                var kind = ST_KIND[r.kind] || ST_KIND.request
+                return h('div', { className: 'cc-row', key: String(r.ts) + '-' + i },
+                  h('span', { className: 'cc-muted' }, stTime(r.ts)),
+                  h('span', { className: 'cc-tag', style: { color: kind[1], borderColor: kind[1] } }, kind[0]),
+                  h('span', { style: { flex: '1', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: r.label + (r.detail ? ' · ' + r.detail : '') },
+                    r.label + (r.detail ? ' · ' + r.detail : '')),
+                  h('span', { className: 'cc-val' }, r.saved > 0 ? '-' + fmt(r.saved) : ''))
+              }))),
+        error ? h('p', { className: 'cc-err', role: 'alert' }, '接口出错：' + error) : null,
+        h(Fold, { label: '说明' },
+          h('div', { className: 'cc-note' }, '无损优先：均匀数组确定性重编码（TOON 式），零信息损失；常规输出走结构感知窗口，中段按行号抽采样。每次替换前先落盘保存完整原文，再提供 save_token_expand 工具或原文路径供取回；保存失败就不替换。压缩只在 tools/post-execute 发生一次，重放不改写历史。上游的 compaction assist 与本页「省缓存」抢同一个引擎，嵌入时已整段删除。'),
+          h('div', { className: 'cc-path' }, '统计口径：只保留计数与字节数，不含任何 prompt 文本；计数与开关都在内存里，重启归零回到默认开（本页其余开关写 settings.json）。'),
+          h('div', { className: 'cc-path' }, '压缩、去重、expand 三者共用同一份 spillStore 落盘；spillStore 不可用时压缩自动关闭，tool 输出原样进上下文。超过内存上限或重启后，取回可能需要根据提示中的原文路径调用 read 工具。')))
+    }
+
     // ---------------------------------------------------- 设置页：门禁卡 --
     function GateCard() {
       return RuleCard({
@@ -2130,10 +2373,13 @@ window.__ModuleLoader__.load({
         h('section', null,
           h('h3', { className: 'cc-h' }, '会话策略'),
           h(Fold, { label: '总述' },
-            h('p', { className: 'cc-sub' }, '八块互相独立的开关（无编号，按下面卡片的顺序）：压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；输出形状是第三段常驻规则（回复形状，**默认开**，并入自原 dsh-output-shape 插件）；自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；对话页只管会话列宽（原底图工坊里的同名区块）；存储管各用途占盘与清理。'))),
+            h('p', { className: 'cc-sub' }, '九个独立功能区：压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；省 token 提供统计台与压缩、去重开关（并入自 dsh-plugin-save-token：结构感知压缩 + 无损重编码 + 去重 + save_token_expand 取回工具，只计数与字节数、不含 prompt 文本，两个开关存内存、重启归默认开）；会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；输出形状是第三段常驻规则（回复形状，**默认开**，并入自原 dsh-output-shape 插件）；自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；对话页只管会话列宽（原底图工坊里的同名区块）；存储管各用途占盘与清理。'))),
         h('section', null,
           h('h3', { className: 'cc-h' }, '省缓存'),
           CacheCard()),
+        h('section', null,
+          h('h3', { className: 'cc-h' }, '省 token'),
+          h(SaveTokenCard)),
         h('section', null,
           h('h3', { className: 'cc-h' }, '会话守则'),
           GateCard()),
@@ -2157,7 +2403,7 @@ window.__ModuleLoader__.load({
           StorageCard()),
         h('section', null,
           h(Fold, { label: '关于本页' },
-            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则/ponytail/输出形状三个开关只决定各自规则段是否为空（空段在提示词渲染时被丢弃）；「气泡置顶」与「对话页」两项纯界面，只改样式与 CSS 变量。规则文本见上列路径。'))))
+            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则/ponytail/输出形状三个开关只决定各自规则段是否为空（空段在提示词渲染时被丢弃）；「气泡置顶」与「对话页」两项纯界面，只改样式与 CSS 变量。「省 token」的统计来自 /cc/st/api/dashboard（本插件自带的前缀路由），压缩与去重两个开关**只在内存里**、重启回到默认开，也不写 settings.json。规则文本见上列路径。'))))
     }
 
     // ------------------------------------------ 输入工具条 chip + 弹出面板 --
@@ -2512,9 +2758,19 @@ window.__ModuleLoader__.load({
           slots.inject('settings.section', function () {
             return slots.register(
               { name: 'settings.section', id: 'cache-control', order: 58, label: '会话策略' },
-              function () { return h(CacheControlPage) })
+              function () { return h(PageBoundary, null, h(CacheControlPage)) })
           })
         } catch (e) { errors.push('settings.section: ' + String((e && e.message) || e)) }
+      }
+      // ---- 错误边界：整页渲染若抛错，把原因显示在面板里（槽在 production React 下静默吞掉，不留痕）----
+      class PageBoundary extends React.Component {
+        constructor(props) { super(props); this.state = { err: null } }
+        static getDerivedStateFromError(e) { return { err: String((e && e.stack) || (e && e.message) || e) } }
+        componentDidCatch(e) { if (typeof console !== 'undefined') console.error('cache-control settings page:', e) }
+        render() {
+          if (this.state.err) return h('div', { className: 'cc-card' }, h('div', { className: 'cc-err', style: { whiteSpace: 'pre-wrap', fontSize: '11px' } }, '会话策略渲染失败：\n' + this.state.err))
+          return this.props.children
+        }
       }
       // ---- 错误边界：chip 渲染若抛错，显示占位（不再被槽静默丢弃）----
       class ChipBoundary extends React.Component {
@@ -2552,6 +2808,11 @@ window.__ModuleLoader__.load({
     // 是否真的落到 <html> 与钉住标记上，只能靠直接调用这些函数来断言。
     exports.internals = {
       STORE: STORE,
+      // Static format checks and real React lifecycle checks share the same
+      // production view/card; no test-only rendering branch.
+      SaveTokenView: renderSaveTokenView,
+      SaveTokenCard: SaveTokenCard,
+      ST_KIND: ST_KIND,
       flipCache: flipCache,
       flipGate: flipGate,
       applyAppearance: applyAppearance,

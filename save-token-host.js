@@ -1,0 +1,553 @@
+/*!
+ * save-token v2.4.1 — Host half (node), VENDORED INTO dsh-cache-control.
+ *
+ * Upstream: github.com/vibe-any/dsh-plugin-save-token (MIT, © playwithai /
+ * vibe-any); original file src/index.js, unmodified except for the removals
+ * listed below. Kept as its own file so the next upstream diff stays readable.
+ *
+ * Mounted from ./index.js as a NESTED Cordis plugin (`ctx.plugin(saveToken,
+ * config)`), not as a bundle row of its own — the "省 token" capability ships
+ * inside dsh-cache-control and has no separate roster entry.
+ *
+ * - `inject = ['tools', 'webServer']` — the dsh-tools registry for the
+ *   `save_token_expand` dynamic tool, and the web server surface for the
+ *   package-private JSON API consumed by the settings card.
+ * - `spillStore` is read lazily with ctx.get() and is optional at runtime:
+ *   missing spillStore keeps compression permanently off (reversibility first).
+ * - Waterfalls: `tools/post-execute` (prepend) and `llm/stream`.
+ *
+ * REMOVED on embed (2026-09-09): the whole compaction-assist arm (upstream
+ * "arm 3" — the `agent/pre-step` pressure trigger, its watermark, cooldown,
+ * `compactStats`, the per-session estimate/billed maps that fed it, and the
+ * `ctx.get('compaction')` call). dsh-cache-control already owns the compaction
+ * contract: it writes triggerPct/retainPct/auto into the standard preset's
+ * `@deepseek-ai/dsh-compaction-basic` row with a byte-exact backup, and two
+ * plugins driving one engine is exactly the conflict this embed avoids.
+ * Upstream itself had the arm OFF by default. Routes moved
+ * `/save-token/*` -> `/cc/st/*`.
+ *
+ * v2.2.0 changes (all pure-compression logic moved to ./compress.js for unit
+ * testing; behavior fixes marked):
+ * - dedupe keys carry the owning session id (cross-session stubs were false)
+ *   and hash the FULL args/content strings (prefix truncation could claim
+ *   byte-identity for different outputs);
+ * - `save_token_expand` output is exempt from both arms: re-compressing an
+ *   expand result handed the model the same elided preview it just paid a
+ *   turn to unfold;
+ * - lossless counters increment on ADOPTED candidates (previously counted
+ *   attempts the never-worse gates later rejected);
+ * - the compression trigger floor also respects the saving/keepRatio
+ *   arithmetic (outputs that cannot save minSavingBytes at keepRatioMax are
+ *   skipped without building a candidate);
+ * - the first `noticeFullTrailerCount` notices are verbose; later ones use a
+ *   compact trailer with the same id/locator (fewer replayed tokens, both
+ *   recovery channels intact);
+ * - lossless TOON routes extended: nested field groups, keyed maps, deep
+ *   dominant-array search, JSONL/NDJSON, and a lossless-vs-lossy price
+ *   comparison; lossy notices disclose what was elided.
+ *
+ * v2.3.0 changes (cache-aware layer; bench evidence: 88.9% of input tokens
+ * ride the provider prompt cache, billed at ~1/30 of the miss price):
+ * - cacheRead/cacheWrite are metered separately and surfaced as a cache-hit
+ *   sentinel KPI (any change that tanks it is saving tokens while raising
+ *   real cost);
+ * - per-model online calibration (EMA of billed/estimated tokens) corrects
+ *   the avoided-token accounting without bundling a tokenizer.
+ *
+ * v2.4.0 changes:
+ * - dedupe TTL default raised 90s -> 600s (fingerprints are full-length and
+ *   byte-exact, so an identical replay carries no new information; the stub
+ *   already tells the model to re-run when freshness matters) with
+ *   per-tool overrides (`dedupeTtlOverrides`, 0 disables dedupe for a tool);
+ * - error-line protection in plain-text windows widened to ±1 context line;
+ * - `save_token_expand` survives text-cache eviction via an in-memory
+ *   id->locator index; after restart the original notice still carries
+ *   the persistent spill locator for the read tool;
+ * - top-level vs nested tool calls are counted (dashboard) to measure the
+ *   unexploited subagent surface before the nesting exemption is ever
+ *   touched.
+ */
+
+// Intentionally NO import from '@deepseek-ai/dsh-tools': this repo keeps zero
+// external runtime imports (.npmrc — peerDependencies are host-provided, and a
+// plugin-local copy of dsh-tools would have to track the host's version
+// exactly). `defineTool` only compiles the parameter spec to JSON Schema and
+// wraps execute in an argument check; both are written out inline below.
+import {
+  utf8Bytes, estTokens, fmtInt,
+  argsToString, dedupeFingerprint,
+  buildCandidate, buildNotice, effectiveMinBytes
+} from './save-token-core.js'
+
+export const name = 'cache-control-save-token'
+
+export const inject = ['tools', 'webServer']
+
+export function apply(ctx, config) {
+  // ---------- owned state ----------
+  var cfg = {
+    compressEnabled: true,
+    dedupeEnabled: true,
+    minBytes: 1400,
+    errorMinBytes: 6000,
+    minSavingBytes: 500,
+    keepRatioMax: 0.72,
+    maxLines: 240,
+    headLines: 140,
+    tailLines: 80,
+    tabularHeadRows: 60,
+    tabularTailRows: 40,
+    tabularStrideSamples: 50,
+    longLineChars: 420,
+    jsonMaxParseBytes: 524288,
+    jsonlMinLines: 8,
+    noticeFullTrailerCount: 3,
+    dedupeTtlMs: 600000,
+    dedupeTtlOverrides: {}
+  }
+  if (config && typeof config === 'object') {
+    for (var ck in cfg) {
+      if (Object.prototype.hasOwnProperty.call(config, ck) && config[ck] !== undefined) cfg[ck] = config[ck]
+    }
+  }
+  var startedAt = Date.now()
+  var totals = { requests: 0, auxRequests: 0, inputTokens: 0, cachedTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0, avoidedTokens: 0, estPromptTokens: 0 }
+  var comp = { count: 0, bytesBefore: 0, bytesAfter: 0, dedupeHits: 0, dedupeSavedBytes: 0, replays: 0, losslessEncodes: 0, tabularWindows: 0, topLevelCalls: 0, nestedCalls: 0 }
+  var records = []
+  var recent = []
+  var byTool = new Map()
+  var compressedIndex = new Map()
+  var dedupeCache = new Map()
+  var originals = new Map()
+  var locatorIndex = new Map()
+  var calibration = new Map()
+  var seq = 0
+  var spillAvailable = null
+  var lastSkip = ''
+
+  // ---------- online token-estimate calibration (D1) ----------
+  // Every request yields real billed input alongside this plugin's heuristic
+  // estimate; a per-model EMA of actual/estimate keeps the avoided-token
+  // accounting honest without bundling a tokenizer. The compression token gate
+  // itself needs no calibration: the
+  // candidate and its original share the same script mix, so the ratio
+  // cancels in that comparison.
+  function ratioFor(model) {
+    var ent = calibration.get(model || '')
+    return ent ? ent.ratio : 1
+  }
+  function observeRatio(model, actual, est) {
+    if (!(actual >= 500) || !(est >= 500)) return
+    var key = model || ''
+    var ent = calibration.get(key)
+    var r = actual / est
+    if (ent) {
+      ent.ratio = ent.ratio * 0.8 + r * 0.2
+      ent.samples = Math.min(50, ent.samples + 1)
+    } else {
+      ent = { ratio: r, samples: 1 }
+    }
+    calibration.delete(key); calibration.set(key, ent) // refresh LRU position
+    if (calibration.size > 32) {
+      var oldest = calibration.keys().next()
+      if (!oldest.done) calibration.delete(oldest.value)
+    }
+  }
+
+  function noteRecent(kind, label, detail, savedTokens) {
+    recent.unshift({ ts: Date.now(), kind: kind, label: String(label || ''), detail: String(detail || ''), saved: savedTokens || 0 })
+    if (recent.length > 60) recent.length = 60
+  }
+
+  // ---------- estimators (implemented in ./compress.js) ----------
+  function shortId(prefix) { seq = (seq + 1) % 1679616; return prefix + seq.toString(36) + Math.floor(Math.random() * 1296).toString(36) }
+
+  function flattenPlainText(content) {
+    var text = ''
+    if (!Array.isArray(content)) return undefined
+    for (var i = 0; i < content.length; i++) {
+      var b = content[i]
+      if (!b || b.type !== 'text' || typeof b.text !== 'string') return undefined
+      text += b.text
+    }
+    return text
+  }
+
+  function ownerSessionId(exec) {
+    try { return exec.agent && exec.agent.session && exec.agent.session.header ? exec.agent.session.header.id : undefined } catch (e) { return undefined }
+  }
+
+  function rememberOriginal(id, text, locator) {
+    var truncated = text.length > 262144
+    originals.set(id, { text: truncated ? text.slice(0, 262144) : text, locator: locator, truncated: truncated, ts: Date.now() })
+    // This index survives text-cache eviction, not a process restart.
+    // Notices also carry the persistent locator for recovery after restart.
+    locatorIndex.set(id, { locator: locator, ts: Date.now() })
+    if (locatorIndex.size > 4000) {
+      var dropL = locatorIndex.keys()
+      while (locatorIndex.size > 3200) { var lx = dropL.next(); if (lx.done) break; locatorIndex.delete(lx.value) }
+    }
+    if (originals.size > 160) {
+      var it = originals.keys()
+      while (originals.size > 120) { var nx = it.next(); if (nx.done) break; originals.delete(nx.value) }
+    }
+  }
+  function rememberCompressed(id, origText, replacedText, toolName) {
+    var origTok = estTokens(origText), keptTok = estTokens(replacedText)
+    compressedIndex.set(id, { o: Math.max(origTok, 1), k: keptTok, ts: Date.now() })
+    if (compressedIndex.size > 4000) {
+      var drop = compressedIndex.keys()
+      while (compressedIndex.size > 3200) {
+        var nx = drop.next()
+        if (nx.done) break
+        compressedIndex.delete(nx.value)
+      }
+    }
+    var e = byTool.get(toolName) || { count: 0, savedBytes: 0 }
+    e.count++; e.savedBytes += utf8Bytes(origText) - utf8Bytes(replacedText)
+    byTool.set(toolName, e)
+  }
+
+  async function spillOriginal(text, sessionId, toolName, callId) {
+    var store = ctx.get('spillStore')
+    spillAvailable = store !== undefined
+    if (store === undefined) { lastSkip = 'no spillStore backend: reversibility guaranteed, so compression stays off'; return undefined }
+    if (sessionId === undefined) { lastSkip = 'no owning session'; return undefined }
+    try {
+      var ref = await store.saveText({
+        owner: { sessionId: sessionId },
+        source: { toolName: toolName, callId: callId, label: 'result' },
+        suggestedName: toolName + '.txt',
+        content: text
+      })
+      if (!ref || typeof ref.locator !== 'string') { lastSkip = 'spill ref had no locator'; return undefined }
+      return ref
+    } catch (e) { lastSkip = 'spill save failed: ' + String(e); return undefined }
+  }
+
+  // ---------- arm 1: compress/dedupe oversized tool results ----------
+  ctx.on('tools/post-execute', async function (exec, result, next) {
+    var decision = await next()
+    if (!decision || decision.kind !== 'accept') return decision
+    if (Object.prototype.hasOwnProperty.call(decision, 'value')) return decision
+    // surface metrics (E4): how much of the call volume is nested inside
+    // another tool / a subagent? The nesting exemption skips compression for
+    // those calls — this counter quantifies that unexploited surface before
+    // anyone flips the exemption.
+    if (exec.parent !== undefined) comp.nestedCalls++
+    else comp.topLevelCalls++
+    if (exec.parent !== undefined) return decision
+    // `read` stays exempt by design (write-file-then-read-precisely is a
+    // verified information path). `save_token_expand` must stay exempt too:
+    // its whole point is handing back the FULL original, so re-compressing it
+    // would return the same elided preview the model just asked to unfold and
+    // invite an expand loop.
+    if (exec.name === 'read') return decision
+    if (exec.name === 'save_token_expand') return decision
+    var content = decision.content !== undefined ? decision.content : result.content
+    var text = flattenPlainText(content)
+    if (text === undefined) return decision
+    var isError = result.isError === true
+    var sessionId = ownerSessionId(exec)
+
+    // dedupe arm (headroom cross-turn dedup). Fingerprints are byte-exact,
+    // so a longer TTL is information-safe; freshness-sensitive tools can opt
+    // out via dedupeTtlOverrides (0 = never dedupe that tool).
+    if (cfg.dedupeEnabled && !isError) {
+      var ttl = Object.prototype.hasOwnProperty.call(cfg.dedupeTtlOverrides, exec.name) ? cfg.dedupeTtlOverrides[exec.name] : cfg.dedupeTtlMs
+      if (ttl > 0) {
+        var fp = dedupeFingerprint(sessionId, exec.name, argsToString(exec.arguments), text)
+        var prev = dedupeCache.get(fp)
+        var now = Date.now()
+        if (prev && now - prev.ts <= ttl) {
+          var ref2 = await spillOriginal(text, sessionId, exec.name, exec.callId)
+          if (ref2 !== undefined) {
+            var did = shortId('d')
+            var agoSec = Math.round((now - prev.ts) / 1000)
+            var stub = '[save-token #' + did + ' deduped: this ' + exec.name + ' call returned BYTE-IDENTICAL output to a call ' + agoSec + 's ago, which remains in context above. Do not answer from this stub alone; retrieve the earlier message, or re-run if freshness matters. Full copy of THIS call stored at: ' + ref2.locator + '. ' + (ref2.retrievalHint || '') + ']'
+            var savedB = utf8Bytes(text) - utf8Bytes(stub)
+            if (savedB > cfg.minSavingBytes) {
+              rememberOriginal(did, text, ref2.locator)
+              comp.dedupeHits++; comp.dedupeSavedBytes += savedB
+              rememberCompressed(did, text, stub, exec.name)
+              noteRecent('dedupe', exec.name, 'identical output within ' + agoSec + 's -> stubbed', estTokens(text) - estTokens(stub))
+              return { kind: 'accept', content: [{ type: 'text', text: stub }] }
+            }
+          }
+        }
+        dedupeCache.set(fp, { ts: now, callId: exec.callId })
+        if (dedupeCache.size > 800) {
+          var dk = dedupeCache.keys()
+          while (dedupeCache.size > 500) { var dn = dk.next(); if (dn.done) break; dedupeCache.delete(dn.value) }
+        }
+      }
+    }
+
+    // compress arm
+    if (!cfg.compressEnabled) return decision
+    var threshold = effectiveMinBytes(isError ? cfg.errorMinBytes : cfg.minBytes, cfg.minSavingBytes, cfg.keepRatioMax)
+    if (utf8Bytes(text) <= threshold) return decision
+    var cand = buildCandidate(text, cfg)
+    if (cand === null) return decision
+    var ref = await spillOriginal(text, sessionId, exec.name, exec.callId)
+    if (ref === undefined) { noteRecent('skip', exec.name, lastSkip, 0); return decision }
+    var id = shortId('c')
+    // counters count ADOPTED compressions now (v2.1.x counted attempts the
+    // gates later rejected)
+    if (cand.lossless) comp.losslessEncodes++
+    if (cand.strategy === 'lines-strided') comp.tabularWindows++
+    comp.count++; comp.bytesBefore += cand.before; comp.bytesAfter += cand.after
+    var verbose = comp.count <= cfg.noticeFullTrailerCount
+    var finalText = buildNotice({
+      body: cand.text,
+      id: id,
+      before: cand.before,
+      after: cand.after,
+      lossless: cand.lossless,
+      stats: cand.stats,
+      locator: ref.locator,
+      retrievalHint: ref.retrievalHint || '',
+      verbose: verbose
+    })
+    rememberOriginal(id, text, ref.locator)
+    rememberCompressed(id, text, finalText, exec.name)
+    noteRecent(cand.lossless ? 'lossless' : 'compress', exec.name, fmtInt(cand.before) + 'B -> ' + fmtInt(cand.after) + 'B (-' + Math.round((1 - cand.after / cand.before) * 100) + '%)', estTokens(text) - estTokens(finalText))
+    return { kind: 'accept', content: [{ type: 'text', text: finalText }] }
+  }, { prepend: true })
+
+  // ---------- arm 2: measure every model request (llm/stream waterfall) ----------
+  var MARKER_RE = /\[save-token #([a-z0-9]+) /g
+  function collectTexts(blocks, out, depth) {
+    if (!Array.isArray(blocks)) return
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i]
+      if (!b || typeof b !== 'object') continue
+      if (typeof b.text === 'string') out.push(b.text)
+      else if (typeof b.arguments === 'string') out.push(b.arguments)
+      else if (Array.isArray(b.content) && depth < 3) collectTexts(b.content, out, depth + 1)
+    }
+  }
+  function computeAvoided(messages) {
+    var texts = []
+    collectTexts(messages, texts, 0)
+    var avoided = 0, hits = 0
+    for (var i = 0; i < texts.length; i++) {
+      MARKER_RE.lastIndex = 0
+      var m
+      while ((m = MARKER_RE.exec(texts[i])) !== null) {
+        var ent = compressedIndex.get(m[1])
+        if (ent) { avoided += Math.max(0, ent.o - ent.k); hits++ }
+      }
+    }
+    return { avoided: avoided, hits: hits }
+  }
+
+  ctx.on('llm/stream', function (options, next) {
+    var rec = {
+      ts: Date.now(), kind: options.purpose ? 'aux' : 'request',
+      session: options.sessionId ? String(options.sessionId).slice(-8) : '(direct)',
+      provider: String(options.provider || ''), model: String(options.model || ''),
+      estPrompt: 0, input: 0, cached: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0,
+      avoided: 0, replayHits: 0, closed: false, finish: ''
+    }
+    var fullSid = options.sessionId ? String(options.sessionId) : undefined
+    try {
+      var texts = []
+      if (typeof options.system === 'string') texts.push(options.system)
+      collectTexts(options.messages, texts, 0)
+      for (var i = 0; i < texts.length; i++) rec.estPrompt += estTokens(texts[i])
+      if (Array.isArray(options.tools) && options.tools.length > 0) {
+        try { rec.estPrompt += estTokens(JSON.stringify(options.tools).slice(0, 200000)) } catch (e) {}
+      }
+      var av = computeAvoided(options.messages)
+      rec.avoided = av.avoided; rec.replayHits = av.hits
+    } catch (e) { console.error('save-token: measure failed', e) }
+
+    function observe(chunk) {
+      if (chunk && chunk.type === 'usage' && chunk.usage) {
+        rec.input += chunk.usage.inputTokens || 0
+        var cr = chunk.usage.cacheReadTokens || 0
+        var cw = chunk.usage.cacheWriteTokens || 0
+        // keep the split visible (cache health sentinel) alongside the sum
+        rec.cacheRead += cr; rec.cacheWrite += cw
+        rec.cached += cr + cw
+        rec.output += chunk.usage.outputTokens || 0
+        rec.reasoning += chunk.usage.reasoningTokens || 0
+      } else if (chunk && chunk.type === 'finish' && chunk.reason) {
+        rec.finish = String(chunk.reason.kind || '')
+      }
+    }
+    function closeRecord() {
+      if (rec.closed) return
+      rec.closed = true
+      rec.ms = Date.now() - rec.ts
+      observeRatio(rec.model, rec.input + rec.cached, rec.estPrompt)
+      var ratio = ratioFor(rec.model)
+      if (rec.kind === 'aux') totals.auxRequests++; else totals.requests++
+      totals.inputTokens += rec.input; totals.cachedTokens += rec.cached
+      totals.cacheReadTokens += rec.cacheRead; totals.cacheWriteTokens += rec.cacheWrite
+      totals.outputTokens += rec.output; totals.reasoningTokens += rec.reasoning
+      // avoided accounting is calibrated by the model's observed est/actual ratio
+      totals.avoidedTokens += Math.round(rec.avoided * ratio)
+      totals.estPromptTokens += rec.estPrompt
+      comp.replays += rec.replayHits
+      records.push(rec)
+      if (records.length > 480) records.splice(0, records.length - 400)
+      noteRecent(rec.kind === 'aux' ? 'aux' : 'request', rec.model || rec.provider || '?',
+        'prompt~' + fmtInt(rec.estPrompt) + ' tok, out ' + fmtInt(rec.output) + ', avoided ~' + fmtInt(Math.round(rec.avoided * ratio)) + (rec.replayHits ? ' (' + rec.replayHits + ' replayed)' : ''), Math.round(rec.avoided * ratio))
+    }
+
+    var inner = next()
+    async function* tracked() {
+      try {
+        for await (var chunk of inner) { observe(chunk); yield chunk }
+      } finally { closeRecord() }
+    }
+    return tracked()
+  })
+
+  // arm 3 (compaction assist) removed on embed — see the file header. The
+  // compaction contract lives in dsh-cache-control's 省缓存 block and nowhere
+  // else.
+
+  // ---------- arm 3: save_token_expand retrieval tool (CCR closure) ----------
+  ctx.tools.register({
+    name: 'save_token_expand',
+    description: 'Retrieve the FULL ORIGINAL text behind a compressed [save-token #id] tool-output notice. Use it whenever an omitted region might contain a detail you need, instead of guessing from the preview.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The short marker id from the notice, e.g. "c1or".' }
+      },
+      required: ['id']
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: function (args, value) {
+        var t = value && value.truncated
+          ? 'Partial preview only. Use the read tool to retrieve the FULL ORIGINAL at: ' + value.locator
+          : value && typeof value.text === 'string' ? value.text : String((value && value.error) || 'not found')
+        return [{ type: 'text', text: t }]
+      }
+    },
+    execute: function (args) {
+      // defineTool()'s INVALID_ARGS guard, inlined
+      if (args === null || typeof args !== 'object' || typeof args.id !== 'string') {
+        return Promise.reject(new Error('invalid arguments: id must be a string'))
+      }
+      var key = args.id.trim()
+      var ent = originals.get(key)
+      if (ent && !ent.truncated) return Promise.resolve({ text: ent.text, locator: ent.locator, truncated: false })
+      // An oversized in-memory preview is not a complete result. Read the
+      // spill when supported, otherwise return an actionable locator.
+      var loc = ent || locatorIndex.get(key)
+      function locatorFallback() {
+        return { error: 'The FULL ORIGINAL is stored at: ' + loc.locator + '. Use the read tool on that path.', locator: loc.locator }
+      }
+      if (loc) {
+        var store = ctx.get('spillStore')
+        if (store && typeof store.readText === 'function') {
+          return Promise.resolve().then(function () { return store.readText({ locator: loc.locator }) }).then(function (out) {
+            var t = typeof out === 'string' ? out : out && out.truncated !== true && typeof out.text === 'string' ? out.text : null
+            if (t !== null) return { text: t, locator: loc.locator, truncated: false }
+            return locatorFallback()
+          }, function () { return locatorFallback() })
+        }
+        return Promise.resolve(locatorFallback())
+      }
+      return Promise.resolve({ error: 'unknown or expired id. Find the FULL ORIGINAL path printed inside the original [save-token #...] notice and use the read tool on that path.' })
+    }
+  })
+
+  // ---------- package-private JSON API for the Client dashboard ----------
+  ctx.effect(
+    () => {
+      const handler = async (req, res) => {
+        try {
+          const path = String(req.url ?? '').split('?')[0].replace(/\/+$/, '')
+          const action = path.endsWith('/api/dashboard') ? 'dashboard'
+            : path.endsWith('/api/set-enabled') ? 'set-enabled'
+            : path.endsWith('/api/reset') ? 'reset' : ''
+          if (req.method === 'GET' && action === 'dashboard') {
+            sendJson(res, 200, dashboardPayload())
+            return
+          }
+          if (req.method === 'POST' && (action === 'set-enabled' || action === 'reset')) {
+            let args = {}
+            try {
+              const chunks = []
+              for await (const c of req) chunks.push(c)
+              const raw = Buffer.concat(chunks).toString('utf8')
+              if (raw) args = JSON.parse(raw)
+            } catch (e) { args = {} }
+            sendJson(res, 200, action === 'set-enabled' ? setEnabled(args) : resetAll())
+            return
+          }
+          sendJson(res, 404, { ok: false, error: 'unknown save-token endpoint' })
+        } catch (error) {
+          sendJson(res, 500, { ok: false, error: String(error?.message ?? error) })
+        }
+      }
+      return ctx.webServer.register({ kind: 'prefix', path: '/cc/st', handler })
+    },
+    'save-token: dashboard API routes'
+  )
+
+  function sendJson(res, status, payload) {
+    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(JSON.stringify(payload))
+  }
+
+  function dashboardPayload() {
+    var series = records.slice(-60).map(function (r) {
+      return { p: r.input + r.cached || r.estPrompt, a: r.avoided, aux: r.kind === 'aux' }
+    })
+    var tools = []
+    byTool.forEach(function (v, k) { tools.push({ name: k, count: v.count, savedBytes: v.savedBytes }) })
+    tools.sort(function (a, b) { return b.savedBytes - a.savedBytes })
+    var billedInput = totals.inputTokens + totals.cachedTokens
+    var ratioSum = 0, ratioSamples = 0
+    calibration.forEach(function (e) { ratioSum += e.ratio * e.samples; ratioSamples += e.samples })
+    return {
+      uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+      flags: { compress: cfg.compressEnabled, dedupe: cfg.dedupeEnabled, expandTool: true },
+      spillReady: spillAvailable,
+      lastSkip: lastSkip,
+      totals: totals,
+      reliefPct: (billedInput + totals.avoidedTokens) > 0 ? Math.round(totals.avoidedTokens * 100 / (billedInput + totals.avoidedTokens)) : 0,
+      // cache-health sentinel: most input rides provider prompt cache (bench:
+      // 88.9% cache-read at 1/30 price), so any change that tanks this number
+      // is saving tokens while silently raising real cost
+      cacheHitPct: billedInput > 0 ? Math.round(totals.cacheReadTokens * 100 / billedInput) : 0,
+      estRatio: ratioSamples > 0 ? Math.round(ratioSum / ratioSamples * 100) / 100 : null,
+      compression: comp,
+      byTool: tools.slice(0, 8),
+      series: series,
+      recent: recent.slice(0, 18)
+    }
+  }
+
+  function setEnabled(args) {
+    var a = args || {}
+    if (a.key === 'compress') cfg.compressEnabled = !!a.value
+    else if (a.key === 'dedupe') cfg.dedupeEnabled = !!a.value
+    else return { ok: false }
+    noteRecent('config', a.key, (a.value ? 'enabled' : 'disabled'), 0)
+    return { ok: true, flags: { compress: cfg.compressEnabled, dedupe: cfg.dedupeEnabled, expandTool: true } }
+  }
+
+  function resetAll() {
+    totals.requests = 0; totals.auxRequests = 0; totals.inputTokens = 0; totals.cachedTokens = 0
+    totals.cacheReadTokens = 0; totals.cacheWriteTokens = 0
+    totals.outputTokens = 0; totals.reasoningTokens = 0; totals.avoidedTokens = 0; totals.estPromptTokens = 0
+    comp.count = 0; comp.bytesBefore = 0; comp.bytesAfter = 0; comp.dedupeHits = 0; comp.dedupeSavedBytes = 0; comp.replays = 0; comp.losslessEncodes = 0; comp.tabularWindows = 0
+    comp.topLevelCalls = 0; comp.nestedCalls = 0
+    // Reset statistics only. Existing notices and active sessions still own
+    // their recovery and dedupe state; clearing it would change behavior.
+    records.length = 0; recent.length = 0; byTool.clear()
+    startedAt = Date.now()
+    return { ok: true }
+  }
+
+  console.log('save-token v2 (embedded in dsh-cache-control): structure-aware compress + lossless tabular encode + expand tool; compaction assist removed on embed')
+}

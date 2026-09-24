@@ -41,6 +41,9 @@ import { promises as fs } from 'node:fs'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+// 省 token（v1.13.0）：并入 dsh-plugin-save-token v2.4.1 的宿主半边，
+// 作为嵌套插件从 apply() 里挂载。核掉的部分见该文件头部注释。
+import * as saveToken from './save-token-host.js'
 
 export const name = 'dsh-cache-control'
 export const inject = ['webServer']
@@ -1012,6 +1015,29 @@ export async function apply(ctx) {
     console.warn('[dsh-cache-control] boot reconcile skipped: ' + String((err && err.message) || err))
   }
 
+  // ---- 省 token（v1.13.0）：并入自 dsh-plugin-save-token 的压缩/去重/取回 ----
+  // 用 ctx.plugin 挂成**嵌套 Cordis 插件**（不是独立 bundle 行）：
+  //   · 它有自己的装配条目才能独立装卸，那样就又多了一个会与别人冲突的槽位；
+  //   · 嵌套挂载下 inject=['tools','webServer'] 由 Cordis 自己等服务就绪，
+  //     父层不必把 tools 写进自己的 inject 列表；
+  //   · 卸载本插件时子插件随之卸载（ctx.effect 语义一致），旧会话的
+  //     spillStore 引用也不会残留。
+  // 上游的 compaction assist 分支已整段删除：压缩契约只归本插件的「省缓存」
+  // 一块所有（它写 preset 那行 + 字节级备份还原），两处驱动同一个引擎就是
+  // 这次嵌入要避免的冲突。理由与删除清单见 save-token-host.js 文件头。
+  let saveTokenMounted = false
+  if (typeof ctx.plugin === 'function') {
+    try {
+      ctx.plugin(saveToken, {})
+      saveTokenMounted = true
+      console.log('[dsh-cache-control] save-token half mounted as nested plugin (compress + dedupe + save_token_expand)')
+    } catch (err) {
+      console.warn('[dsh-cache-control] save-token half failed to mount: ' + String((err && err.message) || err))
+    }
+  }
+  // ctx.plugin 不在时**不算挂载失败**（老上下文/测试替身没有嵌套挂载 API）：不 warning，
+  // 只在下面 host up 那行标 saveToken=absent，免得八套别的替身每次都喊"挂载失败"。
+
   // ---- 会话门禁：向提示词注册表挂一段常驻规则（宿主全局层）----
   // 用 ctx.inject 惰性依赖：拿不到 systemPrompt 服务时只关掉门禁功能，
   // 不连带把压缩开关一起弄挂。text 为函数 ⇒ 每次 assemble 重新求值，
@@ -1432,5 +1458,6 @@ export async function apply(ctx) {
     + ' shape=' + settings.shapeEnabled
     + ' shapeSection=' + (shapeSectionActive ? 'mounted' : 'absent')
     + ' shapeBytes=' + Buffer.byteLength(shapeText, 'utf8')
-    + ' skills=' + (ruleSkillState.registered.length ? ruleSkillState.registered.join('+') : 'none'))
+    + ' skills=' + (ruleSkillState.registered.length ? ruleSkillState.registered.join('+') : 'none')
+    + ' saveToken=' + (saveTokenMounted ? 'mounted' : 'absent'))
 }
