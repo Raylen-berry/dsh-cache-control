@@ -1,6 +1,6 @@
 // 验证 dsh-cache-control 会话门禁：把插件的 gate 解析器接到 DSH 真实的
 // renderPrompt 上，证明 (1) 关=空段被丢弃 (2) 开=规则入提示词
-// (3) 用户写坏花括号也不会让组装抛错 (4) 压缩行改写逻辑无回归。
+// (3) 用户写坏花括号也不会让组装抛错 (4) 设置清洗不丢字段、压缩接管确已移除。
 const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
 // 本包在 Node ESM 下没有自引用导出，裸 import('@deepseek-ai/dsh-system-prompt') 不会查自己的
 // node_modules ⇒ 用 createRequire(仓库 package.json) 解析（CI 里 npm ci 装出的那份），APP 兜底。
@@ -42,64 +42,28 @@ const { renderPrompt } = spMod
 // （它以前直接指向真实 $DSH_HOME，靠"最后还原"兜底：中途崩掉就会把一串
 //   {{bogus_var}} 测试垃圾留在真实 gate.md 里，静默顶替掉用户的规则。已改掉。）
 //
-// v1.9.4 夹具化：preset 不再从 %APPDATA% 复制 —— 压缩行改写断言只消费文件的**文本结构**
-// （spliceCompactionRow 找 compaction-basic 那一行块），仓库自带的最小夹具足够；
-// "本机安装文件未被改动"的守护在真实 home 存在时照比（CI 上没有就跳过那两条，如实标注）。
-// 于是本套件在干净机器/CI 上可跑，从 EXCLUDED 挪回 SUITES。
+// v1.14.0：压缩接管（改写 agent.cordis.yml）已移除 ⇒ 本套件不再需要任何 preset 夹具，
+// 也不再对照真实安装文件，只剩"真实 home 的 settings.json / gate.md 没被碰过"两条守护。
 const REAL_HOME = pathMod.join(process.env.APPDATA || '', 'dsh-desktop', 'harness')
 const realSettingsPath = pathMod.join(REAL_HOME, 'dsh-cache-control', 'settings.json')
 const realOverridePath = pathMod.join(REAL_HOME, 'dsh-cache-control', 'gate.md')
-const realPresetPath = pathMod.join(REAL_HOME, 'profiles', 'node_modules', '@deepseek-ai',
-  'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml')
 
 const ROOT = process.env.DSH_TOOL_HOME || pathMod.join(os.tmpdir(), 'gate-fn-home-' + process.pid)
 fs.rmSync(ROOT, { recursive: true, force: true })
 fs.mkdirSync(pathMod.join(ROOT, 'dsh-cache-control'), { recursive: true })
-const tempPresetDir = pathMod.join(ROOT, 'profiles/node_modules/@deepseek-ai/dsh-agent-presets/presets/standard')
-fs.mkdirSync(tempPresetDir, { recursive: true })
 process.env.DSH_HOME = ROOT
 
 // 「真实文件未被改动」的收尾对照：本机有就比，CI 没有就跳过对应两条（如实标注）。
-const realBefore = fs.existsSync(realSettingsPath) && fs.existsSync(realPresetPath) ? {
+const realBefore = fs.existsSync(realSettingsPath) ? {
   settings: fs.readFileSync(realSettingsPath, 'utf8'),
   hadOverride: fs.existsSync(realOverridePath),
-  preset: fs.readFileSync(realPresetPath, 'utf8'),
 } : null
 
 const settingsFile = pathMod.join(ROOT, 'dsh-cache-control', 'settings.json')
 const overrideFile = pathMod.join(ROOT, 'dsh-cache-control', 'gate.md')
-// 断言基线**固定自写**（enabled/triggerPct/retainPct = true/30/4）——不拿真实安装文件当期望值来源：
-// CI 上没有 %APPDATA%，而 DEFAULTS(25/5) 与下面三条断言的写死期望(30/4)不同构 ⇒ 首跑即红
-// （本机绿纯属巧合：真实 settings.json 恰好是 30/4）。"改没改对"由第 5 节自己造底自证。
-const BASELINE_SETTINGS = JSON.stringify({ ...host.DEFAULTS, enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true })
-const settingsBackup = BASELINE_SETTINGS
+// 断言基线固定自写（不拿真实安装文件当期望值来源：CI 上没有 %APPDATA%）。
+const settingsBackup = JSON.stringify({ ...host.DEFAULTS, gateEnabled: true })
 fs.writeFileSync(settingsFile, settingsBackup, 'utf8')
-
-// 最小 preset 夹具：结构（缩进、compaction-basic 行块位置）与真实 agent.cordis.yml 一致，
-// spliceCompactionRow 只认这个文本结构。托管块形态逐字节对照 index.js 的 compactionConfigLines
-// （标记全文 + config: + 三个更深键），"只动那一行块"的双向移除正则才与真实接管态同构。
-const MINIMAL_PRESET = [
-  '# minimal fixture for verify-session-gate (structure mirrors the real standard preset)',
-  '- id: persona',
-  "  name: '@deepseek-ai/dsh-persona'",
-  '  config:',
-  '    suffix: Your working directory is {{cwd}}.',
-  '- id: compaction',
-  '  name: cordis:group',
-  '  group: true',
-  '  isolate:',
-  '    compaction: true',
-  '  config:',
-  '    - id: compaction-basic',
-  "      name: '@deepseek-ai/dsh-compaction-basic'",
-  '      # managed by dsh-cache-control (auto-rewritten)',
-  '      config:',
-  '        thresholdRatio: 0.30',
-  '        retainRatio: 0.04',
-  '        auto: true',
-  '',
-].join('\n')
-fs.writeFileSync(pathMod.join(tempPresetDir, 'agent.cordis.yml'), MINIMAL_PRESET, 'utf8')
 
 const render = (gateText) => renderPrompt({
   sections: [
@@ -169,25 +133,22 @@ ok('截断带可见提示', big.includes('省略'))
 await host.writeGateOverride('')
 
 console.log('\n— 5. 设置清洗（两个开关独立）—')
-ok('sanitize 保留 gateEnabled', host.sanitize({ enabled: true, gateEnabled: true }).gateEnabled === true)
-ok('gateEnabled 缺省为 false（不被 undefined 污染）', host.sanitize({ enabled: true }).gateEnabled === false)
+ok('sanitize 保留 gateEnabled', host.sanitize({ gateEnabled: true }).gateEnabled === true)
+ok('gateEnabled 缺省为 false（不被 undefined 污染）', host.sanitize({}).gateEnabled === false)
 ok('非 true 值一律视为关', host.sanitize({ gateEnabled: 'yes' }).gateEnabled === false)
-ok('部分 PUT 合并后不丢压缩字段', (() => {
-  const merged = host.sanitize({ ...JSON.parse(settingsBackup), gateEnabled: true })
-  return merged.enabled === true && merged.triggerPct === 30 && merged.retainPct === 4 && merged.gateEnabled === true
-})(), JSON.stringify(host.sanitize({ ...JSON.parse(settingsBackup), gateEnabled: true })))
+ok('部分 PUT 合并后不丢同族开关', (() => {
+  const merged = host.sanitize({ ...JSON.parse(settingsBackup), ponytailEnabled: true })
+  return merged.ponytailEnabled === true && merged.gateEnabled === true && merged.shapeEnabled === host.DEFAULTS.shapeEnabled
+})(), JSON.stringify(host.sanitize({ ...JSON.parse(settingsBackup), ponytailEnabled: true })))
 ok('DEFAULTS 含 gateEnabled', host.DEFAULTS.gateEnabled === false)
+ok('v1.14.0：压缩字段不再进 sanitize 结果（旧盘残留会被下一次保存清掉）',
+  !('enabled' in host.sanitize({ enabled: true })) && !('triggerPct' in host.sanitize({ triggerPct: 30 })))
 
-console.log('\n— 6. 压缩行改写无回归（只在内存里跑）—')
-const presetFile = pathMod.join(process.env.DSH_HOME, 'profiles', 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml')
-const original = fs.readFileSync(presetFile, 'utf8')
-const vals = host.resolveValues({ triggerPct: 30, retainPct: 4, auto: true })
-const spliced = host.spliceCompactionRow(original, vals)
-ok('开启：写出 managed 标记 + 三个参数', spliced.includes('managed by dsh-cache-control') && spliced.includes('thresholdRatio: 0.30') && spliced.includes('retainRatio: 0.04'))
-ok('关闭：标记与 config 一并移除', !host.spliceCompactionRow(original, null).includes('thresholdRatio'))
-ok('幂等：同参数重写结果不变', host.spliceCompactionRow(spliced, vals) === spliced)
-ok('只动那一行块（其余字节不变）', spliced.replace(/ {6}# managed[^\n]*\n {6}config:\n {8}thresholdRatio[^\n]*\n {8}retainRatio[^\n]*\n {8}auto:[^\n]*/m, '') === original.replace(/ {6}# managed[^\n]*\n {6}config:\n {8}thresholdRatio[^\n]*\n {8}retainRatio[^\n]*\n {8}auto:[^\n]*/m, ''))
-ok('磁盘上的 preset 文件未被本次验证改动', fs.readFileSync(presetFile, 'utf8') === original)
+console.log('\n— 6. 压缩接管已移除（v1.14.0）—')
+ok('host 不再导出压缩接管的写盘函数',
+  !host.resolveValues && !host.spliceCompactionRow && !host.applyToStandard && !host.readComposition)
+ok('DEFAULTS 里不再有压缩开关字段',
+  !('enabled' in host.DEFAULTS) && !('triggerPct' in host.DEFAULTS) && !('retainPct' in host.DEFAULTS) && !('auto' in host.DEFAULTS))
 
 console.log('\n— 7. 清理：临时目录删掉，真实 home 必须一根毫毛没动 —')
 ok('临时 settings 写过又还原（自证测试确实在动文件）', (() => {
@@ -199,9 +160,8 @@ fs.rmSync(ROOT, { recursive: true, force: true })
 if (realBefore) {
   ok('真实 settings.json 未被本套件改动', fs.readFileSync(realSettingsPath, 'utf8') === realBefore.settings)
   ok('真实 gate.md 存在状态未变', fs.existsSync(realOverridePath) === realBefore.hadOverride)
-  ok('真实 preset 未被本套件改动', fs.readFileSync(realPresetPath, 'utf8') === realBefore.preset)
 } else {
-  console.log('  SKIP  真实 home 对照 3 条 —— 本机没有 DSH 安装态（CI），跳过并如实标注')
+  console.log('  SKIP  真实 home 对照 2 条 —— 本机没有 DSH 安装态（CI），跳过并如实标注')
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n')

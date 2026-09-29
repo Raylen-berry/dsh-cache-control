@@ -1,5 +1,117 @@
 # 变更记录
 
+## 1.16.0 — 2026-09-28 · 预设、历史、生效检查与会话独立设置
+
+- 规则页增加命名预设、应用前差异预览、全局/当前会话范围选择；预览过期后拒绝应用，要求重新核对。
+- 原始正文独立留档，恢复内置前也备份；历史可对比、恢复。应用全局预设记录事务备份并冻结读取，失败回滚，启动恢复中断事务。
+- 基于当前会话标识合并规则开关与正文快照；其他会话和子会话不继承本会话覆盖。输入框旁快捷开关只改当前会话，设置页下方保留全局默认。
+- 请求检查只核对模型请求的系统文本，不把用户消息当作注入证据；明确区分未挂载、等待请求、配置变化、已找到及缺失，不保存对话正文。
+- 编辑时给出文本负担粗估、重复行与常见篇幅冲突位置；本地启发式检查，不自动改写、不调用模型。
+- 历史展开后占满可用行宽；标明顶部统计为全局默认，快捷开关标明本会话。写入期间切走页面仍同步结果，会话切换丢弃旧读取。
+- 5 项语法检查、12 套离线测试、29 项浏览器交互检查通过；本机 DSH 0.1.7 提示词组装模块另通过 39 项策略检查。测试使用临时目录，未改用户配置。
+- 需要重启 DSH Desktop 加载新宿主逻辑；本次未自动重启应用。
+
+## 1.15.0 — 2026-09-28 · 四分区控制台与保存、存储生命周期改良
+
+- 界面改为规则 / 省 token / 对话外观 / 存储，顶部显示生效概况；支持明暗主题、窄窗与键盘切换，技术详情折叠。
+- 保存仅写改动字段，串行合并连续修改；失败保留内容并可重试，超时可恢复，旧读取不能倒灌新开关值。
+- 规则读写共用实现，保存成功优先使用服务端返回值；切换分区保留草稿，失败不清稿，文本保存不覆盖独立开关。
+- 审查状态不再被无 review 字段的主设置读取重置。审查可用性与工具安装状态分开显示。
+- 只挂载当前分区；统计在后台暂停，退出取消请求，存储按需扫描；共享并发统计并缓存 5 秒，刷新与清理失效。
+- 缓存候选移除提示词产物和回收目录自身，补齐路径边界。清理预览确认、显式提交目标、显示部分失败，永久清空单独确认。
+- 修复存储回收统计错误使用默认 home；明确移入回收不释放磁盘空间。
+- 回归覆盖保存队列、失败重试、草稿与开关竞态、后台恢复、扫描缓存和保护目录；新增隔离浏览器交互与截图验证。
+- 保留工作区已有的 1.14.0 DSH 0.1.7 兼容修改；本次没有修改用户配置或执行实际缓存清理。
+
+## 1.14.0 — 2026-09-28 · 删掉「省缓存 · 压缩策略」整条写盘路径（DSH 0.1.7 起没有落点）
+
+**现象**：用户报"那些会话策略的插件怎么全失效了，是不是更新之后不适配了"。实测**不是全失效**：
+host 半的三段常驻注入（会话守则 / ponytail / 输出形状）照常进 system prompt，`/cc/gate.json` 也照常 200。
+坏的是两处：**设置页整页打不开**（`GET /cc/settings.json` → 500），以及压缩接管静默失效。
+
+**500 的原文**（查证所得，不是猜的）：
+
+```
+{"ok":false,"error":"cannot locate standard preset agent.cordis.yml (tried: ...\profiles\node_modules\@deepseek-ai\dsh-agent-presets\presets\standard\agent.cordis.yml | ...\profiles\web\node_modules\...\agent.cordis.yml)"}
+```
+
+**根因**（三条独立证据）：① DSH 0.1.7 把 `resources\app\`（真目录）换成 `resources\app.asar` +
+`app.asar.unpacked\`，旧 junction 指向的目标已不存在（`Test-Path` = False）；② 扫 `app.asar` 头部
+5,470,978 字节，`agent.cordis.yml` 命中 **0** 次、`dsh-agent-presets`（复数）**一次都没有**，
+只有 `dsh-agent-preset` + `dsh-agent-preset-registry`；③ 启动日志同步刷
+`[dsh-cache-control] boot reconcile skipped: cannot locate ...`（这条一直有，只是被 try/catch 吞了）。
+
+**改法**：删掉整条写盘路径，不留一个永远点不动的开关。
+
+- `index.js`：`MANAGER_MARK` / `standardCompositionCandidates` / `resolveStandardFile` /
+  `compactionConfigLines` / `spliceCompactionRow` / `indentWidth` / `hasManagedMarker` /
+  `ROUTED_CONTEXT_WINDOW` / `compactionFieldsChanged` / `resolveValues` / `readComposition` /
+  `applyToStandard` 全部删除；boot 对账只剩 `migrateFromAtelier()`；GET 不再读组装文件
+  （**这就修掉了 500**），PUT 不再算 `touched` / `applied`。
+- `DEFAULTS` / `sanitize`：`enabled` / `triggerPct` / `retainPct` / `auto` 四个字段一并删除 ——
+  留着会破坏"保存载荷与 DEFAULTS 完全一致"这个不变量（`verify-settings-payload.mjs` 的守门断言）。
+  旧盘上的残留值会在下一次保存时消失。
+- `compactionBackup` **保留、只读**：它存着用户接管前的 preset 原文，而那个文件现在已经不存在，
+  它是磁盘上唯一的副本。按"不认识的数据不当垃圾删"处理，永不写入、也永不丢弃。
+- `client.js`：删「省缓存」卡（`CacheCard`）、紧凑面板的压缩段、`setTrigger` / `setRetain` /
+  `setEnabled` / `setAuto` / `flipCache`、STORE 里 7 个压缩字段、chip 的「省缓存」段（4 段 → 3 段）；
+  设置页分区 9 → 8。**顺带修一个真回归**：全局加载/保存错误原先只由那张卡渲染，删卡后 host 挂掉时
+  设置页再没有任何可见提示（页面只是空着）⇒ 把 `s.error` 提到页面顶部（`role="alert"`）。
+
+**验证**
+
+- 语法门禁 4/4；11 套离线测试 **全绿**。唯一一条红是本轮之前就存在的
+  `verify-gate-client.mjs` → "底图工坊设置页里仍留一句去处说明"（对面插件里的文案问题，与本轮无关，未动）。
+- 套件同步：`verify-session-gate.mjs` 把"压缩行改写"节换成"删干净了"的守卫；`verify-host-width.mjs`
+  删掉四组接管断言（约 146 行）与启动对账节；`verify-settings-concurrency.mjs` 不再造 preset 夹具；
+  `verify-settings-payload.mjs` **故意不造** preset 夹具（装不上 `agent.cordis.yml` 也必须能开面板、能保存
+  —— 真去读了就会 500、PUT 抓不到，断言自己会红）；`verify-gate-client.mjs` 按新形状重写约 20 条
+  （chip 三段的标签/徽标/竖线/按钮数、checkedCount 7 → 5、分区 9 → 8）。
+- 版本 → 1.14.0。
+
+**回退**：本轮只删代码、只改测试与文档，未动 `$DSH_HOME` 下任何数据（`settings.json` 里那 12 KB 的
+`compactionBackup` 原样在盘上）。要回退就 revert 这一个提交；`settings.json` 里那四个字段会随一次保存
+消失，但压缩接管本身在 DSH 0.1.7 上无论回退与否都不工作。
+
+## 1.13.3 — 2026-09-28 · 空会话「工作区行」左边缘对齐输入卡（把 1.12.1 那条没落地的规则真正落地）
+
+**现象**（用户第二次报，附截图）："会话页又出现了这个 DeepSeek 文件夹标识和对话框不对齐" ——
+空会话页里 `DeepSeek` 文件夹标识 + 标准模式/PPT/生图 那一行，比下方输入卡靠左一大截。
+
+**根因有两层，都不要漏**
+
+1. **规则从来没进过代码。** `git log --all -S 'heroWorkspaceRow'` 全仓只匹配到一处改动，就是 1.12.1 那条
+   CHANGELOG 本身；`git grep heroWorkspaceRow <那次提交> -- client.js` 一条都没有 ⇒ 1.12.1 写的
+   "真浏览器实测改后 387.72 / 387.73" 是**没有对应代码的验收记录**。用户说"又出现了"，其实是从来没修过。
+   教训：CHANGELOG 里的"验证"必须指向那一版真的存在的代码，否则它比不写更坏 —— 后人（和下一轮的自己）
+   会按它判断"这条已经修好了"。
+2. **就算当年那两条规则活着，也不完全对。** 宿主后来把右侧那 20px 挪进了 `heroModeClusterCss`
+   （与行内边距规则同级、后出现 ⇒ 生效），当年只补左侧内边距的写法仍会偏。
+
+**实测**（本机 hero 页真浏览器，会话列 1144、对话页宽度 90%）：输入卡 `left=387.73`、行里 chip `left=340.70`
+⇒ **差 47.03px**。宿主自己的行内边距（20px）本就与自己的卡容器（16px）差 4px；本插件的「对话页宽度」
+把卡宽换成 `P%` 后，卡还要在容器内容区里再居中一次，4px 于是放大成几十像素。
+
+**改法**（`client.js` 的 `CSS` 数组末尾两条静态规则，无条件生效 —— 对齐是"不变量"，不给开关）
+
+- 行内边距改走宿主同一来源：`padding-left/right:var(--dsh-composer-side-clearance,16px) !important` + `box-sizing:border-box`。
+- 行内第一个子项补上卡片的居中富余量：`margin-left:max(0px, calc((100% - var(--dsh-composer-card-max-width,100%)) / 2)) !important`。
+- **`max(0px, …)` 不是装饰**：`.uV2eYG_card` 是 `width:100%` 被 `max-width` 夹住的，宿主默认那种 px 卡宽
+  在窄窗（列宽 < ~754px）下 slack 已经为 0，裸公式会算出负数、把 chip 往左推 22px —— 那会是用户没报过的
+  新回归。加了这个兜底，下面四档实测偏差全是 0。
+- 选择器只留 CSS-module 本地名后缀（`[class*="_heroWorkspaceRow"]`），哈希前缀一升级就变。
+
+**验证**（改动后刷新页面即生效，client 半 `?rev=` 是内容哈希）
+
+- 90%（用户当前设置）：chip `387.719` / 卡 `387.734` ⇒ −0.015px（亚像素舍入），改前是 +47.03px。
+- 临时把卡宽改成 `400px` / `2000px`（这一档被 `width:100%` 夹住）/ `100%` / `60%`：chip 与卡左边缘差**都是 0**；
+  改回原值复测一致，无残留、无新增横向滚动宽度。
+
+**套件**：`verify-gate-client.mjs` 101 → **103 项**，新增 I 组两条源码守卫 —— 直接钉住这两条规则的存在与
+`max(0px,…)` 兜底，理由就是上面第 1 条："只写在 CHANGELOG 里的修复"必须变成红灯。
+
+`npm test` → 语法门禁 4/4、**套件 11/11 通过**。版本 → 1.13.3。
+
 ## 1.13.2 — 2026-09-24 · 取回完整性、统计卡生命周期与界面反馈
 
 - 修复超过 262,144 字符的原文返回截断预览却被当作完整结果的问题：有读回能力时兼容同步和异步接口；无接口、读取失败或读回仍截断时返回完整原文路径，供 read 工具继续取回。当前本机宿主没有 readText，超长结果走路径提示。
@@ -230,6 +342,10 @@
 
 **验证**：真浏览器实测改后 —— 行首项左 387.72 / 输入卡左 387.73 / MemSearch 胶囊左 387.72（三者一致）；
 `node --check client.js` exit 0；`npm test` 8/8 套件通过（含 verify-gate-client 80 项）。
+
+**⚠️ 事后更正（2026-09-28，见 1.13.3）**：本节声称的"做法"与"验证"**没有对应代码**——
+那两条规则从未出现在任何一版 `client.js` 里（`git log -S 'heroWorkspaceRow'` 全仓只匹配本节文字）。
+用户 2026-09-28 因此又报了一次同样的错位。规则由 1.13.3 真正落地，并在 `verify-gate-client.mjs` 里加了守卫。
 
 **没做 / 风险**：宿主若把 `heroWorkspaceRow` 这个本地类名改掉，这条会静默失效（表现 = 回到 47px 错位，
 照本节注释重钉即可）；`dsh-approval-gate` 里那条横幅仍用旧的

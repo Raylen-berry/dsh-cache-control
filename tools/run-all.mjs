@@ -25,9 +25,10 @@ const urlPath = (p) => {
   return s.startsWith('/') ? s.slice(1) : s
 }
 
-const CHECKS = ['index.js', 'client.js', 'save-token-host.js', 'save-token-core.js']
+const CHECKS = ['policy-host.js', 'index.js', 'client.js', 'save-token-host.js', 'save-token-core.js']
 
 const SUITES = [
+  'tools/verify-policy.mjs',
   'tools/verify-settings-concurrency.mjs',
   'tools/verify-gate-truncation.mjs',
   'tools/verify-host-width.mjs',
@@ -58,13 +59,17 @@ const SUITES = [
 ]
 
 const EXCLUDED = [
+  ['tools/verify-workbench-browser.mjs', '隔离浏览器交互与截图测试，需提供本机 Playwright 与 Chromium；策略/设置使用真实接口与临时目录，统计/存储为合成夹具，不访问用户配置。'],
   ['tools/probe-userrow.mjs', '开发用探针脚本（手工跑、看 host 侧 userRow 的真实 DOM 结构），不是断言式测试套件'],
   ['tools/verify-gate-http.mjs',
-    '要 %APPDATA% 下的真实 preset（copyFileSync 源文件不存在就抛错）。**未做夹具化**：它的断言里有几条' +
-    '逐字节比对真实 preset 有没有被本次验证改动，换成仓库内夹具就得重写那几条断言口径 —— 本任务只允许' +
-    '"等价或更强"的改动，为省事放宽口径属于作弊，故保持排除并在 README 里写明。'],
+    '要 %APPDATA% 下的真实 settings.json（§8 做"真实 home 未被本次验证写入"的比对，读不到就抛错）。' +
+    'v1.14.0 起已去掉 preset 夹具与全部压缩断言 —— 它现在是唯一的**真 HTTP 端到端**套件' +
+    '（GET/PUT 契约、gate.md 读写、坏 JSON / 超大 body / 405 / 404），改动 host 路由时值得手工跑一次。'],
   ['tools/verify-ui-appearance.mjs',
-    '要 %APPDATA% 下的真实 preset（同 verify-gate-http）'],
+    'v1.14.0 起不再依赖真实 %APPDATA%（preset 夹具与压缩断言已删；手工跑 48/0 全绿），但仍排除：' +
+    '它的默认 home 写死在开发机 D 盘（D:/DeepSeek/03-调试临时/ui-appearance-home），而本 ENV 没给它' +
+    '临时 home（加 DSH_TOOL_HOME 会顺带改到别的套件的盘面，故选不动）。手工跑法：' +
+    'DSH_TOOL_HOME=<可写目录> DSH_APP_MODULES=<仓库>/node_modules/ node tools/verify-ui-appearance.mjs'],
 ]
 
 // 让套件按**本仓库实际位置**解析插件与 react，不依赖任何人的绝对路径或本机 DSH 安装目录。

@@ -1,7 +1,7 @@
 {
   "name": "dsh-cache-control",
-  "version": "1.13.2",
-  "description": "DSH Desktop 会话策略：压缩参数、工具输出压缩与取回、常驻规则、按需审查、对话外观和存储管理。迁移及生效范围见 README。",
+  "version": "1.16.0",
+  "description": "DSH Desktop 会话策略：常驻规则注入（会话守则 / ponytail / 输出形状）、按需审查、工具输出压缩与取回、对话外观和存储管理。迁移及生效范围见 README。",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -37,6 +37,7 @@
   },
   "files": [
     "index.js",
+    "policy-host.js",
     "client.js",
     "save-token-host.js",
     "save-token-core.js",

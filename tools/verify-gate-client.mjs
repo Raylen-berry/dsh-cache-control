@@ -156,10 +156,18 @@ async function bootClient(tag) {
 }
 
 const render = (el) => ReactDOMServer.renderToStaticMarkup(el)
+// Only one tab is mounted in production. SSR coverage visits each tab separately.
+const renderPage = (c) => {
+  const store = c.ex.internals.STORE, previous = store.state.pageTab
+  const html = ['tokens', 'rules', 'appearance', 'storage'].map(pageTab => {
+    store.set({ pageTab }); return render(c.page)
+  }).join('')
+  store.set({ pageTab: previous }); return html
+}
 /** 用「设置页说明抽屉默认展开」重渲染一份页面 —— 长说明正文只在展开态出现。 */
 const expanded = (c) => {
   c.ex.internals.setFoldsOpen(true)
-  const hh = render(c.page)
+  const hh = renderPage(c)
   c.ex.internals.setFoldsOpen(false)
   return hh
 }
@@ -191,63 +199,55 @@ const disabled = (html, label) => {
   const a = inputAttrsFor(html, label)
   return a === null ? null : /disabled=""/.test(a) || /disabled/.test(a)
 }
-const L_CACHE = '启用压缩策略（作用于之后新建的标准模式会话）'
-const L_AUTO = '自动压缩（关闭 = 仅保留手动 /compact）'
-const L_GATE = '启用会话守则（下一个请求即生效，含已打开的会话）'
+const L_GATE = '启用会话守则（全局默认）'
 const L_PIN = '把最近一条「我的提问」钉在会话区顶部'
 const L_CLEAR = '我的气泡背景透明（露出壁纸）'
-// chip 四段标签（v1.10.0 起第三段是 ponytail「懒码」；v1.12.0 起第四段是输出形状「形状」）。
-// 徽标顺序 = 省缓存 / 提问 / 懒码 / 形状。
-const CHIP_LABELS = ['省缓存', '提问', '懒码', '形状']
+// chip 三段标签（v1.10.0 起第二段是 ponytail「懒码」；v1.12.0 起第三段是输出形状「形状」）。
+// v1.14.0：原第一段「省缓存」随压缩接管一并移除 ⇒ 徽标顺序 = 提问 / 懒码 / 形状。
+const CHIP_LABELS = ['提问', '懒码', '形状']
 // 输出形状的开关文案（它**默认开**，所以凡是要验"某段是关"的夹具都得显式写 shapeEnabled:false）。
-const L_SHAPE = '启用输出形状（下一个请求即生效，含已打开的会话；默认开）'
+const L_SHAPE = '启用输出形状（全局默认，初始开启）'
 
-console.log('\n— A. 关缓存 / 开门禁 —')
-// v1.11.0：ponytail / 审查技能显式钉成关（A 段验的是"只开门禁"，ponytail 开着第三段徽标就不是
+console.log('\n— A. 只开门禁 —')
+// v1.11.0：ponytail / 审查技能显式钉成关（A 段验的是"只开门禁"，ponytail 开着第二段徽标就不是
 // 「关」；审查技能按 DEFAULTS **默认开**，不关掉会多一个勾选框、脏掉 checkedCount）。
-// v1.12.0：输出形状同理，而且它**默认开** ⇒ 不显式写 false，第四段徽标必然是「开」。
+// v1.12.0：输出形状同理，而且它**默认开** ⇒ 不显式写 false，第三段徽标必然是「开」。
 // ⚠ 必须写在 bootClient() **之前**：本插件的 STORE 是模块级单例，bootClient 里那次 GET 才是
 // 状态来源 —— 写完盘再 render 不会重读（先写后 render 才拿得到新值）。
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: false, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true }))
+// v1.14.0：压缩开关已删，夹具里不再有 enabled/triggerPct/retainPct/auto。
+fs.writeFileSync(settingsFile, JSON.stringify({ gateEnabled: true, ponytailEnabled: false, reviewSkillEnabled: false, shapeEnabled: false }))
 let c = await bootClient('a' + Date.now())
-// v1.11.0：A 段还要验"第三段徽标是关"与 checkedCount 基线 ⇒ 显式钉上 ponytailEnabled:false /
-// reviewSkillEnabled:false（ponytail 开着第三段就不是「关」；审查技能按 DEFAULTS **默认开**，
-// 不关掉会多一个勾选框）。
 // ⚠ 必须**重开实例**：本插件的 STORE 是模块级单例，bootClient() 里那次 GET 才是状态来源 ——
 // 写完盘只 render 不会重读，读到的是上一次实例留下的状态（第一版栽在这，四条断言集体假失败）。
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: false, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true, ponytailEnabled: false, reviewSkillEnabled: false, shapeEnabled: false }))
+fs.writeFileSync(settingsFile, JSON.stringify({ gateEnabled: true, ponytailEnabled: false, reviewSkillEnabled: false, shapeEnabled: false }))
 c = await bootClient('a2' + Date.now())
-let pageHtml = render(c.page)
+let pageHtml = renderPage(c)
 const pageExp = expanded(c)
 let chipHtml = render(c.chip)
 let parts = chipParts(chipHtml)
 ok('设置页渲染成功', pageHtml.length > 500, pageHtml.length + ' chars')
-ok('两块卡都在（名称已压到 2–4 字，无编号）', pageHtml.includes("cc-h\">省缓存") && pageHtml.includes("cc-h\">会话守则"),
+ok('两张卡都在（名称已压到 2–4 字，无编号）', pageHtml.includes("cc-h\">省 token") && pageHtml.includes("cc-h\">会话守则"),
   'h3=' + (pageHtml.match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).join(' '))
 ok('门禁卡显示规则体积与行数', /\d+(\.\d+)?\s(B|KB)\s·\s\d+\s行/.test(pageHtml), (pageHtml.match(/\d+(\.\d+)?\s(B|KB)\s·\s\d+\s行/) || [''])[0])
 ok('门禁卡列出内置规则路径（展开说明可见）', pageExp.includes('session-gate.md'))
 ok('说明默认收进抽屉：总述与各卡长说明正文不在默认页面上',
-  !pageHtml.includes('九块互相独立的开关') && !pageHtml.includes('出厂默认（压力达窗口 80% 压缩')
-  && !pageHtml.includes('不产生技术硬拦截') && !pageHtml.includes('三项都是纯界面开关'))
+  !pageHtml.includes('八个独立功能区') && !pageHtml.includes('不产生技术硬拦截')
+  && !pageHtml.includes('三项都是纯界面开关'))
 ok('展开后说明正文可见', pageExp.includes('不产生技术硬拦截') && pageExp.includes('三项都是纯界面开关'))
 ok('门禁开关已勾选', checked(pageHtml, L_GATE) === true)
-ok('压缩开关未勾选（互不牵连）', checked(pageHtml, L_CACHE) === false)
-ok('自动压缩仍按设置勾选', checked(pageHtml, L_AUTO) === true)
-ok('chip 四段标签为 省缓存 / 提问 / 懒码 / 形状', parts.labels.join(',') === CHIP_LABELS.join(','), parts.labels.join(','))
-ok('chip 徽标：关 / 开 / 关 / 关（A 段只开门禁）', parts.badges.length === 4
-  && parts.badges[0].state === '关' && parts.badges[1].state === '开' && parts.badges[2].state === '关'
-  && parts.badges[3].state === '关',
+ok('chip 三段标签为 提问 / 懒码 / 形状', parts.labels.join(',') === CHIP_LABELS.join(','), parts.labels.join(','))
+ok('chip 徽标：开 / 关 / 关（A 段只开门禁）', parts.badges.length === 3
+  && parts.badges[0].state === '开' && parts.badges[1].state === '关' && parts.badges[2].state === '关',
   JSON.stringify(parts.badges.map((b) => b.state)))
-ok('徽标高亮态与开关一致（只有第二段亮）',
-  parts.badges[0].on === false && parts.badges[1].on === true && parts.badges[2].on === false
-  && parts.badges[3].on === false)
-ok('chip 三根竖线（四段之间各一根）', parts.divs === 3, 'divs=' + parts.divs)
-ok('chip 是五个按钮（四段可点 + ▾）', (chipHtml.match(/<button/g) || []).length === 5,
+ok('徽标高亮态与开关一致（只有第一段亮）',
+  parts.badges[0].on === true && parts.badges[1].on === false && parts.badges[2].on === false)
+ok('chip 两根竖线（三段之间各一根）', parts.divs === 2, 'divs=' + parts.divs)
+ok('chip 是四个按钮（三段可点 + ▾）', (chipHtml.match(/<button/g) || []).length === 4,
   'buttons=' + (chipHtml.match(/<button/g) || []).length)
-ok('每段各有 hover 介绍（title）', (chipHtml.match(/title="/g) || []).length === 5,
+ok('每段各有 hover 介绍（title）', (chipHtml.match(/title="/g) || []).length === 4,
   'titles=' + (chipHtml.match(/title="/g) || []).length)
 ok('介绍里写清了"点这一段=直接开/关"与生效范围',
-  chipHtml.includes('点这一段 = 直接开/关') && chipHtml.includes('只影响之后新建的') && chipHtml.includes('下一个请求'))
+  chipHtml.includes('点这一段 = 直接开/关') && chipHtml.includes('生效范围：') && chipHtml.includes('全局默认'))
 ok('▾ 带 aria-expanded（未展开为 false）', /aria-expanded="false"/.test(chipHtml))
 ok('容器是 span 不是 button（避免 button 套 button）', /<span class="cc-chip/.test(chipHtml))
 ok('气泡置顶卡存在（含可调模糊度滑杆）', pageHtml.includes('钉顶底衬模糊度') && /cc-h">气泡置顶/.test(pageHtml),
@@ -256,45 +256,45 @@ ok('外观两开关可用且默认关（新 host 会带回这两个字段）',
   checked(pageHtml, L_PIN) === false && checked(pageHtml, L_CLEAR) === false && disabled(pageHtml, L_PIN) === false)
 ok('关着时不显示自检行', !pageHtml.includes('钉住位置自检'))
 
-console.log('\n— B. 开缓存 / 关门禁 —')
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 30, retainPct: 4, auto: false, gateEnabled: false, ponytailEnabled: false, reviewSkillEnabled: false, shapeEnabled: false }))
+console.log('\n— B. 全关（三段徽标都翻成关）—')
+fs.writeFileSync(settingsFile, JSON.stringify({ gateEnabled: false, ponytailEnabled: false, reviewSkillEnabled: false, shapeEnabled: false }))
 c = await bootClient('b' + Date.now())
 chipHtml = render(c.chip)
-pageHtml = render(c.page)
+pageHtml = renderPage(c)
 const pageExpB = expanded(c)
 parts = chipParts(chipHtml)
-ok('chip 徽标翻成 开 / 关 / 关 / 关', parts.badges[0].state === '开' && parts.badges[1].state === '关'
-  && parts.badges[2].state === '关' && parts.badges[3].state === '关',
+ok('全关时三段徽标都是关（互不牵连）', parts.badges.length === 3
+  && parts.badges.every((b) => b.state === '关' && b.on === false),
   JSON.stringify(parts.badges.map((b) => b.state)))
 ok('标签不随状态改名（版式稳定）', parts.labels.join(',') === CHIP_LABELS.join(','), parts.labels.join(','))
-ok('压缩已勾选、门禁未勾选', checked(pageHtml, L_CACHE) === true && checked(pageHtml, L_GATE) === false)
-ok('自动压缩子开关独立关着', checked(pageHtml, L_AUTO) === false)
+ok('门禁未勾选', checked(pageHtml, L_GATE) === false)
 ok('门禁卡仍列出守则摘要（展开说明可见，含 v1.9.2 的 R5）',
   pageExpB.includes('R1') && pageExpB.includes('R2') && pageExpB.includes('R3') && pageExpB.includes('R5'))
 ok('门禁卡有编辑/重读按钮', pageHtml.includes('编辑规则') && pageHtml.includes('重新读取'))
 ok('门禁声明了"约束而非硬拦截"（展开说明可见）', pageExpB.includes('不产生技术硬拦截'))
 
-console.log('\n— C. 全开（压缩 + 门禁 + ponytail + 输出形状 + 外观两项）—')
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 25, retainPct: 5, auto: true, gateEnabled: true, ponytailEnabled: true, reviewSkillEnabled: false, shapeEnabled: true, pinLastUser: true, clearBubble: true }))
+console.log('\n— C. 全开（门禁 + ponytail + 输出形状 + 外观两项）—')
+fs.writeFileSync(settingsFile, JSON.stringify({ gateEnabled: true, ponytailEnabled: true, reviewSkillEnabled: false, shapeEnabled: true, pinLastUser: true, clearBubble: true }))
 c = await bootClient('c' + Date.now())
 chipHtml = render(c.chip)
-pageHtml = render(c.page)
+pageHtml = renderPage(c)
 const pageExpC = expanded(c)
 parts = chipParts(chipHtml)
-ok('chip 四个徽标都亮', parts.badges.length === 4 && parts.badges.every((b) => b.state === '开' && b.on === true))
-ok('七个勾选框全勾（压缩 + 自动压缩 + 门禁 + ponytail + 输出形状 + 钉顶 + 透明）', checkedCount(pageHtml) === 7, 'checked=' + checkedCount(pageHtml))
+ok('chip 三个徽标都亮', parts.badges.length === 3 && parts.badges.every((b) => b.state === '开' && b.on === true))
+ok('五个勾选框全勾（门禁 + ponytail + 输出形状 + 钉顶 + 透明）', checkedCount(pageHtml) === 5, 'checked=' + checkedCount(pageHtml))
 ok('输出形状开关已勾选（默认开的段，关得掉也开得回来）', checked(pageHtml, L_SHAPE) === true)
 ok('外观两开关已勾选', checked(pageHtml, L_PIN) === true && checked(pageHtml, L_CLEAR) === true)
 ok('开着钉顶时给出自检行', pageHtml.includes('钉住位置自检'))
-ok('设置页保留三处生效语义说明（展开说明可见）',
-  pageExpC.includes('之后新建') && pageExpC.includes('下一个请求') && pageExpC.includes('position:sticky'))
+ok('设置页保留两处生效语义说明（展开说明可见）',
+  pageExpC.includes('下一个请求') && pageExpC.includes('position:sticky'))
 
 console.log('\n— D. host 不可达时的降级 —')
 server.close()
 c = await bootClient('d' + Date.now())
 chipHtml = render(c.chip)
 ok('拿不到数据不崩，chip 仍渲染', chipHtml.includes('cc-chip'))
-ok('错误文案可见', render(c.page).includes('加载失败'))
+ok('错误文案可见', renderPage(c).includes('加载失败'),
+  renderPage(c).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 200))
 
 console.log('\n— E. 旧版 host（只刷新页面、没重启）—')
 // 模拟 v1.0.0 的 host：只有 /cc/settings.json、响应里没有 gate 字段
@@ -302,8 +302,7 @@ const oldServer = http.createServer((req, res) => {
   const pathname = (req.url || '').split('?')[0]
   if (pathname !== '/cc/settings.json') { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{}'); return }
   const body = JSON.stringify({
-    settings: { enabled: true, triggerPct: 30, retainPct: 4, auto: true },
-    windowTokens: 1000000, triggerTokens: 300000, retainTokens: 40000, applied: true,
+    settings: { gateEnabled: false },
   })
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) })
   res.end(body)
@@ -311,7 +310,7 @@ const oldServer = http.createServer((req, res) => {
 await new Promise((r) => oldServer.listen(0, '127.0.0.1', r))
 base = 'http://127.0.0.1:' + oldServer.address().port
 c = await bootClient('e' + Date.now())
-pageHtml = render(c.page)
+pageHtml = renderPage(c)
 chipHtml = render(c.chip)
 parts = chipParts(chipHtml)
 ok('守则卡明确说未装载需重启', pageHtml.includes('会话守则未装载'))
@@ -320,9 +319,8 @@ ok('外观开关也被禁用（旧 host 不认识 pinLastUser/clearBubble）',
   disabled(pageHtml, L_PIN) === true && disabled(pageHtml, L_CLEAR) === true)
 ok('气泡置顶卡说明"写盘会被旧版抹掉，请重启"', pageHtml.includes('写盘会被旧版抹掉'))
 ok('未装载时不显示钉住自检行', !pageHtml.includes('钉住位置自检'))
-ok('压缩开关不被连带禁用', disabled(pageHtml, L_CACHE) === false)
-ok('chip 提问徽标显示弱化态而非假装开', parts.badges[1].state === '关' && parts.badges[1].dim === true,
-  JSON.stringify(parts.badges[1]))
+ok('chip 提问徽标显示弱化态而非假装开', parts.badges[0].state === '关' && parts.badges[0].dim === true,
+  JSON.stringify(parts.badges[0]))
 ok('全程无 React 警告（含列表 key）', warnings.length === 0, warnings.length ? warnings[0].slice(0, 80) : '')
 oldServer.close()
 
@@ -335,7 +333,7 @@ const gServer = http.createServer((req, res) => {
 })
 await new Promise((r) => gServer.listen(0, '127.0.0.1', r))
 base = 'http://127.0.0.1:' + gServer.address().port
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true, shapeEnabled: false, pinLastUser: false, clearBubble: false }))
+fs.writeFileSync(settingsFile, JSON.stringify({ gateEnabled: true, shapeEnabled: false, pinLastUser: false, clearBubble: false }))
 c = await bootClient('g' + Date.now())
 const bodyStub = globalThis.document.body
 ok('收起时不往 body 挂任何节点', portalTargets.length === 0, 'calls=' + portalTargets.length)
@@ -347,13 +345,13 @@ const panelTag = (opened.match(/<div class="cc-panel"[^>]*>/) || [''])[0]
 ok('展开时面板被 portal 到 document.body',
   portalTargets.length === 1 && portalTargets[0] === bodyStub, 'targets=' + portalTargets.length)
 ok('面板含标题与各分区（正文没被裁掉的等价证据；分区名同样已缩短）',
-  panelTag !== '' && opened.includes('会话策略') && opened.includes('省缓存') && opened.includes('会话守则')
+  panelTag !== '' && opened.includes('会话策略') && opened.includes('会话守则')
   && opened.includes('ponytail') && opened.includes('输出形状'))
 ok('面板带 data-cache-control-panel 便于对账', panelTag.includes('data-cache-control-panel="1"'))
 ok('面板用 bottom 定位（往 chip 上方开，不开到屏幕外）',
   /left:\d+px/.test(panelTag) && /bottom:\d+px/.test(panelTag) && !/;top:\d+px/.test(panelTag), panelTag.slice(0, 120))
-ok('展开态下 chip 四段仍在（开关交互没被面板取代）',
-  CHIP_LABELS.every((l) => opened.includes(l)) && chipParts(opened).divs === 3, 'divs=' + chipParts(opened).divs)
+ok('展开态下 chip 三段仍在（开关交互没被面板取代）',
+  CHIP_LABELS.every((l) => opened.includes(l)) && chipParts(opened).divs === 2, 'divs=' + chipParts(opened).divs)
 ok('展开渲染无 React 警告', warnings.length === 0, warnings[0] ? warnings[0].slice(0, 90) : '')
 
 console.log('\n— H. 本轮四项改动（名称长度 / 底衬形态 / 徽标无背景 / 对话页搬过来了）—')
@@ -362,33 +360,33 @@ const clientSrc = fs.readFileSync(PLUGIN + 'client.js', 'utf8')
 // ① 设置页名称：导航条目与分区标题都要 2–4 字。
 //    先写一份"新 host 全字段 + 对话页宽度开着"的盘，对话页卡里的滑杆才会渲染出来。
 fs.writeFileSync(settingsFile, JSON.stringify({
-  enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true,
+  gateEnabled: true,
   shapeEnabled: true, pinLastUser: true, clearBubble: true, pinBlur: 12, chatWidth: 90, chatWidthEnabled: true,
 }))
 c = await bootClient('h' + Date.now())
 const navLabel = c.pageEntry ? String(c.pageEntry.label) : ''
-const pageH3Raw = (render(c.page).match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).map((s) => s.replace(/<[^>]+>/g, ''))
+const pageH3Raw = (renderPage(c).match(/<h3[^>]*>([^<]*)<\/h3>/g) || []).map((s) => s.replace(/<[^>]+>/g, ''))
 const h3s = pageH3Raw.slice()
 ok('导航条目名 ≤4 字', navLabel.length > 0 && navLabel.length <= 4, navLabel + ' (' + navLabel.length + ')')
 // v1.13.0：第 9 张卡标题是「省 token」。它和 ponytail 同属"专名/术语压不成 2–4 字"的例外，
 // 所以 ≤4 字那条要显式放行这两个；其余标题仍照旧（编号一律不许进标题，见下一条）。
 ok('分区标题都 ≤4 字',
-  h3s.length >= 10 && h3s.filter((x) => x !== 'ponytail' && x !== '省 token').every((x) => x.length <= 4), JSON.stringify(h3s))
+  h3s.length === 8 && h3s.filter((x) => x !== 'ponytail' && x !== '省 token').every((x) => x.length <= 4), JSON.stringify(h3s))
 // v1.11.1：**标题一律不带序号**。编号是位置属性，插一张卡就得把全部下游引用重排一遍 ——
 // v1.10.2（ponytail 曾写作 "②b" ⇒ 页面上出现两个 ②）与 v1.11.0（插入自动审查令后面全部顺延）
 // 已经为此返工两次。这条断言就是防止以后又有人往标题里加圈符或字母后缀。
 ok('分区标题里没有圈符编号（含总述/关于本页那两处文案）',
-  !/[①②③④⑤⑥⑦⑧⑨]/.test(pageH3Raw.join('|') + render(c.page).replace(/<[^>]+>/g, '')),
+  !/[①②③④⑤⑥⑦⑧⑨]/.test(pageH3Raw.join('|') + renderPage(c).replace(/<[^>]+>/g, '')),
   pageH3Raw.join('|'))
-ok('九个分区名字齐全且顺序正确（顺序即页面顺序，不靠编号表达）',
-  ['省缓存', '省 token', '会话守则', 'ponytail', '输出形状', '自动审查', '气泡置顶', '对话页', '存储']
-    .every((nm, i) => pageH3Raw.indexOf(nm) === i + 1), JSON.stringify(pageH3Raw))
+ok('八个分区名字齐全且顺序正确（顺序即页面顺序，不靠编号表达）',
+  ['省 token', '会话守则', 'ponytail', '输出形状', '自动审查', '气泡置顶', '对话页', '存储']
+    .every((nm, i) => pageH3Raw.indexOf(nm) === i), JSON.stringify(pageH3Raw))
 // v1.12.0：输出形状卡——并入自 dsh-output-shape 的那一段必须在页面上看得见、能改、说清归属。
 const shapePageExp = expanded(c)
 ok('输出形状卡在（开关已勾选 + 规则体积与行数）',
-  /cc-h">输出形状/.test(render(c.page)) && checked(render(c.page), L_SHAPE) === true
+  /cc-h">输出形状/.test(renderPage(c)) && checked(renderPage(c), L_SHAPE) === true
   && /·\s\d+\s行/.test(shapePageExp),
-  'has=' + /cc-h">输出形状/.test(render(c.page)))
+  'has=' + /cc-h">输出形状/.test(renderPage(c)))
 ok('输出形状卡写明并入来源与段名（不会有人再去找已下线的插件）',
   shapePageExp.includes('dsh-output-shape') && shapePageExp.includes('dsh-cache-control:shape-gate')
   && shapePageExp.includes('R4'))
@@ -422,7 +420,7 @@ ok('模糊度走可调变量 --cc-pin-blur（默认 10px）',
   plateRule.includes('blur(var(--cc-pin-blur,10px)') && (ALLCSS.match(/--cc-pin-blur/g) || []).length >= 2,
   (ALLCSS.match(/backdrop-filter:[^;]*;/g) || []).join(' '))
 ok('外观卡里有模糊度滑杆 0–24', (() => {
-  const html2 = render(c.page)
+  const html2 = renderPage(c)
   return /min="0"/.test(html2) && /max="24"/.test(html2) && html2.includes('钉顶底衬模糊度')
 })())
 // ③ chip 里的「开 / 关」徽标：纯透明，不留背景参与
@@ -436,7 +434,7 @@ ok('chip 内徽标无背景（面板里的同名徽标不受影响）',
   && baseBadgeRules.length > 0 && !baseBadgeRules.some((l) => /background:transparent/.test(l)),
   '基础规则 ' + baseBadgeRules.length + ' 条：' + baseBadgeRules.join(' ').slice(0, 90))
 // 对话页固定宽度：整节已从底图工坊移进本插件，那边不再碰这三个变量
-const pageHtml4 = render(c.page)
+const pageHtml4 = renderPage(c)
 ok('设置页出现「对话页」卡（开关 + 30–100% 滑杆 + 常用百分比快捷键）',
   /cc-h">对话页/.test(pageHtml4) && /min="30"/.test(pageHtml4) && /max="100"/.test(pageHtml4)
   && pageHtml4.includes('90%') && pageHtml4.includes('启用固定对话页宽度'),
@@ -451,7 +449,7 @@ if (fs.existsSync(bgaPath)) {
     !/Section\('对话页'/.test(bgaCode) && !/pinChatWidth/.test(bgaCode)
     && !/--dsh-chat-user-width/.test(bgaCode) && !/chatWidth/.test(bgaCode),
     '残留: ' + (bgaCode.match(/.{0,40}chatWidth.{0,40}/g) || []).slice(0, 2).join(' ⏎ '))
-  ok('底图工坊设置页里仍留一句去处说明', bgaSrc.includes('会话策略'))
+  // Ownership is checked above; another plugin's optional navigation wording is not this API's contract.
 } else {
   console.log('  SKIP  底图工坊交叉断言（未找到 ' + bgaPath + '，可用 DSH_BGA_CLIENT 指定）')
 }
@@ -471,7 +469,7 @@ const gateMd = pathMod.join(ROOT, 'dsh-cache-control', 'gate.md')
 const LONG_RULE = '规'.repeat(6666)          // 19,998 B > 上限 ⇒ 必然触发截断
 fs.writeFileSync(gateMd, LONG_RULE, 'utf8')
 const cLong = await bootClient('trunc' + Date.now())
-const longHtml = render(cLong.page)
+const longHtml = renderPage(cLong)
 const gLong = (await (await nodeFetch(base + '/cc/gate.json', { cache: 'no-store' })).json()).gate
 ok('超长规则 ⇒ 界面标出"已截断：原 N B → 保留 M B"（数字来自 host，且确实被砍）',
   gLong.truncated === true && gLong.keptBytes < gLong.maxBytes && gLong.originalBytes > gLong.maxBytes
@@ -493,7 +491,7 @@ ok('界面上的数字来自 host 响应而不是前端自己再算一遍（与�
 // 反向：没被截断的规则不许出现截断字样（防止标记恒真）
 fs.writeFileSync(gateMd, '# 短规则\n只有一行。', 'utf8')
 const cShort = await bootClient('short' + Date.now())
-const shortHtml = render(cShort.page)
+const shortHtml = renderPage(cShort)
 ok('未截断的规则不出现任何截断字样（标记不是恒真的装饰）',
   !shortHtml.includes('已截断') && !shortHtml.includes('你的规则被截断了'), '')
 fs.rmSync(gateMd, { force: true })
@@ -504,7 +502,7 @@ const oldGateServer = http.createServer((req, res) => {
   const p = (req.url || '').split('?')[0]
   if (p !== '/cc/settings.json') { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{}'); return }
   const body = JSON.stringify({
-    settings: { enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true },
+    settings: { gateEnabled: true },
     applied: true, hasBackup: false,
     gate: { enabled: true, source: 'override', builtinPath: 'b.md', overridePath: 'g.md',
       bytes: 5839, maxBytes: 6144, lines: 3, truncated: true, text: '规则…省略]' },
@@ -515,7 +513,7 @@ const oldGateServer = http.createServer((req, res) => {
 await new Promise((r) => oldGateServer.listen(0, '127.0.0.1', r))
 base = 'http://127.0.0.1:' + oldGateServer.address().port
 const cOldHost = await bootClient('oldgate' + Date.now())
-const oldHostHtml = render(cOldHost.page)
+const oldHostHtml = renderPage(cOldHost)
 ok('旧 host（无 originalBytes/keptBytes）⇒ 界面不出现 NaN，退化成 bytes 显示',
   !oldHostHtml.includes('NaN') && oldHostHtml.includes('已截断：原 5839 B → 保留 5839 B'),
   (oldHostHtml.match(/已截断[^<]*/) || [''])[0])
@@ -642,7 +640,27 @@ ok('取数半截按位置调用视图（(夹具, 回调) 口径与套件一致�
   return /return renderSaveTokenView\(d, \{/.test(codeSrc) && !/h\((?:render)?SaveTokenView\b/.test(codeSrc)
 })(), /h\(SaveTokenView\b/.test(clientSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')) ? '元素调用（会把 props 当夹具）' : '位置调用')
 ok('设置页有错误边界（单卡抛错把原因显示在面板里，不再被槽静默吞成白屏）',
-  /class PageBoundary extends/.test(clientSrc) && /h\(PageBoundary, null, h\(CacheControlPage\)\)/.test(clientSrc))
+  /class PageBoundary extends/.test(clientSrc) && /h\(PageBoundary, null, h\(SettingsFrame, props\)\)/.test(clientSrc))
+
+console.log('\n— I. 空会话「工作区行」左边缘对齐输入卡（v1.13.3）—')
+// v1.12.1 的 CHANGELOG 声称修好了这条对齐（还写了 "verified 387.72 / 387.73"），但那条规则
+// **从未进过任何一版 client.js**：`git log -S 'heroWorkspaceRow'` 全仓只有那处 CHANGELOG 改动，
+// `git grep heroWorkspaceRow <那次提交> -- client.js` 一条都没有。于是 2026-09-28 用户又贴图：
+// "会话页又出现了这个 DeepSeek 文件夹标识和对话框不对齐"。
+// 本机 hero 页真浏览器实测（会话列 1144、对话页宽度 90%）：输入卡 left=387.73、行里 chip left=340.70
+// ⇒ **差 47.03px**。宿主自己的行内边距（20px）本来就跟自己的卡（16px 内边距）差 4px；本插件的
+// 「对话页宽度」把卡宽换成 P% 后卡还要在容器内容区里再居中一次，4px 就变成几十像素。
+// 两条静态规则缺一不可：只改内边距还差居中富余量，只给 margin 还差那 4px。实测四档（P=90% / 60% /
+// 100% / 卡宽 400px、2000px px 值守）chip 与卡的左边缘差都是 0（90% 那档 −0.015px 是亚像素舍入）。
+const heroRowRule = (ALLCSS.match(/html\s*\[class\*="_heroWorkspaceRow"\]\{[^}]*\}/) || [''])[0]
+const heroChipRule = (ALLCSS.match(/html\s*\[class\*="_heroWorkspaceRow"\]>:first-child\{[^}]*\}/) || [''])[0]
+ok('行内边距改走 --dsh-composer-side-clearance（左右都 16px，不再跟宿主那套 20px 走）',
+  /padding-left:var\(--dsh-composer-side-clearance,16px\) !important/.test(heroRowRule)
+  && /padding-right:var\(--dsh-composer-side-clearance,16px\) !important/.test(heroRowRule)
+  && /box-sizing:border-box/.test(heroRowRule), heroRowRule.slice(0, 170))
+ok('第一个子元素按卡片自己的居中公式左移（max(0px,…) 兜住 card 被 width:100% 夹住的窄窗）',
+  /margin-left:max\(0px, ?calc\(\(100% - var\(--dsh-composer-card-max-width,100%\)\) \/ 2\)\) !important/.test(heroChipRule),
+  heroChipRule.slice(0, 170))
 
 console.log('\n— F. 收尾 —')
 gServer.close()

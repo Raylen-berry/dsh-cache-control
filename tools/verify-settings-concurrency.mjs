@@ -29,9 +29,6 @@ function call(route, payload) {
   })
 }
 try {
-  const preset = host.standardCompositionCandidates()[0]
-  fs.mkdirSync(path.dirname(preset), { recursive: true })
-  fs.writeFileSync(preset, "- id: compaction-basic\n  name: '@deepseek-ai/dsh-compaction-basic'\n")
   const settingsFile = path.join(root, 'dsh-cache-control', 'settings.json')
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true })
   fs.writeFileSync(settingsFile, JSON.stringify(host.DEFAULTS))

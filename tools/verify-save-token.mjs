@@ -95,7 +95,7 @@ ok('子插件路由 kind 是 prefix（否则子路径永远匹配不上，真机
   String(route(m.rec, '/cc/st').kind))
 ok('旧前缀 /save-token 不再注册', m.rec.routes.every((r) => !String(r.path).startsWith('/save-token')))
 ok('两条 waterfall 都在（post-execute 前置 + llm/stream）',
-  handlersFor(m.rec, 'tools/post-execute').length === 1 && handlersFor(m.rec, 'llm/stream').length === 1)
+  handlersFor(m.rec, 'tools/post-execute').length === 1 && handlersFor(m.rec, 'llm/stream').filter(e => e.tag === 'child').length === 1)
 ok('tools/post-execute 仍是 prepend（压缩必须抢在别的插件之前）', handlersFor(m.rec, 'tools/post-execute')[0].opts?.prepend === true)
 ok('arm 3 已删：无 agent/pre-step 监听', handlersFor(m.rec, 'agent/pre-step').length === 0)
 ok('arm 3 已删：从不 ctx.get(\'compaction\')', !m.rec.gets.includes('compaction'))

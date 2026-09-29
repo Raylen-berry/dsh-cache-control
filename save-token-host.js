@@ -19,12 +19,18 @@
  * REMOVED on embed (2026-09-09): the whole compaction-assist arm (upstream
  * "arm 3" — the `agent/pre-step` pressure trigger, its watermark, cooldown,
  * `compactStats`, the per-session estimate/billed maps that fed it, and the
- * `ctx.get('compaction')` call). dsh-cache-control already owns the compaction
- * contract: it writes triggerPct/retainPct/auto into the standard preset's
- * `@deepseek-ai/dsh-compaction-basic` row with a byte-exact backup, and two
- * plugins driving one engine is exactly the conflict this embed avoids.
+ * `ctx.get('compaction')` call). At the time (v1.13.0) dsh-cache-control owned
+ * the compaction contract: it wrote triggerPct/retainPct/auto into the standard
+ * preset's `@deepseek-ai/dsh-compaction-basic` row with a byte-exact backup, and
+ * two plugins driving one engine is exactly the conflict this embed avoids.
  * Upstream itself had the arm OFF by default. Routes moved
  * `/save-token/*` -> `/cc/st/*`.
+ *
+ * NOTE (v1.14.0): that owner is gone — the whole preset-takeover path was
+ * deleted from the host half when DSH 0.1.7 dropped the editable
+ * agent.cordis.yml assembly file. The removal above stays valid as-is (the arm
+ * is still absent, and still for the better reason: nothing should drive that
+ * engine from two places). Nothing to change in this file.
  *
  * v2.2.0 changes (all pure-compression logic moved to ./compress.js for unit
  * testing; behavior fixes marked):

@@ -2,23 +2,15 @@
 // dsh-cache-control · Host half
 //
 // 职责：
-//   1. 动态改写 standard agent preset 组装文件（agent.cordis.yml）中
-//      @deepseek-ai/dsh-compaction-basic 那一行的 config：
-//      - 开启(enabled=true)时写入 thresholdRatio / retainRatio / auto；
-//      - 关闭时**还原**首次接管前存下的那一行原文（见 compactionBackup）；
-//        没有备份可还原（用户手工删过 settings.json 等）时才回落到"移除受管行"。
-//      接管只在压缩字段（enabled/triggerPct/retainPct/auto）真的变了时才发生：
-//      只改外观/门禁字段不会触碰组装文件 —— 那个文件里可能有用户自己写的压缩配置，
-//      每次保存都无条件重写它会把用户的原配置抹掉（v1.6.1 修掉的破坏性缺陷）。
-//   2. 会话门禁（session gate）：把插件内的长期规则文件 session-gate.md 作为
+//   1. 会话门禁（session gate）：把插件内的长期规则文件 session-gate.md 作为
 //      一段 system prompt 常驻注入（通过 ctx.systemPrompt.section，宿主全局层，
 //      与 dsh-web-app 注入 "app:web-surface" 段同一条路）。开关只决定这段文本
 //      是否为空 —— 空段在 renderPrompt 里被丢弃，因此关=完全不进提示词。
-//   2b. ponytail（编码纪律，v1.10.0）与输出形状（v1.12.0，并入自 dsh-output-shape）：
+//   1b. ponytail（编码纪律，v1.10.0）与输出形状（v1.12.0，并入自 dsh-output-shape）：
 //      与门禁同构的第二、第三段常驻规则，各自独立开关与 override 文件。
 //      输出形状并入时一并接手了它的两条**按需技能**（i-have-adhd / ponytail），
 //      正文读的就是上面这两个规则文件 —— 技能与注入永远同一份，不会漂。
-//   3. 设置持久化到 $DSH_HOME/dsh-cache-control/settings.json（HTTP GET/PUT
+//   2. 设置持久化到 $DSH_HOME/dsh-cache-control/settings.json（HTTP GET/PUT
 //      /cc/settings.json）；规则的可编辑副本持久化到
 //      $DSH_HOME/dsh-cache-control/gate.md（override，删除即回到插件内置文本），
 //      经 HTTP GET/PUT /cc/gate.json 读写（仿 dsh-bg-atelier 的路由写法）。
@@ -27,14 +19,21 @@
 //      存取，具体怎么作用到页面上全在 client 侧。④ 这两项原属 dsh-bg-atelier，
 //      启动时经 migrateFromAtelier() 一次性搬过来。
 //
+// v1.14.0 移除：① 压缩接管 —— 原先动态改写 standard agent preset 组装文件
+//   agent.cordis.yml 里 compaction-basic 那一行的 config（含字节级备份/还原）。
+//   DSH 0.1.7 起 agent preset 不再是可编辑的组装文件：整个安装里已不存在
+//   agent.cordis.yml，包也由 dsh-agent-presets 拆成 dsh-agent-preset +
+//   dsh-agent-preset-registry，这条路没有落点 —— 只会在启动对账与每次开面板时
+//   报 "cannot locate standard preset agent.cordis.yml"。settings.json 里遗留的
+//   enabled / triggerPct / retainPct / auto 四个字段随之不再被 sanitize 保留 ——
+//   下一次保存即从盘上消失，不驱动任何行为；compactionBackup 例外，它存的是用户
+//   接管前的 preset 原文、是磁盘上唯一的副本，因此原样保留、永不丢弃。
+//
 // 生效语义（DSH 自身机制，非本插件发明）：
-//   * 压缩参数：preset 常驻挂载按组装文件的 mtime+size 分代；文件一变，下一个
-//     “新建”的会话挂载时就自动使用新一代际。已打开的会话保持其建会话时的组装。
 //   * 会话门禁：system prompt 每个 model step 重新 assemble()，且压缩只折叠历史
 //     不折叠 system prompt ⇒ 门禁对已打开的会话在下一个 step 生效，且不被压缩稀释。
-//     两者生效范围不同，故界面上分别说明。
 //
-// 只读打包目录、只写 $DSH_HOME 与目标 preset 文件那一行，不改任何其它文件。
+// 只读打包目录、只写 $DSH_HOME，不改任何其它文件。
 // ============================================================================
 
 import { promises as fs } from 'node:fs'
@@ -44,12 +43,10 @@ import path from 'node:path'
 // 省 token（v1.13.0）：并入 dsh-plugin-save-token v2.4.1 的宿主半边，
 // 作为嵌套插件从 apply() 里挂载。核掉的部分见该文件头部注释。
 import * as saveToken from './save-token-host.js'
+import { createPolicyManager, analyzeRules } from './policy-host.js'
 
 export const name = 'dsh-cache-control'
 export const inject = ['webServer']
-
-/** 仅用于界面换算显示：deepseek-v4-flash (deepseek-official) 适配器声明的窗口。 */
-export const ROUTED_CONTEXT_WINDOW = 1_000_000
 
 const SETTINGS_DIR = () => path.join(dshHome(), 'dsh-cache-control')
 const SETTINGS_FILE = () => path.join(dshHome(), 'dsh-cache-control', 'settings.json')
@@ -69,7 +66,7 @@ const REVIEW_PATH = '/cc/review.json'
 const STORAGE_PATH = '/cc/storage'
 const CLEAN_PATH = '/cc/storage/clean'
 const PURGE_PATH = '/cc/storage/purge'
-const RECYCLE_DIR = () => path.join(dshHome(), 'dsh-cache-control', 'recycle')
+const RECYCLE_DIR = (home = dshHome()) => path.join(home, 'dsh-cache-control', 'recycle')
 
 /** 分类（相对 $DSH_HOME）：给人看的名字 + 一句话说明 + 清理建议。 */
 export const STORAGE_CATEGORIES = [
@@ -118,7 +115,7 @@ export async function storageReport(home) {
     categories.push({ id: c.id, label: c.label, note: c.note, dir, exists, ...usage })
   }
   const total = categories.reduce((a, c) => ({ files: a.files + c.files, bytes: a.bytes + c.bytes }), { files: 0, bytes: 0 })
-  return { home, categories, total, recycle: await dirUsage(RECYCLE_DIR()) }
+  return { home, categories, total, recycle: await dirUsage(RECYCLE_DIR(home)), truncated: categories.some(c => c.truncated) }
 }
 
 /** 可回收候选：只收**明确可再生成**的东西，每条都写清"为什么能清"与风险。 */
@@ -138,9 +135,26 @@ export async function cleanCandidates(home) {
       await push(path.join(home, 'dsh-browser-live', prof, name), '浏览器缓存 · ' + name.split('/').pop(), 'CDP 浏览器的磁盘缓存，重建即可（**不含登录态**：那是 Cookies/Login Data，没在候选里）', '下次访问会慢一点')
     }
   }
-  await push(path.join(home, 'dsh-video-prompt', 'runs'), '生图产物（提示词 md）', '提示词产物文件；要留就把整个产物目录复制走再清', '旧批次的提示词会没')
-  await push(RECYCLE_DIR(), '回收目录', '之前清掉的文件的暂存处，确认不需要了再清', '清掉就没法还原了')
+  // 提示词产物不是可再生成的缓存；回收目录由单独的 purge 操作管理，不能移入自身。
   return out.sort((a, b) => b.bytes - a.bytes)
+}
+
+let storageSnapshot = null, storageFlight = null, storageEpoch = 0
+export function invalidateStorageSnapshot() { storageEpoch++; storageSnapshot = null; storageFlight = null }
+export async function readStorageSnapshot(home, force = false) {
+  home = path.resolve(home)
+  if (storageFlight && storageFlight.home === home) return storageFlight.promise
+  if (!force && storageSnapshot && storageSnapshot.home === home && Date.now() - storageSnapshot.scannedAt < 5000) return storageSnapshot
+  const epoch = storageEpoch
+  const flight = { home, promise: null }
+  flight.promise = (async () => {
+    const [report, candidates] = await Promise.all([storageReport(home), cleanCandidates(home)])
+    const result = { ok: true, ...report, candidates, scannedAt: Date.now() }
+    if (epoch === storageEpoch) storageSnapshot = result
+    return result
+  })().finally(() => { if (storageFlight === flight) storageFlight = null })
+  storageFlight = flight
+  return flight.promise
 }
 
 /** 把候选**移进回收目录**（保留相对层级，避免重名互撞），返回释放字节与目标目录。 */
@@ -148,13 +162,18 @@ export async function recyclePaths(paths, home, allowed, now = Date.now()) {
   const ok = []
   const skipped = []
   const stamp = new Date(now).toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const dest = path.join(RECYCLE_DIR(), stamp)
+  const dest = path.join(RECYCLE_DIR(home), stamp)
   let freed = 0
   for (const raw of Array.isArray(paths) ? paths : []) {
     const target = path.resolve(String(raw || ''))
     // 只允许移**候选清单里出现过**的路径：路径来自请求体，必须对着白名单校验
     if (!allowed.includes(target)) { skipped.push({ path: target, reason: '不在候选清单内' }); continue }
-    if (target === path.resolve(home) || target.length < path.resolve(home).length + 1) { skipped.push({ path: target, reason: '越界' }); continue }
+    const relative = path.relative(path.resolve(home), target)
+    const recycled = path.relative(path.resolve(RECYCLE_DIR(home)), target)
+    if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)
+      || !recycled || (!recycled.startsWith('..' + path.sep) && recycled !== '..' && !path.isAbsolute(recycled))) {
+      skipped.push({ path: target, reason: '越界或属于回收目录' }); continue
+    }
     if (!existsSync(target)) { skipped.push({ path: target, reason: '已不存在' }); continue }
     const u = await dirUsage(target)
     const rel = path.relative(home, target).replace(/[\\/]+/g, '__')
@@ -352,133 +371,15 @@ export const RULE_SKILLS = [
   },
 ]
 
-/** 写入 config 时的标记注释：既便于用户识别，也让插件能识别“这是我写过的行”。 */
-const MANAGER_MARK = '# managed by dsh-cache-control (auto-rewritten)'
-
 export function dshHome() {
   return process.env.DSH_HOME || path.join(process.env.USERPROFILE || '', '.dsh')
-}
-
-// ---------------------------------------------------------------------------
-// 目标文件定位：standard preset 的 agent.cordis.yml。
-// profiles/node_modules/@deepseek-ai/dsh-agent-presets 是指向 app 安装目录的
-// junction，因此候选列表覆盖常见布局；取第一个存在的。
-// ---------------------------------------------------------------------------
-export function standardCompositionCandidates() {
-  const home = dshHome()
-  const list = []
-  if (home) {
-    list.push(
-      path.join(home, 'profiles', 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml'),
-      path.join(home, 'profiles', 'web', 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml')
-    )
-  }
-  return list
-}
-
-export async function resolveStandardFile() {
-  for (const candidate of standardCompositionCandidates()) {
-    try {
-      const stat = await fs.stat(candidate)
-      if (stat.isFile()) return candidate
-    } catch { /* try next */ }
-  }
-  throw new Error('cannot locate standard preset agent.cordis.yml (tried: ' + standardCompositionCandidates().join(' | ') + ')')
-}
-
-// ---------------------------------------------------------------------------
-// 纯文本改写：只替换 compaction-basic 那一行块，其余字节不动。
-// 行块 = `- id: compaction-basic` 起到（其后缩进属性行/注释行的末尾）为止，
-// 遇到空行或下一个 `- id:` 行即结束。
-// values === null 时输出“无 config”的出厂形态（引擎默认 0.8/0.16/auto）。
-//
-// 非 null 时的展开规则（v1.6.1）：保留原行块里用户自己写的东西 —— 标记插在 `name:` 之后，
-// 用户手写的注释原样跟在后面。**不要**改成"整块丢弃重写"：那等于顺手删掉用户的注释。
-// 上一次接管留下的部分（标记 + 其后的 config: 与更深的键）整段替换掉再重新生成一份；
-// 同一份设置算出的文本与上一代逐字节相同，调用方便能靠 next === text 早退、不写盘。
-// ---------------------------------------------------------------------------
-export function compactionConfigLines(indent, values) {
-  const pad = indent + '  '
-  return [
-    pad + MANAGER_MARK,
-    pad + 'config:',
-    pad + '  thresholdRatio: ' + values.thresholdRatio.toFixed(2),
-    pad + '  retainRatio: ' + values.retainRatio.toFixed(2),
-    pad + '  auto: ' + (values.auto ? 'true' : 'false'),
-  ]
-}
-
-export function spliceCompactionRow(text, values) {
-  const lines = String(text).split(/\r?\n/)   // 按 CRLF/LF 统一切行（`\r` 绝不能留在行尾，
-  // 否则 `config:` / 标记行的整行比较会失败 ⇒ 旧 config 没被替换掉、反而又追加一份）
-  const start = lines.findIndex((l) => /^\s*- id: compaction-basic\s*$/.test(l))
-  if (start < 0) throw new Error('compaction-basic row not found in composition')
-  let end = start + 1
-  while (end < lines.length) {
-    const l = lines[end]
-    if (l.trim() === '') break
-    if (/^\s*- id:/.test(l)) break
-    if (!/^\s/.test(l)) break
-    end += 1
-  }
-  const raw = lines[start]
-  const indent = raw.slice(0, raw.length - raw.trimStart().length)   // `- id:` 前面的缩进（真实文件里是 6 空格）
-  const attrIndent = indent.length + 4                               // name: / config: 这一层的缩进
-  const block = lines.slice(start + 1, end)
-  // 行块分两段：前面是 name 与用户手写的注释（留下），最后一段是 config: 及其更深的键
-  // （那就是本插件要接管/替换的东西，整段摘掉再按当前设置重新生成一份）。
-  // 这一段必须"整段换"，不能只摘标记行：否则用户原有的 config 会和新写的并存、
-  // thresholdRatio 出现两次（YAML 里就是重复键）。
-  const keep = []
-  let managed = -1
-  for (let i = 0; i < block.length; i++) {
-    if (block[i].trim() === MANAGER_MARK) { managed = i; break }
-    keep.push(block[i])
-  }
-  if (managed >= 0) {
-    let i = managed + 1
-    while (i < block.length && indentWidth(block[i]) > attrIndent) i += 1   // 标记之后更深的行：旧 config
-    keep.push(...block.slice(i))
-  }
-  for (let i = keep.length - 1; i >= 0; i--) {                 // 末段 config:（含其更深的键）
-    if (keep[i].trim() === '') continue
-    if (keep[i].trim() !== 'config:' || indentWidth(keep[i]) > attrIndent) continue
-    let j = i + 1
-    while (j < keep.length && indentWidth(keep[j]) > indentWidth(keep[i])) j += 1
-    keep.splice(i, j - i)
-    break
-  }
-  const cfg = values === null ? [] : compactionConfigLines(indent, values)
-  const out = values === null
-    ? [raw, ...keep]                         // 关：回到"无 config"的出厂形态，用户自己的行留下
-    : (() => {                               // 开：标记插在 `name:` 之后，受管 config 放最后
-        const nameAt = keep.findIndex((l) => /^\s*name:/.test(l))
-        const head = nameAt >= 0 ? keep.slice(0, nameAt + 1) : keep
-        const tail = nameAt >= 0 ? keep.slice(nameAt + 1) : []
-        return [raw, ...head, cfg[0], ...tail, ...cfg.slice(1)]
-      })()
-  return lines.slice(0, start).concat(out, lines.slice(end)).join('\n')
-}
-
-/** 一行前导空白的宽度。 */
-function indentWidth(line) {
-  const m = /^[ \t]*/.exec(String(line))
-  return m ? m[0].length : 0
-}
-
-export function hasManagedMarker(text) {
-  return String(text).includes(MANAGER_MARK)
 }
 
 // ---------------------------------------------------------------------------
 // 设置：默认值与清洗
 // ---------------------------------------------------------------------------
 export const DEFAULTS = Object.freeze({
-  enabled: false,
-  triggerPct: 25,   // 触发点 = 窗口的 25% (~250k / 1M)
-  retainPct: 5,     // 逐字保留尾部 = 窗口的 5% (~50k / 1M)
-  auto: true,
-  gateEnabled: false, // 会话门禁：独立于压缩开关
+  gateEnabled: false, // 会话门禁
   ponytailEnabled: false, // ponytail 编码纪律常驻注入：独立于门禁（v1.10.0）
   // 输出形状常驻注入（v1.12.0，并入自 dsh-output-shape）。**默认开** —— 合并前它由
   // dsh-output-shape 的 bundle config 默认开启（那插件是这套规则的**真源**：会话守则里的
@@ -524,14 +425,6 @@ export function normalizeChatWidth(raw) {
 
 export function sanitize(raw) {
   const src = raw && typeof raw === 'object' ? raw : {}
-  const enabled = src.enabled === true
-  let triggerPct = Math.round(Number(src.triggerPct))
-  if (!Number.isFinite(triggerPct)) triggerPct = DEFAULTS.triggerPct
-  triggerPct = Math.min(95, Math.max(5, triggerPct))
-  let retainPct = Math.round(Number(src.retainPct))
-  if (!Number.isFinite(retainPct)) retainPct = DEFAULTS.retainPct
-  retainPct = Math.min(triggerPct - 1, Math.max(1, retainPct))
-  const auto = src.auto !== false
   const gateEnabled = src.gateEnabled === true
   const ponytailEnabled = src.ponytailEnabled === true
   // v1.12.0：输出形状。默认**开**，故判据是 `!== false` —— 不能写 `=== true`，
@@ -550,19 +443,20 @@ export function sanitize(raw) {
   const chatWidthEnabled = src.chatWidthEnabled === true
   const hideResizer = src.hideResizer === true
   const hideDivider = src.hideDivider === true
-  // v1.11.0：审查技能开关。默认开，所以判据是 `!== false`（与 auto 同族），
+  // v1.11.0：审查技能开关。默认开，所以判据是 `!== false`（与 shapeEnabled 同族），
   // 不能写 `=== true` —— 那样旧 host / 旧盘上没这个字段时会被判成关，用户一升级就丢技能。
   const reviewSkillEnabled = src.reviewSkillEnabled !== false
-  // v1.6.1：接管前的压缩行原文。必须原样带出去 —— 任何一次写盘（含改外观）都不许把它吃掉，
-  // 否则"关闭省缓存还原原状"就失去了依据。形状不合法时归 null（当作没有备份）。
+  // v1.14.0：压缩接管已移除，这份备份不再被写入、也不再被用来还原；但它存的是用户
+  // 接管前的 preset 原文（那个文件现已不存在，这是磁盘上唯一的副本），所以原样保留、
+  // 永不丢弃 —— 任何一次写盘都要把它带出去。
   const compactionBackup = readBackup(src)
   return {
-    enabled, triggerPct, retainPct, auto, gateEnabled, ponytailEnabled, shapeEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
+    gateEnabled, ponytailEnabled, shapeEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
     chatWidth, chatWidthEnabled, hideResizer, hideDivider, reviewSkillEnabled, compactionBackup,
   }
 }
 
-/** 取出（并校验）settings.json 里的压缩行备份；形状不对一律当没有。 */
+/** 取出（并校验）settings.json 里的历史压缩行备份；形状不对一律当没有。只读，不再写入。 */
 export function readBackup(raw) {
   const src = raw && typeof raw === 'object' ? raw : {}
   const b = src.compactionBackup
@@ -573,23 +467,8 @@ export function readBackup(raw) {
   return { text: b.text, at }
 }
 
-/** 保存入口只在**压缩字段真的变了**时才允许碰标准组装文件（见 applyToStandard 注释）。 */
-export function compactionFieldsChanged(prev, next) {
-  return ['enabled', 'triggerPct', 'retainPct', 'auto'].some((k) => prev[k] !== next[k])
-}
-
-/** 由百分比换算成引擎字段与展示数字。 */
-export function resolveValues(settings) {
-  return {
-    thresholdRatio: settings.triggerPct / 100,
-    retainRatio: settings.retainPct / 100,
-    auto: settings.auto,
-    triggerTokens: Math.floor(ROUTED_CONTEXT_WINDOW * settings.triggerPct / 100),
-    retainTokens: Math.floor(ROUTED_CONTEXT_WINDOW * settings.retainPct / 100),
-  }
-}
-
 async function readSettings() {
+  if (frozenPolicy) return { ...frozenPolicy.settings }
   try {
     const parsed = JSON.parse(await fs.readFile(SETTINGS_FILE(), 'utf8'))
     return sanitize(parsed)
@@ -606,7 +485,9 @@ const settingsMemo = { key: '', value: null }
 
 function invalidateSettings() { settingsMemo.key = ''; settingsMemo.value = null }
 
+let frozenPolicy = null
 function readSettingsSync() {
+  if (frozenPolicy) return frozenPolicy.settings
   let st = null
   try { st = statSync(SETTINGS_FILE()) } catch { st = null }
   if (!st || !st.isFile()) {
@@ -648,7 +529,7 @@ function mutateSettings(task) {
 
 function settingsPayload(parsed) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('settings must be an object')
-  // The original preset backup is maintained exclusively by the host.
+  // 压缩备份是 host 侧的历史遗留数据（v1.14.0 起只读、不再更新）：客户端不许覆盖它。
   const { compactionBackup, ...patch } = parsed
   return patch
 }
@@ -749,6 +630,10 @@ const [loadShapeSync, loadShape] = makeRuleLoader(SHAPE_BUILTIN_FILE, SHAPE_OVER
  * 别再复制一份 mtime+size 记忆化 —— 两处实现必然漂移（cache-control 的老教训）。
  */
 function loadRuleFile(builtinFile, overrideFile, cache, maxBytes) {
+  if (frozenPolicy) {
+    const key = Object.keys(policyFiles).find(key => policyFiles[key].override() === overrideFile)
+    if (key) return truncateBytes(sanitizeGateText(frozenPolicy.rules[key].text), maxBytes).text
+  }
   let target = overrideFile
   try {
     if (!existsSync(overrideFile)) target = builtinFile
@@ -827,7 +712,9 @@ export function shapePromptText(settings) {
  * 输出形状缺省开（`!== false`，见 DEFAULTS.shapeEnabled 的注释）。
  */
 async function ruleMeta(settings, enabledKey, builtinFile, overrideFile, cache, defaultOn = false) {
-  const usingOverride = existsSync(overrideFile)
+  const key = Object.keys(policyFiles).find(key => policyFiles[key].override() === overrideFile)
+  const frozen = frozenPolicy && key ? frozenPolicy.rules[key] : null
+  const usingOverride = frozen ? frozen.override !== null : existsSync(overrideFile)
   const sourcePath = usingOverride ? overrideFile : builtinFile
   let text = ''
   try { text = loadRuleFile(builtinFile, overrideFile, cache, GATE_MAX_BYTES) } catch { text = '' }
@@ -835,7 +722,8 @@ async function ruleMeta(settings, enabledKey, builtinFile, overrideFile, cache, 
   // 与 text 同源的截断记录（loadRuleFile 里一并算出）。truncated 是**显式标记**；
   // 旧写法 `bytes >= GATE_MAX_BYTES` 既漏判截断又误判恰好压线的原文，见 truncateBytes 的注释。
   // record 为空只在加载吞掉异常时出现，退化成"无截断"。
-  const info = cache.record || { originalBytes: bytes, keptBytes: bytes, truncated: false }
+  const info = frozen ? truncateBytes(sanitizeGateText(frozen.text), GATE_MAX_BYTES)
+    : cache.record || { originalBytes: bytes, keptBytes: bytes, truncated: false }
   const on = settings && settings[enabledKey] !== undefined
     ? (defaultOn ? settings[enabledKey] !== false : settings[enabledKey] === true)
     : defaultOn
@@ -889,74 +777,31 @@ export async function writeShapeOverride(text) {
  * 调用方拿到的就是模型下一步实际会看到的东西。
  */
 async function writeRuleOverride(overrideFile, cache, reload, text) {
-  await fs.mkdir(SETTINGS_DIR(), { recursive: true })
-  if (text === null || text === undefined || String(text).trim() === '') {
-    try { await fs.unlink(overrideFile) } catch { /* 不存在即已回到内置 */ }
-  } else {
-    await fs.writeFile(overrideFile, String(text).replace(/\r\n/g, '\n').trim() + '\n', 'utf8')
-  }
-  cache.key = ''
-  cache.text = ''
-  cache.record = null
+  const key = Object.keys(policyFiles).find(key => policyFiles[key].override() === overrideFile)
+  await policy.writeRule(key, text)
   return reload()
 }
 
-async function readComposition() {
-  const file = await resolveStandardFile()
-  return { file, text: await fs.readFile(file, 'utf8') }
+const policyFiles = {
+  gate: { builtin: GATE_BUILTIN_FILE, override: GATE_OVERRIDE_FILE, cache: gateCache },
+  ponytail: { builtin: PONY_BUILTIN_FILE, override: PONY_OVERRIDE_FILE, cache: ponyCache },
+  shape: { builtin: SHAPE_BUILTIN_FILE, override: SHAPE_OVERRIDE_FILE, cache: shapeCache },
 }
-
-/**
- * 把当前设置写到 standard 组装文件（幂等：无变化则不写盘）。
- *
- * **接管语义（v1.6.1 起）**：
- *   * 开：把受管 config 写进 compaction-basic 那一行块。写之前若本插件还没存过备份，
- *     先把**接管前的整个组装文件原文**存进 settings.json.compactionBackup —— 那个文件
- *     是用户自己的 preset，里面可能有他手写的压缩配置，删掉就找不回来了。
- *   * 关：优先把备份**还原**回去（逐字节回到接管前）；只有没有备份可还原时，才回落到
- *     旧的"摘掉受管行"行为。
- *   * 备份只在"首次接管"时采集：受管行已经在文件里时再取备份会把插件自己写的东西
- *     当成用户原状存下来，那就永远还原不回原样了。
- *
- * 调用方（HTTP 保存入口 / 启动对账）应当只在压缩字段变化时调用本函数；本函数本身对
- * 入参是幂等的（next === text 即早退），所以多调一次不会造成重复写盘。
- */
-export async function applyToStandard(settings) {
-  const clean = sanitize(settings)
-  const values = resolveValues(clean)
-  const { file, text } = await readComposition()
-  let next = text
-  const saved = clean.compactionBackup
-  let backup = saved
-  let freshBackup = false
-  if (clean.enabled) {
-    // 受管行已在文件里 ⇒ 这不是首次接管，不能拿它当"用户原状"存备份。
-    const alreadyManaged = hasManagedMarker(text)
-    if (backup === null && !alreadyManaged) {
-      backup = { text, at: Date.now() }   // 存接管前的整篇原文，还原时逐字节回写
-      freshBackup = true
-    }
-    const base = alreadyManaged
-      ? text.split(/\r?\n/).filter((l) => l.trim() !== MANAGER_MARK).join('\n')
-      : text
-    next = spliceCompactionRow(base, values)
-  } else if (backup !== null) {
-    // 关且有备份：还原接管前的原文，并清掉备份（下次开 = 重新接管、重新采备份）。
-    next = backup.text
-    backup = null
-  } else {
-    next = spliceCompactionRow(text, null)
-  }
-  const changed = next !== text
-  if (changed) await fs.writeFile(file, next, 'utf8')
-  // 备份有新采（freshBackup）或刚被还原用掉（saved 有而 backup 变 null）时都要落盘，
-  // 否则下一次启动会读到一枚已经用过的旧备份。
-  if (freshBackup || (saved !== null && backup === null)) {
-    clean.compactionBackup = backup
-    await writeSettings(clean)
-  }
-  return { file, changed, restored: !clean.enabled && changed, ...values }
+function scopedRuleText(key, context) {
+  const id = policy.sessionId(context)
+  const settings = policy.effective(readSettingsSync(), id)
+  if (settings[key + 'Enabled'] !== true || (key === 'shape' && process.env[SHAPE_DISABLE_ENV] === '1')) return ''
+  const text = policy.sessionRule(key, context)
+  if (text !== null) return truncateBytes(sanitizeGateText(text), GATE_MAX_BYTES).text
+  return ({ gate: gatePromptText, ponytail: ponytailPromptText, shape: shapePromptText })[key](settings)
 }
+export const policy = createPolicyManager({
+  home: dshHome, readSettings, writeSettings, mutate: mutateSettings, files: policyFiles,
+  invalidateRule(key) { Object.assign(policyFiles[key].cache, { key: '', text: '', record: null }) },
+  freeze(snapshot) { frozenPolicy = snapshot },
+  getFrozen() { return frozenPolicy },
+  expectedRules(id) { return Object.fromEntries(Object.keys(policyFiles).map(key => [key, scopedRuleText(key, { agent: { session: { id } } })])) },
+})
 
 // ---------------------------------------------------------------------------
 // HTTP 路由
@@ -985,6 +830,8 @@ function readBody(req, maxBytes = 65536) {
 }
 
 export async function apply(ctx) {
+  // Complete or roll back an interrupted multi-file preset update before serving requests.
+  await policy.recover()
   const webServer = ctx.get('webServer')
   if (webServer === undefined) {
     console.error('[dsh-cache-control] webServer service unavailable, host half disabled')
@@ -999,20 +846,15 @@ export async function apply(ctx) {
   // 审查技能是可开关的，关掉时会 dispose 自己那一批；共用一份状态会把这两条一起注销掉。
   const ruleSkillState = { registered: [], disposers: [] }
 
-  // 启动自检：与本机磁盘状态对账（例如 app 升级重置了组装文件之后）。
+  // v1.14.0：压缩接管（改写 standard 组装文件）随 DSH 0.1.7 一并移除 —— 0.1.7 起
+  // agent preset 不再是可编辑的 agent.cordis.yml，安装里已无该文件，这条路没有落点。
+  // 启动时只剩一件事：把底图工坊的「对话页固定宽度」搬过来。
   try {
     // 先把「对话页固定宽度」从底图工坊搬过来（只在缺字段时读对方文件，见 migrateFromAtelier）。
     const moved = await migrateFromAtelier()
     if (moved) console.log('[dsh-cache-control] 对话页宽度已从 dsh-bg-atelier 迁入：' + JSON.stringify(moved))
-    const current = await readSettings()
-    const { text } = await readComposition()
-    const wantsMarker = current.enabled
-    const hasMarker = hasManagedMarker(text)
-    // 开关与文件不一致 ⇒ 走一遍（与保存入口同一条路，也就同样受备份/还原语义约束：
-    // enabled 而文件里没有受管行 = 首次接管，这一次会顺手把接管前的原文存成备份）。
-    if (wantsMarker !== hasMarker) await applyToStandard(current)
   } catch (err) {
-    console.warn('[dsh-cache-control] boot reconcile skipped: ' + String((err && err.message) || err))
+    console.warn('[dsh-cache-control] boot migrate skipped: ' + String((err && err.message) || err))
   }
 
   // ---- 省 token（v1.13.0）：并入自 dsh-plugin-save-token 的压缩/去重/取回 ----
@@ -1048,9 +890,9 @@ export async function apply(ctx) {
         promptCtx.systemPrompt.section({
           name: GATE_SECTION,
           order: GATE_SECTION_ORDER,
-          text: () => {
+          text: (context) => {
             try {
-              return gatePromptText(readSettingsSync())
+              return scopedRuleText('gate', context)
             } catch {
               return ''
             }
@@ -1073,9 +915,9 @@ export async function apply(ctx) {
         promptCtx.systemPrompt.section({
           name: PONY_SECTION,
           order: PONY_SECTION_ORDER,
-          text: () => {
+          text: (context) => {
             try {
-              return ponytailPromptText(readSettingsSync())
+              return scopedRuleText('ponytail', context)
             } catch {
               return ''
             }
@@ -1100,9 +942,9 @@ export async function apply(ctx) {
         promptCtx.systemPrompt.section({
           name: SHAPE_SECTION,
           order: SHAPE_SECTION_ORDER,
-          text: () => {
+          text: (context) => {
             try {
-              return shapePromptText(readSettingsSync())
+              return scopedRuleText('shape', context)
             } catch {
               return ''
             }
@@ -1248,9 +1090,7 @@ export async function apply(ctx) {
       try {
         if (req.method !== 'GET') { send(res, 405, { ok: false, error: 'method not allowed' }); return }
         const home = dshHome()
-        const report = await storageReport(home)
-        const candidates = await cleanCandidates(home)
-        send(res, 200, { ok: true, ...report, candidates })
+        send(res, 200, await readStorageSnapshot(home, /[?&]refresh=1(?:&|$)/.test(req.url || '')))
       } catch (err) {
         send(res, 500, { ok: false, error: String((err && err.message) || err) })
       }
@@ -1266,8 +1106,10 @@ export async function apply(ctx) {
         const body = JSON.parse(await readBody(req))
         const home = dshHome()
         const allowed = (await cleanCandidates(home)).map((c) => path.resolve(c.path))
-        const wants = Array.isArray(body.paths) && body.paths.length > 0 ? body.paths : allowed
+        const wants = Array.isArray(body.paths) ? body.paths : allowed
+        invalidateStorageSnapshot()
         const result = await recyclePaths(wants, home, allowed)
+        invalidateStorageSnapshot()
         send(res, 200, { ok: true, ...result })
       } catch (err) {
         send(res, 500, { ok: false, error: String((err && err.message) || err) })
@@ -1282,8 +1124,10 @@ export async function apply(ctx) {
       try {
         if (req.method !== 'POST') { send(res, 405, { ok: false, error: 'method not allowed' }); return }
         const dir = RECYCLE_DIR()
+        invalidateStorageSnapshot()
         const before = await dirUsage(dir)
         if (existsSync(dir)) await fs.rm(dir, { recursive: true, force: true })
+        invalidateStorageSnapshot()
         send(res, 200, { ok: true, freed: before.bytes, files: before.files })
       } catch (err) {
         send(res, 500, { ok: false, error: String((err && err.message) || err) })
@@ -1298,21 +1142,11 @@ export async function apply(ctx) {
       if (req.method === 'GET') {
         try {
           const settings = await readSettings()
-          const values = resolveValues(settings)
-          const { text } = await readComposition()
           const gate = await gateMeta(settings)
           const ponytail = await ponytailMeta(settings)
           const shape = await shapeMeta(settings)
           send(res, 200, {
             settings,
-            windowTokens: ROUTED_CONTEXT_WINDOW,
-            triggerTokens: values.triggerTokens,
-            retainTokens: values.retainTokens,
-            applied: settings.enabled ? hasManagedMarker(text) : !hasManagedMarker(text),
-            // 备份在位 = 关掉开关能把 standard 组装文件还原成接管前那样。界面上只报元信息，
-            // 不回吐备份正文（那个文件十几 KB，没必要进每次开面板的响应）。
-            backupAt: settings.compactionBackup ? settings.compactionBackup.at : null,
-            hasBackup: settings.compactionBackup !== null,
             gate,
             ponytail,
             shape,
@@ -1326,24 +1160,15 @@ export async function apply(ctx) {
         try {
           const parsed = JSON.parse(await readBody(req))
           const patch = settingsPayload(parsed)
-          const { settings, touched, result } = await mutateSettings(async () => {
+          const { settings } = await mutateSettings(async () => {
             const before = await readSettings()
             const settings = sanitize({ ...before, ...patch })
             await writeSettings(settings)
-            // 只有压缩字段真的变了才去动 standard 组装文件：那个文件是用户的 preset，
-            // 里面有他自己的压缩配置。旧实现无条件 applyToStandard ⇒ 只改外观开关
-            // （钉顶 / 气泡 / 宽度 / 拖拽条）或门禁，也会把用户原有的压缩配置抹成插件这一套。
-            const touched = compactionFieldsChanged(before, settings)
-            const result = touched ? await applyToStandard(settings) : null
             if (before.reviewSkillEnabled !== settings.reviewSkillEnabled) await syncReviewSkill()
-            return { settings, touched, result }
+            return { settings }
           })
           send(res, 200, {
             ok: true,
-            // result !== null 即"这次保存动到了 standard 组装文件"（外观/门禁单独保存时为 null）
-            touched,
-            changed: result ? result.changed : false,
-            ...resolveValues(settings),
             gateEnabled: settings.gateEnabled,
             ponytailEnabled: settings.ponytailEnabled,
             shapeEnabled: settings.shapeEnabled,
@@ -1388,6 +1213,7 @@ export async function apply(ctx) {
             const m = await r.meta(await readSettings())
             send(res, 200, {
               ok: true,
+              [r.key]: m,
               bytes: m.bytes,
               lines: m.lines,
               source: m.source,
@@ -1405,6 +1231,45 @@ export async function apply(ctx) {
         send(res, 405, { ok: false, error: 'method not allowed' })
       },
     }), 'dsh-cache-control: ' + r.label)
+  }
+
+  // Observe the actual system text at the request boundary without retaining it.
+  if (typeof ctx.on === 'function') {
+    ctx.on('llm/stream', (options, next) => {
+      try { policy.observe(options) } catch (error) { console.warn('[dsh-cache-control] request check failed:', error.message) }
+      return next()
+    })
+    policy.attachProbe()
+  }
+  const mounted = () => ({ gate: gateSectionActive, ponytail: ponySectionActive, shape: shapeSectionActive })
+  for (const endpoint of ['policy', 'history', 'diagnostics', 'analyze']) {
+    ctx.effect(() => webServer.register({
+      kind: 'exact', path: '/cc/' + endpoint,
+      handler: async (req, res) => {
+        try {
+          const url = new URL(req.url, 'http://localhost'), sid = url.searchParams.get('sessionId') || null
+          if (req.method === 'GET') {
+            if (endpoint === 'policy') return send(res, 200, { ok: true, ...(await policy.view(sid)) })
+            if (endpoint === 'history') return send(res, 200, { ok: true, history: await policy.history(url.searchParams.get('key'), url.searchParams.get('id') || undefined) })
+            if (endpoint === 'diagnostics') return send(res, 200, { ok: true, ...policy.diagnostics(sid, mounted()) })
+          }
+          if (req.method === 'POST') {
+            const body = JSON.parse(await readBody(req, 256 * 1024))
+            if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('请求必须为对象')
+            if (endpoint === 'analyze') return send(res, 200, { ok: true, ...analyzeRules(body.rules) })
+            if (endpoint === 'policy') {
+              const result = body.action === 'preview' ? await policy.preview(body.id, body.scope, body.sessionId) : await policy.action(body)
+              return send(res, 200, { ok: true, ...result })
+            }
+            if (endpoint === 'history' && body.action === 'restore') {
+              await policy.restore(body.key, body.id)
+              return send(res, 200, { ok: true, [body.key]: await ({ gate: gateMeta, ponytail: ponytailMeta, shape: shapeMeta })[body.key](await readSettings()) })
+            }
+          }
+          send(res, 405, { ok: false, error: 'method not allowed' })
+        } catch (error) { send(res, 400, { ok: false, error: error.message || String(error) }) }
+      },
+    }), 'dsh-cache-control: ' + endpoint)
   }
 
   // ---- 自动代码审查（v1.11.0）：状态查询 + 开关切换 ----
@@ -1448,7 +1313,6 @@ export async function apply(ctx) {
   const ponyText = await loadPonytail()
   const shapeText = await loadShape()
   console.log('[dsh-cache-control] host up (' + GET_PATH + ', ' + GATE_PATH + ', ' + PONY_PATH + ', ' + SHAPE_PATH + ')'
-    + ' enabled=' + settings.enabled
     + ' gate=' + settings.gateEnabled
     + ' gateSection=' + (gateSectionActive ? 'mounted' : 'absent')
     + ' gateBytes=' + Buffer.byteLength(gateText, 'utf8')

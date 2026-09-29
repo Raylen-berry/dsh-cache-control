@@ -17,15 +17,12 @@ const ok = (name, cond, extra = '') => {
 }
 
 // ---- 临时 DSH_HOME + 真 host 半（chip 点击会经 PUT 写盘，必须落在临时目录）----
+// v1.14.0：压缩接管删除后不再需要 standard preset 夹具。
 fs.rmSync(ROOT, { recursive: true, force: true })
-const presetDir = pathMod.join(ROOT, 'profiles/node_modules/@deepseek-ai/dsh-agent-presets/presets/standard')
-fs.mkdirSync(presetDir, { recursive: true })
 fs.mkdirSync(pathMod.join(ROOT, 'dsh-cache-control'), { recursive: true })
-fs.copyFileSync(process.env.APPDATA + '/dsh-desktop/harness/profiles/node_modules/@deepseek-ai/dsh-agent-presets/presets/standard/agent.cordis.yml',
-  pathMod.join(presetDir, 'agent.cordis.yml'))
 process.env.DSH_HOME = ROOT
 const settingsFile = pathMod.join(ROOT, 'dsh-cache-control', 'settings.json')
-fs.writeFileSync(settingsFile, JSON.stringify({ enabled: true, triggerPct: 30, retainPct: 4, auto: true, gateEnabled: true, pinLastUser: false, clearBubble: false }))
+fs.writeFileSync(settingsFile, JSON.stringify({ gateEnabled: true, pinLastUser: false, clearBubble: false }))
 
 const host = await import('file:///' + PLUGIN + 'index.js')
 const unwrap = (m) => (m && m.default && m.default.createElement) ? m.default : m
@@ -156,7 +153,9 @@ await import('file:///' + PLUGIN + 'client.js?ui' + Date.now())
 if (!captured) throw new Error('client.js 未注册 factory')
 const exportsObj = captured.factory((name) => { if (name === 'react') return React; throw new Error('bad require ' + name) })
 const it = exportsObj.internals
-ok('client 暴露了测试缝 internals', !!it && typeof it.flipCache === 'function', Object.keys(it || {}).join(','))
+ok('client 暴露了测试缝 internals',
+  !!it && typeof it.flipGate === 'function' && typeof it.flipPonytail === 'function' && typeof it.flipShape === 'function',
+  Object.keys(it || {}).join(','))
 ok('domReady 认这棵树', it.domReady() === true)
 
 console.log('\n— 1. pinTarget 两条路径都要钉到"每条消息"那一层 —')
@@ -252,33 +251,32 @@ ok('两个都关时 <html> 上无残留', !Object.keys(html.attrs).some((k) => k
 
 console.log('\n— 5. chip 点段：点哪段切哪个（经真 PUT 落盘）—')
 it.STORE.set({
-  loading: false, loaded: true, error: '', applied: true,
-  enabled: true, triggerPct: 30, retainPct: 4, auto: true,
-  gateEnabled: true, gateReady: true, pinLastUser: false, clearBubble: false,
+  loading: false, loaded: true, error: '',
+  gateEnabled: true, ponytailEnabled: false, shapeEnabled: false,
+  gateReady: true, ponytailReady: true, shapeReady: true,
+  pinLastUser: false, clearBubble: false,
 })
 ok('未加载成功时点段是空操作（防默认值盖盘）', (() => {
   it.STORE.set({ loaded: false })
-  const before = it.STORE.state.enabled
+  const before = it.STORE.state.gateEnabled
   puts.length = 0
-  it.flipCache(); it.flipGate()
-  const same = it.STORE.state.enabled === before && puts.length === 0
+  it.flipGate(); it.flipPonytail(); it.flipShape()
+  const same = it.STORE.state.gateEnabled === before && puts.length === 0
   it.STORE.set({ loaded: true })
   return same
 })(), String(puts.length))
 puts.length = 0
-it.flipCache()
-ok('点省缓存段 → enabled 变 false', it.STORE.state.enabled === false)
-ok('点一下不动门禁', it.STORE.state.gateEnabled === true)
-await sleep(500)
-ok('PUT 发出去了且带全字段', puts.length >= 1, JSON.stringify(puts[puts.length - 1] || {}))
-const disk1 = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
-ok('磁盘上 enabled=false 而 gateEnabled 仍 true', disk1.enabled === false && disk1.gateEnabled === true, JSON.stringify(disk1))
-ok('只点开关不会动滑杆数值', disk1.triggerPct === 30 && disk1.retainPct === 4, JSON.stringify(disk1))
-ok('压缩关了不影响 preset 之外：managed 标记被移除', !fs.readFileSync(pathMod.join(presetDir, 'agent.cordis.yml'), 'utf8').includes('thresholdRatio'))
 it.flipGate()
+ok('点提问段 → gateEnabled 变 false', it.STORE.state.gateEnabled === false)
+ok('点一下不动懒码 / 形状', it.STORE.state.ponytailEnabled === false && it.STORE.state.shapeEnabled === false)
+await sleep(500)
+ok('PUT 发出去了', puts.length >= 1, JSON.stringify(puts[puts.length - 1] || {}))
+const disk1 = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
+ok('磁盘上 gateEnabled=false', disk1.gateEnabled === false, JSON.stringify(disk1))
+it.flipPonytail()
 await sleep(500)
 const disk2 = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
-ok('点提问段 → 只翻转门禁', disk2.gateEnabled === false && disk2.enabled === false && disk2.triggerPct === 30, JSON.stringify(disk2))
+ok('点懒码段 → 只翻转 ponytail', disk2.ponytailEnabled === true && disk2.gateEnabled === false, JSON.stringify(disk2))
 ok('外观两字段被一起写盘且保持 false', disk2.pinLastUser === false && disk2.clearBubble === false)
 it.STORE.set({ gateReady: false })
 it.flipGate()
@@ -293,7 +291,8 @@ const disk3 = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
 ok('pinLastUser / clearBubble 持久化', disk3.pinLastUser === true && disk3.clearBubble === true, JSON.stringify(disk3))
 const g = await (await nodeFetch(base + '/cc/settings.json')).json()
 ok('host 读回这两个字段（重启/刷新后能恢复）', g.settings.pinLastUser === true && g.settings.clearBubble === true)
-ok('压缩参数完全没被外观开关动过', g.settings.enabled === false && g.settings.triggerPct === 30 && g.settings.retainPct === 4)
+ok('规则段开关完全没被外观开关动过（现象与外观正交）',
+  g.settings.gateEnabled === false && g.settings.ponytailEnabled === true, JSON.stringify(g.settings))
 
 console.log('\n— 7. 对话页固定宽度（原底图工坊那一节，已移入本插件）—')
 it.STORE.set({ loading: false, loaded: true, appearanceReady: true })

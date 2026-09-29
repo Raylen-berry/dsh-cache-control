@@ -8,10 +8,15 @@ import { create, act } from 'react-test-renderer'
 
 let module, pass = 0, clock = 0
 const pending = [], timers = new Map()
+const listeners = new Map()
+const document = { hidden: false,
+  addEventListener(name, fn) { listeners.set(name, fn) },
+  removeEventListener(name, fn) { if (listeners.get(name) === fn) listeners.delete(name) },
+}
 const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 const sandbox = {
   window: { __ModuleLoader__: { load(value) { module = value } } },
-  console, AbortController,
+  console, AbortController, document,
   setTimeout(fn, ms) { const id = ++clock; timers.set(id, { fn, ms }); return id },
   clearTimeout(id) { timers.delete(id) },
   fetch(url, options) {
@@ -79,4 +84,18 @@ await tick(10000)
 check('超时有可理解的提示并允许下一次轮询', text().includes('请求超时，请重试') && [...timers.values()].some((t) => t.ms === 2500))
 await act(async () => { root.unmount() })
 check('卸载清理全部定时器', timers.size === 0)
+await act(async () => { root = create(React.createElement(Card)) })
+const beforeHide = pending.at(-1)
+await act(async () => { document.hidden = true; listeners.get('visibilitychange')() })
+check('后台立即终止统计读取', beforeHide.options.signal.aborted)
+await settle(beforeHide, data())
+const hiddenCount = pending.length
+await tick(2500)
+check('后台不安排轮询，迟到请求不会重启计时', pending.length === hiddenCount && timers.size === 0)
+await act(async () => { document.hidden = false; listeners.get('visibilitychange')() })
+check('回到前台只重新读取一次', pending.length === hiddenCount + 1)
+await settle(pending.at(-1), data(false))
+check('前台恢复最新开关状态', !!button('压缩：关'))
+await act(async () => { root.unmount() })
+check('退出页面移除可见性监听和轮询', listeners.size === 0 && timers.size === 0)
 console.log(`${pass} passed, 0 failed`)

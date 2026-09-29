@@ -1,9 +1,7 @@
 // ============================================================================
 // dsh-cache-control · Client half
 //
-// 设置页八块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里；**标题不带序号**）：
-//   * 省缓存 —— 改写 standard preset 的 compaction 参数
-//     （保存后作用于"之后新建的会话"）。
+// 设置页七块互相独立的开关（名称都压到 2–4 字，细节写在卡片正文里；**标题不带序号**）：
 //   * 会话守则 —— 把 session-gate.md 常驻注入 system prompt
 //     （每个 model step 重新组装，故对已打开的会话下一步即生效，且不被压缩稀释）。
 //   * ponytail —— 第二段常驻规则（编码纪律），与守则互不影响。
@@ -69,10 +67,22 @@ window.__ModuleLoader__.load({
 
     // ------------------------------------------------------------ 页面样式 --
     var CSS = [
+      '.cc-analysis-area{margin-bottom:20px}.cc-policy-tools{margin-bottom:22px}.cc-policy-stack{display:flex;flex-direction:column;gap:12px;min-width:0}.cc-policy-toolbar{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:14px}.cc-policy-tool{border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}.cc-policy-tool[aria-pressed=true]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}.cc-policy-fields{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}.cc-policy-field{display:flex;flex-direction:column;gap:8px;min-width:0;flex:1;font-size:12px}.cc-select{max-width:100%;min-width:0;padding:9px 11px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);font:inherit}.cc-policy-preview,.cc-feedback{padding:15px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-2);line-height:1.7}.cc-global-caption{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.8;margin:0 0 20px}.cc-diff-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:0}.cc-diff-grid>div{min-width:0}.cc-diff{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font:inherit;font-size:12px;line-height:1.7;padding:12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1)}.cc-diff.removed{border-left:3px solid #b45a64}.cc-diff.added{border-left:3px solid #418961}.cc-diagnostic-row{display:grid;grid-template-columns:100px 1fr;gap:15px;padding:14px 0;border-bottom:1px solid var(--dsw-alias-border-l1);line-height:1.7}.cc-wrap{flex-wrap:wrap}@media(max-width:760px){.cc-diff-grid{grid-template-columns:1fr}.cc-policy-fields{align-items:stretch;flex-direction:column}.cc-diagnostic-row{grid-template-columns:1fr;gap:7px}}',
+      '.cc-scope-label{font-size:10px;color:var(--dsw-alias-label-secondary);padding:0 5px;white-space:nowrap}',
       '.cc-page{display:flex;flex-direction:column;gap:18px;max-width:680px}',
+      '.cc-page.cc-workbench{max-width:1040px;width:100%;min-width:0;gap:24px;color:var(--dsw-alias-label-primary);font-size:13px}',
+      '.cc-workbench *{box-sizing:border-box}.cc-workbench button:focus-visible,.cc-workbench textarea:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4d6bfe);outline-offset:3px}',
+      '.cc-workbench-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}.cc-workbench-title{font-size:26px;letter-spacing:-.7px;line-height:1.25;font-weight:650;margin:0 0 10px}.cc-eyebrow{font-size:11px;letter-spacing:2px;color:var(--dsw-alias-label-secondary);margin-bottom:12px}.cc-head-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}',
+      '.cc-save-state{display:inline-flex;align-items:center;gap:7px;font-size:12px;white-space:nowrap;color:var(--dsw-alias-label-secondary)}.cc-save-state:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-success,#2da44e)}.cc-save-state.pending:before{background:var(--dsw-alias-label-warning,#c58d35)}',
+      '.cc-workbench-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--dsw-alias-border-l1);border-radius:14px;overflow:hidden;background:var(--dsw-alias-bg-layer-1)}.cc-workbench-summary>div{padding:17px 20px;min-width:0}.cc-workbench-summary>div+div{border-left:1px solid var(--dsw-alias-border-l1)}.cc-workbench-summary strong{display:block;font-size:18px;font-weight:600;margin:5px 0}.cc-workbench-summary small{font-size:11px;color:var(--dsw-alias-label-secondary)}',
+      '.cc-workbench-tabs{display:flex;gap:6px;padding:5px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}.cc-workbench-tab{flex:1;min-width:0;display:flex;gap:8px;align-items:center;justify-content:center;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:11px 12px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;transition:background .15s,color .15s}.cc-workbench-tab:hover{background:var(--dsw-alias-bg-hover,rgba(128,128,128,.1))}.cc-workbench-tab[aria-selected=true]{border-color:var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary);font-weight:600}.cc-tab-dot{height:5px;width:5px;border-radius:50%;background:var(--dsw-alias-brand-primary,#4d6bfe)}',
+      '.cc-tab-intro{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}.cc-tab-intro h2{font-size:17px;font-weight:600;margin:0 0 6px}.cc-tab-intro p{margin:0;color:var(--dsw-alias-label-secondary);line-height:1.7}.cc-rule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.cc-rule-grid>section{display:flex;flex-direction:column;min-width:0}.cc-rule-grid>section.is-editing{grid-column:1/-1}.cc-rule-grid .cc-card{flex:1}.cc-section-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}.cc-section-head .cc-h{margin:0}.cc-section-caption{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0 0 13px;line-height:1.6}.cc-section-kind{font-size:10px;padding:3px 7px;border-radius:5px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.12));color:var(--dsw-alias-label-secondary)}',
+      '.cc-workbench .cc-card{padding:20px;border-radius:14px;gap:15px;min-width:0}.cc-workbench .cc-swRow{line-height:1.7}.cc-workbench .cc-note,.cc-workbench .cc-path{overflow-wrap:anywhere}.cc-rule-preview{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;font-family:inherit;font-size:12px;line-height:1.8;margin:0}.cc-workbench .cc-textarea{min-height:240px;resize:vertical;line-height:1.8}.cc-workbench .cc-appearance-grid{display:grid;gap:22px}.cc-workbench-footer{display:flex;justify-content:space-between;gap:16px;padding-top:4px;color:var(--dsw-alias-label-secondary);font-size:11px}.cc-inline-alert{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}.cc-storage-row{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:7px 16px;padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}.cc-storage-row small{grid-column:1/-1;color:var(--dsw-alias-label-secondary);line-height:1.6}.cc-storage-meter{height:4px;background:var(--dsw-alias-border-l1);border-radius:4px;grid-column:1/-1;overflow:hidden}.cc-storage-meter>span{display:block;height:100%;border-radius:4px;background:var(--dsw-alias-brand-primary,#4d6bfe)}',
+      '@media(max-width:760px){.cc-rule-grid{grid-template-columns:1fr}.cc-workbench-head{flex-direction:column;gap:8px}.cc-workbench-summary>div{padding:14px 12px}.cc-workbench-summary strong{font-size:16px}.cc-workbench .cc-card{padding:16px}.cc-head-actions{align-self:stretch;justify-content:space-between}.cc-workbench-tab{padding:10px 6px;font-size:12px}.cc-tab-intro{flex-direction:column;gap:8px}.cc-workbench .cc-row{flex-wrap:wrap}.cc-workbench-footer{flex-wrap:wrap}}',
       '.cc-h{font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary);margin:0 0 4px}',
       '.cc-sub{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0 0 10px;line-height:1.7}',
       '.cc-card{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 16px;background:var(--dsw-alias-bg-layer-1);display:flex;flex-direction:column;gap:12px}',
+      '.cc-workbench label.cc-row{flex-wrap:nowrap;align-items:flex-start;line-height:1.7}.cc-workbench label.cc-row input{flex-shrink:0;margin-top:5px}.cc-workbench .cc-storage-row .cc-val{min-width:0}.cc-workbench .cc-storage-row>.cc-btn{justify-self:start}.cc-review-details{overflow-wrap:anywhere}',
       '.cc-row{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dsw-alias-label-primary)}',
       // 开/关行（v1.9.3）：说明文字在左、宿主 Switch 在右，两端对齐。
       '.cc-swRow{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;color:var(--dsw-alias-label-primary)}',
@@ -114,7 +124,7 @@ window.__ModuleLoader__.load({
       '.cc-chip .cc-dot{width:6px;height:6px;border-radius:50%;corner-shape:round;background:var(--dsw-alias-label-tertiary);flex:none}',
       '.cc-chip .cc-dot.on{background:var(--dsw-alias-brand-primary,#4d6bfe)}',
       '.cc-chip .cc-chipState{opacity:.85}',
-      // ---- chip 内每个可点段：点「省缓存」切压缩、点「提问」切门禁、点 ▾ 弹滑杆面板 ----
+      // ---- chip 内每个可点段：点「提问」切门禁、点 ponytail / 形状切各自规则，点 ▾ 弹面板 ----
       '.cc-seg{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11.5px;line-height:1;height:20px;padding:0 5px;border-radius:999px;cursor:pointer;transition:background-color .12s}',
       '.cc-seg:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}',
       '.cc-seg:disabled{cursor:default;opacity:.55}',
@@ -138,7 +148,7 @@ window.__ModuleLoader__.load({
       '.cc-chip .cc-badge{background:transparent;border-color:transparent;padding:0 3px}',
       '.cc-chip .cc-badge.on{background:transparent;border-color:transparent;color:var(--dsw-alias-brand-primary,#4d6bfe)}',
       '.cc-chip .cc-badge.dim{background:transparent;border-color:transparent;color:var(--dsw-alias-label-warning,#b8860b)}',
-      // ---- 2026 微调: 「省缓存/提问」与旁边的「开/关」不在同一水平线 ⇒ 标签下移、徽标做小、
+      // ---- 2026 微调: chip 段标签与旁边的「开/关」不在同一水平线 ⇒ 标签下移、徽标做小、
       //      间距收紧。一律用 em（相对 chip 自己的字号），chip 字号变化/DPI 缩放时同步跟着走，
       //      而不是钉死 0.2px / 13px 这种一次性数值（面板、分区头里的同名徽标不受影响）。
       '.cc-chip .cc-seg{gap:.35em}',
@@ -241,24 +251,28 @@ window.__ModuleLoader__.load({
       // color-mix 不支持时退到固定半透明（Electron Chromium 都支持，这条只是保险）。
       '@supports not (color: color-mix(in srgb, white 50%, transparent)){'
         + 'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{background:rgba(32,32,36,.6)}}',
+      // ---- 空会话「工作区行」左边缘对齐输入卡（2026-09-28 实测复现）----
+      //   宿主自己就跟自己对不齐：.heroWorkspaceRow 是 padding:0 16px 0 20px，而 heroModeClusterCss
+      //   又把右内边距改成 20px —— 输入卡所在容器只有 16px 内边距，所以本来就差 4px。
+      //   本插件的「对话页宽度」再把 --dsh-composer-card-max-width 换成 P% 之后，卡还要在容器**内容区**
+      //   里居中一次，偏移变成 (1−P%)×内容宽/2，4px 变几十像素。
+      //   本机 hero 页实测（列宽 1144、P=90%）：卡 left=387.73、行里 chip left=340.70 ⇒ **差 47.03px**。
+      //   所以别去凑那 20px：行左右内边距都用宿主发布的 --dsh-composer-side-clearance（16px），
+      //   再让第一个子元素按**卡自己的居中公式**左移。
+      //   关键：卡的宽度是 `width:100%` 被 max-width 夹住的（.uV2eYG_card），所以 max(0px, …) 不能省 ——
+      //   窄窗（列宽 <~754px）下宿主默认的 px 卡宽被 width:100% 夹住、富余量是 0，
+      //   公式却会算出负值，chip 会反而左移 22px。夹到 0 之后两种情况都严格对齐。
+      'html [class*="_heroWorkspaceRow"]{padding-left:var(--dsh-composer-side-clearance,16px) !important;padding-right:var(--dsh-composer-side-clearance,16px) !important;box-sizing:border-box}',
+      'html [class*="_heroWorkspaceRow"]>:first-child{margin-left:max(0px, calc((100% - var(--dsh-composer-card-max-width,100%)) / 2)) !important}',
     ].join('\n')
 
     // ---------------------------------------------------------------- 状态 --
     var STORE = {
       state: {
-        // 省缓存（压缩策略）
-        enabled: false,
-        triggerPct: 25,
-        retainPct: 5,
-        auto: true,
         loading: true,
         loaded: false,   // 是否成功从 host 读到过设置；未读到前禁止保存（否则会把默认值盖到用户的真实值上）
         saving: false,
-        applied: null,
         error: '',
-        triggerTokens: 0,
-        retainTokens: 0,
-        windowTokens: 1000000,
         // 会话门禁（长期规则）
         gateEnabled: false,
         gateSource: 'builtin',
@@ -341,6 +355,7 @@ window.__ModuleLoader__.load({
       },
       listeners: [],
       set: function (patch) {
+        if (!Object.keys(patch).some(function (key) { return STORE.state[key] !== patch[key] })) return
         var next = {}
         for (var k in this.state) next[k] = this.state[k]
         for (var p in patch) next[p] = patch[p]
@@ -474,10 +489,6 @@ window.__ModuleLoader__.load({
       for (var sk in shapePatch) patch[sk] = shapePatch[sk]
       var s = res && res.settings
       if (s) {
-        patch.enabled = !!s.enabled
-        patch.triggerPct = Number(s.triggerPct) || 25
-        patch.retainPct = Number(s.retainPct) || 5
-        patch.auto = s.auto !== false
         patch.gateEnabled = s.gateEnabled === true
         // 旧 host 的 sanitize 不认识 ponytailEnabled ⇒ undefined。这里**不能**照抄
         // gateEnabled 的 `=== true` 写法：那会把 applyPonytail 从 /cc/ponytail.json
@@ -512,10 +523,6 @@ window.__ModuleLoader__.load({
         patch.loading = false
         patch.loaded = true
         patch.error = ''
-        patch.applied = res.applied === undefined ? null : !!res.applied
-        patch.triggerTokens = res.triggerTokens || 0
-        patch.retainTokens = res.retainTokens || 0
-        patch.windowTokens = res.windowTokens || 1000000
         // 旧版 host 的响应里没有 gate 字段 ⇒ 门禁能力未装载
         if (res.gate === undefined) patch.gateReady = false
         // 同理：ponytail 字段缺失 = host 半还是 v1.9.x，界面禁用并提示重启
@@ -525,8 +532,8 @@ window.__ModuleLoader__.load({
         // 而 shapeEnabled 默认开 ⇒ 用户会在"刷新过页面但没重启"的窗口里静默丢掉形状规则。
         if (res.shape === undefined) patch.shapeReady = false
         // v1.11.0：review 字段缺失 = host 半还没有 /cc/review.json，卡片禁用并提示重启
-        if (res.review === undefined) patch.reviewReady = false
-        else {
+        if (res.review !== undefined) {
+          patch.reviewReady = true
           var rv = res.review
           patch.reviewEnabled = rv.enabled !== false
           patch.reviewRegistered = !!rv.registered
@@ -541,11 +548,15 @@ window.__ModuleLoader__.load({
       applyAppearance(STORE.state)
     }
 
+    var settingsReadRevision = 0
     function load() {
+      if (settingsWrite || Object.keys(pendingSettings).length || ['gate','ponytail','shape'].some(function(pre){return STORE.state[pre+'Saving']})) return
+      var revision = ++settingsReadRevision
+      STORE.set({ loading: true })
       jsonFetch('/cc/settings.json')
-        .then(pull)
+        .then(function(res){if(revision === settingsReadRevision)pull(res)})
         .catch(function (e) {
-          STORE.set({ loading: false, error: '加载失败: ' + String(e) })
+          if(revision === settingsReadRevision)STORE.set({ loading: false, error: '加载失败: ' + String(e) })
         })
       // 审查卡的状态（ocr 装没装、技能注册了没）在另一条路由上：settings.json 里没有它，
       // 所以单独拉一次。旧 host 返回 404 ⇒ reviewReady=false，卡片自己会提示重启。
@@ -553,13 +564,13 @@ window.__ModuleLoader__.load({
     }
 
     /** v1.11.0：拉审查卡状态。enabled 与 registered 都以 host 为准，前端不自己判。 */
+    var reviewRevision = 0
     function reloadReview() {
-      fetch('/cc/review.json', { cache: 'no-store' })
-        .then(function (r) {
-          if (!r.ok) { STORE.set({ reviewReady: false }); return null }
-          return r.json()
-        })
+      if (STORE.state.reviewSaving) return
+      var revision = ++reviewRevision
+      return jsonFetch('/cc/review.json')
         .then(function (res) {
+          if (revision !== reviewRevision) return
           var rv = res && res.review
           if (!rv) return
           STORE.set({
@@ -574,7 +585,7 @@ window.__ModuleLoader__.load({
             reviewError: '',
           })
         })
-        .catch(function () { STORE.set({ reviewReady: false }) })
+        .catch(function (e) { if (revision === reviewRevision) STORE.set({ reviewReady: false, reviewError: '读取失败：' + String(e.message || e) }) })
     }
 
     /**
@@ -584,24 +595,39 @@ window.__ModuleLoader__.load({
      * 合并前这两条链在 9 处逐字重复。
      */
     function putJson(url, body) {
-      return fetch(url, {
+      return requestJson(url, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
-      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j } }) })
+      })
     }
 
     function jsonFetch(url) {
-      return fetch(url, { cache: 'no-store' })
-        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json() })
+      return requestJson(url, { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.j })
+    }
+
+    function requestJson(url, options) {
+      var controller = new AbortController(), timer
+      var external = options && options.signal
+      function abort() { controller.abort() }
+      if (external) { if (external.aborted) abort(); else external.addEventListener('abort', abort, { once: true }) }
+      var request = fetch(url, Object.assign({}, options, { signal: controller.signal }))
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j } }) })
+      var deadline = new Promise(function (_, reject) {
+        timer = setTimeout(function () { controller.abort(); reject(new Error('请求超时，请重试')) }, 10000)
+      })
+      return Promise.race([request, deadline]).finally(function () { clearTimeout(timer); if (external) external.removeEventListener('abort', abort) })
     }
 
     /** 切审查技能开关：走 /cc/review.json，host 侧负责注册/注销，不等主设置那条防抖保存。 */
     function setReviewEnabled(v) {
+      if (STORE.state.reviewSaving || !STORE.state.reviewReady) return
+      ++reviewRevision
       STORE.set({ reviewSaving: true, reviewError: '', reviewEnabled: v })
       putJson('/cc/review.json', { enabled: v === true })
         .then(function (res) {
-          if (!res.ok || !res.j || res.j.ok !== true) throw new Error((res.j && res.j.error) || ('http ' + res.j.status))
+          if (!res.ok || !res.j || res.j.ok !== true) throw new Error((res.j && res.j.error) || ('http ' + res.status))
           var rv = res.j.review || {}
           STORE.set({
             reviewSaving: false, reviewError: '',
@@ -613,104 +639,94 @@ window.__ModuleLoader__.load({
     }
 
     var saveTimer = null
-    function scheduleSave() {
-      if (STORE.state.loading) return
+    var pendingSettings = {}, settingsWrite = null
+    function scheduleSave(patch) {
       // 没成功读到过设置就不写盘：此刻 STORE 里是默认值，PUT 会把用户的真实参数盖掉。
       if (!STORE.state.loaded) {
         STORE.set({ error: '还没从宿主读到设置，已阻止保存（否则会用默认值盖掉你现在的配置）。刷新页面或重启桌面应用后重试。' })
         return
       }
+      settingsReadRevision++
+      STORE.set({ loading: false })
+      Object.assign(pendingSettings, patch)
       if (saveTimer) clearTimeout(saveTimer)
       STORE.set({ saving: true, error: '' })
       saveTimer = setTimeout(saveNow, 250)
     }
     function saveNow() {
-      var s = STORE.state
-      putJson('/cc/settings.json', {
-          enabled: s.enabled,
-          triggerPct: s.triggerPct,
-          retainPct: s.retainPct,
-          auto: s.auto,
-          gateEnabled: s.gateEnabled,
-          // v1.10.0 新增：漏了这一行 = 界面上拨得动、永远不落盘（verify-settings-payload 会抓）。
-          ponytailEnabled: s.ponytailEnabled,
-          pinLastUser: s.pinLastUser,
-          clearBubble: s.clearBubble,
-          pinBlur: s.pinBlur,
-          pinMaxVh: s.pinMaxVh,
-          chatWidth: s.chatWidth,
-          chatWidthEnabled: s.chatWidthEnabled,
-          // v1.6.0 加这个开关时漏了它：界面上拨得动、PUT 里却不带，于是**永远不落盘**，
-          // 刷新就回到默认。由 tools/verify-settings-payload.mjs 这类"载荷与 DEFAULTS 对齐"的
-          // 结构断言兜住（2026-09-14 审计附带发现）。
-          hideResizer: s.hideResizer,
-          // v1.7.0 拆出的第二个开关（侧栏/详情栏分隔条），别再犯同样的漏。
-          hideDivider: s.hideDivider,
-          // v1.11.0：审查技能开关。同样必须出现在载荷里，否则拨得动、不落盘。
-          reviewSkillEnabled: s.reviewEnabled,
-          // v1.12.0：输出形状（并入自 dsh-output-shape）。第三个"拨得动就必须落盘"的开关。
-          shapeEnabled: s.shapeEnabled,
-        })
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+      if (settingsWrite || !Object.keys(pendingSettings).length) return settingsWrite || Promise.resolve()
+      // 单个写入在途；下一轮只带用户改动的字段，避免抹掉其它窗口/独立接口的新值。
+      var payload = pendingSettings, succeeded = false
+      pendingSettings = {}
+      STORE.set({ saving: true, error: '' })
+      settingsWrite = putJson('/cc/settings.json', payload)
         .then(function (res) {
           if (!res.ok || !res.j || res.j.ok !== true) {
-            throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
+            throw new Error((res.j && res.j.error) || ('http ' + res.status))
           }
-          STORE.set({ saving: false, error: '', triggerTokens: res.j.triggerTokens, retainTokens: res.j.retainTokens })
-          return jsonFetch('/cc/settings.json')
-        })
-        .then(function (res) {
-          // 只回读同步状态，不动 gateDraft（可能正在编辑）。
-          STORE.set({
-            applied: res && res.applied === undefined ? null : !!res.applied,
-            gateEnabled: res && res.gate ? res.gate.enabled === true : STORE.state.gateEnabled,
-            ponytailEnabled: res && res.ponytail ? res.ponytail.enabled === true : STORE.state.ponytailEnabled,
-            shapeEnabled: res && res.shape ? res.shape.enabled !== false : STORE.state.shapeEnabled,
-          })
+          succeeded = true
         })
         .catch(function (e) {
-          STORE.set({ saving: false, error: '保存失败: ' + String(e) })
+          pendingSettings = Object.assign({}, payload, pendingSettings)
+          STORE.set({ saving: false, error: '改动尚未保存：' + String(e.message || e) })
         })
+        .then(function () {
+          settingsWrite = null
+          if (succeeded && Object.keys(pendingSettings).length) return saveNow()
+          if (succeeded) STORE.set({ saving: false, error: '', savedAt: Date.now() })
+        })
+      return settingsWrite
+    }
+
+    var ruleRevision = { gate: 0, ponytail: 0, shape: 0 }
+    function acceptRule(pre, data) {
+      var patch = (pre === 'gate' ? applyGate : pre === 'ponytail' ? applyPonytail : applyShape)(data)
+      // 文本响应不能回滚另一路正在保存的规则开关。
+      delete patch[pre + 'Enabled']
+      STORE.set(patch)
+    }
+    function writeRule(pre, text) {
+      if (STORE.state[pre + 'Saving']) return Promise.resolve()
+      settingsReadRevision++
+      STORE.set({ loading: false })
+      var revision = ++ruleRevision[pre], draft = STORE.state[pre + 'Draft'], patch = {}
+      patch[pre + 'Saving'] = true; patch[pre + 'Error'] = ''; STORE.set(patch)
+      return putJson('/cc/' + pre + '.json', { text: text }).then(function (res) {
+        if (!res.ok || !res.j || res.j.ok !== true) throw new Error((res.j && res.j.error) || ('http ' + res.status))
+        return res.j[pre] ? res.j : jsonFetch('/cc/' + pre + '.json')
+      }).then(function (res) {
+        if (revision !== ruleRevision[pre]) return
+        if (!res || !res[pre]) throw new Error('规则接口未返回保存结果，请重新读取')
+        acceptRule(pre, res[pre])
+        var done = {}; done[pre + 'Saving'] = false; done[pre + 'Error'] = ''
+        if (STORE.state[pre + 'Draft'] === draft) done[pre + 'Draft'] = null
+        STORE.set(done)
+        policyChanged()
+      }).catch(function (e) {
+        if (revision !== ruleRevision[pre]) return
+        var failed = {}; failed[pre + 'Saving'] = false; failed[pre + 'Error'] = '规则尚未保存：' + String(e.message || e); STORE.set(failed)
+      })
+    }
+    function readRule(pre) {
+      var draft = STORE.state[pre + 'Draft']
+      if (STORE.state[pre + 'Saving'] || (draft !== null && draft !== STORE.state[pre + 'Text'])) return Promise.resolve()
+      var revision = ++ruleRevision[pre]
+      return jsonFetch('/cc/' + pre + '.json').then(function (res) {
+        if (revision !== ruleRevision[pre]) return
+        if (!res || !res[pre]) throw new Error('规则接口未就绪，请重启桌面应用')
+        acceptRule(pre, res[pre])
+        var patch = {}; patch[pre + 'Error'] = ''; STORE.set(patch)
+      }).catch(function (e) {
+        if (revision !== ruleRevision[pre]) return
+        var patch = {}; patch[pre + 'Error'] = '规则读取失败：' + String(e.message || e); STORE.set(patch)
+      })
     }
 
     /** 写规则文本；text 为 '' 表示删除 override、回到插件内置。 */
-    function saveGateText(text) {
-      STORE.set({ gateSaving: true, gateError: '' })
-      putJson('/cc/gate.json', { text: text })
-        .then(function (res) {
-          if (!res.ok || !res.j || res.j.ok !== true) {
-            throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
-          }
-          STORE.set({ gateSaving: false, gateError: '', gateDraft: null })
-          return jsonFetch('/cc/gate.json')
-        })
-        .then(function (res) { if (res && res.gate) pull({ settings: res.settings || null, gate: res.gate }) })
-        .catch(function (e) {
-          STORE.set({ gateSaving: false, gateError: '规则保存失败: ' + String(e) })
-        })
-    }
+    function saveGateText(text) { return writeRule('gate', text) }
 
-    function reloadGate() {
-      jsonFetch('/cc/gate.json')
-        .then(function (res) {
-          if (!res || !res.gate) throw new Error('no gate payload')
-          var g = res.gate
-          STORE.set({
-            gateSource: g.source, gateBuiltinPath: g.builtinPath || '', gateOverridePath: g.overridePath || '',
-            gateBytes: Number(g.bytes) || 0, gateLines: Number(g.lines) || 0, gateText: g.text || '',
-            gateTruncated: !!g.truncated, gateEnabled: g.enabled === true, gateDraft: null, gateError: '',
-            gateOriginalBytes: Number(g.originalBytes) || Number(g.bytes) || 0,
-            gateKeptBytes: Number(g.keptBytes) || Number(g.bytes) || 0,
-            gateReady: true,
-          })
-        })
-        .catch(function (e) {
-          var missing = /404|no gate payload|not found/i.test(String(e))
-          STORE.set({
-            gateReady: !missing,
-            gateError: missing ? '会话守则接口不可用：需重启桌面应用装载新版 host 半（页面本身可能已刷新到新 client）' : '规则读取失败: ' + String(e),
-          })
-        })
-    }
+    function reloadGate() { return readRule('gate') }
 
     // ------------------------------------------------------ 会话区外观引擎 --
     // 钉住"最近一条我的提问"：position:sticky 的移动量受**包含块（父级）**限制，
@@ -1143,20 +1159,20 @@ window.__ModuleLoader__.load({
       if (!STORE.state.appearanceReady) return
       STORE.set({ pinLastUser: v })
       applyAppearance(STORE.state)
-      scheduleSave()
+      scheduleSave({ pinLastUser: STORE.state.pinLastUser })
     }
     function setClearBubble(v) {
       if (!STORE.state.appearanceReady) return
       STORE.set({ clearBubble: v })
       applyAppearance(STORE.state)
-      scheduleSave()
+      scheduleSave({ clearBubble: STORE.state.clearBubble })
     }
     /** 钉顶底衬的模糊度（px）：只写 CSS 变量，0 = 只留半透明底、不模糊。 */
     function setPinBlur(v) {
       if (!STORE.state.appearanceReady) return
       STORE.set({ pinBlur: clampBlur(v) })
       applyAppearance(STORE.state)
-      scheduleSave()
+      scheduleSave({ pinBlur: STORE.state.pinBlur })
     }
     /**
      * 被钉气泡的最高高度（vh）：决定"钉住时能直接看到多少提问原文"，
@@ -1166,7 +1182,7 @@ window.__ModuleLoader__.load({
       if (!STORE.state.appearanceReady) return
       STORE.set({ pinMaxVh: clampPinMaxVh(v) })
       applyAppearance(STORE.state)
-      scheduleSave()
+      scheduleSave({ pinMaxVh: STORE.state.pinMaxVh })
     }
 
     // ------------------------------------------------------ 对话页固定宽度 --
@@ -1383,14 +1399,14 @@ window.__ModuleLoader__.load({
       if (!STORE.state.resizerReady) return
       STORE.set({ hideResizer: !!v })
       applyResizerHiding()
-      scheduleSave()
+      scheduleSave({ hideResizer: STORE.state.hideResizer })
     }
     /** 开关②：隐藏 / 恢复侧栏与详情栏的分隔条（拖它仍能改侧栏宽，默认保留）。 */
     function setHideDivider(v) {
       if (!STORE.state.dividerReady) return
       STORE.set({ hideDivider: !!v })
       applyResizerHiding()
-      scheduleSave()
+      scheduleSave({ hideDivider: STORE.state.hideDivider })
     }
 
     /** 开关：启用 / 停用固定宽度（走 applyAppearance，顺带挂/拆 DOM 观察器）。 */
@@ -1398,7 +1414,7 @@ window.__ModuleLoader__.load({
       if (!STORE.state.appearanceReady) return
       STORE.set({ chatWidthEnabled: !!v })
       applyAppearance(STORE.state)
-      scheduleSave()
+      scheduleSave({ chatWidthEnabled: STORE.state.chatWidthEnabled })
     }
     /** 滑杆提交值（拖动途中由 WidthField 直接走 pinChatWidth 预览，不经过这里）。 */
     function commitChatWidth(v) {
@@ -1406,7 +1422,7 @@ window.__ModuleLoader__.load({
       v = clampChatWidth(v)
       STORE.set({ chatWidth: v })
       pinChatWidth(STORE.state.chatWidthEnabled, v)
-      scheduleSave()
+      scheduleSave({ chatWidth: STORE.state.chatWidth })
     }
 
     // ---------------------------------------------------------------- 控件 --
@@ -1424,6 +1440,7 @@ window.__ModuleLoader__.load({
      * 布局两种情况一致。aria-label/title 由 primitives Switch 自己带上。
      */
     function Switch(label, checked, onChange, disabled) {
+      disabled = disabled || STORE.state.policyWriting
       if (P && typeof P.Switch === 'function') {
         return h('div', { className: 'cc-swRow', style: { opacity: disabled ? 0.6 : 1 } },
           h('span', { className: 'cc-swLabel' }, label),
@@ -1453,62 +1470,25 @@ window.__ModuleLoader__.load({
       return h('button', Object.assign({ type: 'button', className: 'cc-btn' }, rest), children)
     }
 
-    function SliderRow(label, value, min, max, unit, onChange) {
-      return h('label', { className: 'cc-row' },
-        h('span', { style: { minWidth: '108px' } }, label),
-        h('input', {
-          type: 'range', min: String(min), max: String(max), step: '1',
-          value: String(value),
-          onChange: function (e) { onChange(Number(e.target.value)) },
-        }),
-        h('span', { className: 'cc-val' }, value + (unit || '%')))
-    }
-
-    function setTrigger(v) {
-      v = Math.min(95, Math.max(5, Math.round(v)))
-      var retain = STORE.state.retainPct
-      if (retain >= v) retain = v - 1
-      STORE.set({ triggerPct: v, retainPct: retain })
-      scheduleSave()
-    }
-    function setRetain(v) {
-      var max = STORE.state.triggerPct - 1
-      v = Math.min(max, Math.max(1, Math.round(v)))
-      STORE.set({ retainPct: v })
-      scheduleSave()
-    }
-    /** 省缓存总开关：与门禁互不影响。 */
-    function setEnabled(v) {
-      STORE.set({ enabled: v })
-      scheduleSave()
-    }
-    function setAuto(v) {
-      STORE.set({ auto: v })
-      scheduleSave()
-    }
-    /** 门禁总开关：与省缓存、ponytail 互不影响。 */
+    /** 门禁总开关：与 ponytail、输出形状互不影响。 */
     function setGateEnabled(v) {
       STORE.set({ gateEnabled: v, gateError: '' })
-      scheduleSave()
+      scheduleSave({ gateEnabled: STORE.state.gateEnabled })
     }
     /** ponytail 编码纪律总开关（v1.10.0）：独立于门禁与压缩。 */
     function setPonytailEnabled(v) {
       STORE.set({ ponytailEnabled: v, ponytailError: '' })
-      scheduleSave()
+      scheduleSave({ ponytailEnabled: STORE.state.ponytailEnabled })
     }
     /** 输出形状总开关（v1.12.0）：独立于门禁、ponytail 与压缩。默认开。 */
     function setShapeEnabled(v) {
       STORE.set({ shapeEnabled: v, shapeError: '' })
-      scheduleSave()
+      scheduleSave({ shapeEnabled: STORE.state.shapeEnabled })
     }
     /**
      * chip 两段的点击处理（提到模块作用域，便于离线断言"点哪段切哪个"）。
      * 读 STORE.state 而非闭包快照，避免连点用旧值。
      */
-    function flipCache() {
-      if (STORE.state.loading || !STORE.state.loaded) return
-      setEnabled(!STORE.state.enabled)
-    }
     function flipGate() {
       if (STORE.state.loading || !STORE.state.loaded || !STORE.state.gateReady) return
       setGateEnabled(!STORE.state.gateEnabled)
@@ -1528,85 +1508,14 @@ window.__ModuleLoader__.load({
     }
 
     /** 写 ponytail 规则文本；text 为 '' 表示删除 override、回到插件内置。 */
-    function savePonytailText(text) {
-      STORE.set({ ponytailSaving: true, ponytailError: '' })
-      putJson('/cc/ponytail.json', { text: text })
-        .then(function (res) {
-          if (!res.ok || !res.j || res.j.ok !== true) {
-            throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
-          }
-          STORE.set({ ponytailSaving: false, ponytailError: '', ponytailDraft: null })
-          return jsonFetch('/cc/ponytail.json')
-        })
-        .then(function (res) { if (res && res.ponytail) pull({ settings: null, ponytail: res.ponytail }) })
-        .catch(function (e) {
-          STORE.set({ ponytailSaving: false, ponytailError: '规则保存失败: ' + String(e) })
-        })
-    }
+    function savePonytailText(text) { return writeRule('ponytail', text) }
 
-    function reloadPonytail() {
-      jsonFetch('/cc/ponytail.json')
-        .then(function (res) {
-          if (!res || !res.ponytail) throw new Error('no ponytail payload')
-          var p = res.ponytail
-          STORE.set({
-            ponytailSource: p.source, ponytailBuiltinPath: p.builtinPath || '', ponytailOverridePath: p.overridePath || '',
-            ponytailBytes: Number(p.bytes) || 0, ponytailLines: Number(p.lines) || 0, ponytailText: p.text || '',
-            ponytailTruncated: !!p.truncated, ponytailEnabled: p.enabled === true, ponytailDraft: null, ponytailError: '',
-            ponytailOriginalBytes: Number(p.originalBytes) || Number(p.bytes) || 0,
-            ponytailKeptBytes: Number(p.keptBytes) || Number(p.bytes) || 0,
-            ponytailReady: true,
-          })
-        })
-        .catch(function (e) {
-          var missing = /404|no ponytail payload|not found/i.test(String(e))
-          STORE.set({
-            ponytailReady: !missing,
-            ponytailError: missing ? 'ponytail 接口不可用：需重启桌面应用装载新版 host 半' : '规则读取失败: ' + String(e),
-          })
-        })
-    }
+    function reloadPonytail() { return readRule('ponytail') }
 
     /** 写输出形状规则文本；text 为 '' 表示删除 override、回到插件内置（与 ponytail 逐字同构）。 */
-    function saveShapeText(text) {
-      STORE.set({ shapeSaving: true, shapeError: '' })
-      putJson('/cc/shape.json', { text: text })
-        .then(function (res) {
-          if (!res.ok || !res.j || res.j.ok !== true) {
-            throw new Error((res.j && res.j.error) || ('http ' + (res.j && res.j.status)))
-          }
-          STORE.set({ shapeSaving: false, shapeError: '', shapeDraft: null })
-          return jsonFetch('/cc/shape.json')
-        })
-        .then(function (res) { if (res && res.shape) pull({ settings: null, shape: res.shape }) })
-        .catch(function (e) {
-          STORE.set({ shapeSaving: false, shapeError: '规则保存失败: ' + String(e) })
-        })
-    }
+    function saveShapeText(text) { return writeRule('shape', text) }
 
-    function reloadShape() {
-      jsonFetch('/cc/shape.json')
-        .then(function (res) {
-          if (!res || !res.shape) throw new Error('no shape payload')
-          var p = res.shape
-          STORE.set({
-            shapeSource: p.source, shapeBuiltinPath: p.builtinPath || '', shapeOverridePath: p.overridePath || '',
-            shapeBytes: Number(p.bytes) || 0, shapeLines: Number(p.lines) || 0, shapeText: p.text || '',
-            shapeTruncated: !!p.truncated, shapeEnabled: p.enabled !== false, shapeDraft: null, shapeError: '',
-            shapeOriginalBytes: Number(p.originalBytes) || Number(p.bytes) || 0,
-            shapeKeptBytes: Number(p.keptBytes) || Number(p.bytes) || 0,
-            shapeDisabledByEnv: p.disabledByEnv === true,
-            shapeReady: true,
-          })
-        })
-        .catch(function (e) {
-          var missing = /404|no shape payload|not found/i.test(String(e))
-          STORE.set({
-            shapeReady: !missing,
-            shapeError: missing ? '输出形状接口不可用：需重启桌面应用装载新版 host 半' : '规则读取失败: ' + String(e),
-          })
-        })
-    }
+    function reloadShape() { return readRule('shape') }
 
     /** 规则卡共用的元信息行（门禁 / ponytail 同构，只差键前缀）。 */
     function RuleSummary(s, pre) {
@@ -1632,7 +1541,7 @@ window.__ModuleLoader__.load({
      * 提前告诉用户"存下去会被砍"，而不是存完再猜砍没砍。
      */
     function ruleTextHint(draftBytes, maxBytes) {
-      return '编辑即写入 override 文件（不改动插件目录内的内置规则）；' + draftBytes + ' B / 上限 ' + kb(maxBytes) +
+      return '点击“保存并生效”后写入自定义副本；草稿 ' + draftBytes + ' B / 上限 ' + kb(maxBytes) +
         (draftBytes > maxBytes ? '（超出 ' + (draftBytes - maxBytes) + ' B，保存后会被截断）' : '') +
         '。成对花括号会被替换为全角字形，以免破坏提示词变量插值。'
     }
@@ -1651,7 +1560,7 @@ window.__ModuleLoader__.load({
       var draft = editing ? s[pre + 'Draft'] : text
       var maxBytes = s[pre + 'MaxBytes']
       var draftBytes = new Blob([draft || '']).size
-      var saving = s[pre + 'Saving']
+      var saving = s[pre + 'Saving'] || s.loading || s.policyWriting
       var setDraft = f.setDraft
       return h('div', { className: 'cc-card' },
         Switch(f.title, s[pre + 'Enabled'], f.setEnabled, !s[pre + 'Ready']),
@@ -1662,7 +1571,7 @@ window.__ModuleLoader__.load({
         }),
         h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
           h(Btn, {
-            disabled: !s[pre + 'Ready'],
+            disabled: !s[pre + 'Ready'] || saving,
             onClick: function () { STORE.set(setDraft(editing ? null : text)) },
           }, editing ? '取消编辑' : '编辑规则'),
           editing ? h(Btn, {
@@ -1673,14 +1582,17 @@ window.__ModuleLoader__.load({
             disabled: saving,
             onClick: function () { f.save('') },
           }, '清除自定义，回到内置') : null,
-          h(Btn, { onClick: f.reload }, '重新读取')),
+          h(Btn, { disabled: saving || (editing && draft !== text), title: editing && draft !== text ? '请先保存或取消草稿' : '', onClick: f.reload }, '重新读取')),
         editing ? h('div', null,
           h('textarea', {
-            className: 'cc-textarea', value: draft, spellCheck: false,
+            className: 'cc-textarea', value: draft, spellCheck: false, disabled: saving, 'aria-label': f.title + '正文',
             onChange: function (e) { STORE.set(setDraft(e.target.value)) },
           }),
           h('div', { className: 'cc-muted', style: { marginTop: '6px' } }, ruleTextHint(draftBytes, maxBytes))) : null,
-        s[pre + 'Error'] ? h('p', { className: 'cc-err' }, s[pre + 'Error']) : null,
+        editing && draft !== text ? h('span', { className: 'cc-muted' }, saving ? '正在保存草稿…' : '草稿未保存 · 切换分区会保留') : null,
+        s[pre + 'Error'] ? h('p', { className: 'cc-err', role: 'alert' }, s[pre + 'Error']) : null,
+        !editing ? h(Fold, { label: '查看规则' }, h('pre', { className: 'cc-rule-preview' }, text || '规则尚未读取')) : null,
+        h(Fold, { label: '历史与恢复', open: s[pre + 'HistoryOpen'] === true, onToggle: function(value){var patch={};patch[pre+'HistoryOpen']=value;STORE.set(patch)} }, h(RuleHistory, { ruleKey: pre })),
         h(Fold, { label: '规则说明' },
           h('div', { className: 'cc-note' }, f.summary(s, pre)),
           h('div', { className: 'cc-path' }, '内置规则：' + (s[pre + 'BuiltinPath'] || '（未就绪）')),
@@ -1692,41 +1604,15 @@ window.__ModuleLoader__.load({
     /** 说明抽屉: 默认收起 (测试可经 internals.setFoldsOpen 让其默认展开)。 */
     function Fold(props) {
       var pair = React.useState(FOLD_DEFAULT_OPEN === true)
-      var open = pair[0]
+      var open = typeof props.open === 'boolean' ? props.open : pair[0]
       var setOpen = pair[1]
       return h('div', { className: 'cc-fold' },
         h('button', {
           type: 'button', className: 'cc-foldBtn',
           'aria-expanded': open ? 'true' : 'false',
-          onClick: function () { setOpen(!open) },
+          onClick: function () { setOpen(!open); if(props.onToggle)props.onToggle(!open) },
         }, (open ? '▾ ' : '▸ ') + (props.label || '说明')),
         open ? h('div', { className: 'cc-foldBody' }, props.children) : null)
-    }
-
-    // ---------------------------------------------------- 设置页：省缓存卡 --
-    function CacheCard() {
-      var s = useCache()
-      var windowText = fmt(s.windowTokens)
-      var hint = s.enabled
-        ? '开启：之后新建的“标准模式”会话在上下文压力达到 ~' + fmt(s.triggerTokens) +
-          ' tokens（窗口 ' + s.triggerPct + '%）时自动压缩，逐字保留最近 ~' + fmt(s.retainTokens) +
-          ' tokens（窗口 ' + s.retainPct + '%），更早内容整理成一条摘要。'
-        : '关闭：使用 DSH 出厂默认（压力达窗口 80% 压缩，逐字保留 16%）。'
-      return h('div', { className: 'cc-card' },
-        Switch('启用压缩策略（作用于之后新建的标准模式会话）', s.enabled, setEnabled),
-        h('div', null,
-          SliderRow('压缩触发点', s.triggerPct, 5, 95, '%（窗口 ' + windowText + '）', setTrigger),
-          h('div', { className: 'cc-row' },
-            h('span', { style: { minWidth: '108px' } }, '保留原文尾部'),
-            h('input', { type: 'range', min: '1', max: String(Math.max(1, s.triggerPct - 1)), step: '1',
-              value: String(Math.min(s.retainPct, Math.max(1, s.triggerPct - 1))),
-              onChange: function (e) { setRetain(Number(e.target.value)) } }),
-            h('span', { className: 'cc-val' }, Math.min(s.retainPct, Math.max(1, s.triggerPct - 1)) + '%（窗口 ' + windowText + '）')),
-          Switch('自动压缩（关闭 = 仅保留手动 /compact）', s.auto, setAuto)),
-        h(Fold, { label: '说明' },
-          h('div', { className: 'cc-note' }, hint)),
-        s.error ? h('p', { className: 'cc-err' }, s.error)
-          : h('p', { className: 'cc-ok' }, s.saving ? '正在保存…' : (s.enabled === s.applied ? '压缩参数已与磁盘一致（下一个新建会话生效）' : '压缩参数待同步…')))
     }
 
     // ------------------------------------------------- 设置页：省 token 卡 --
@@ -1787,13 +1673,21 @@ window.__ModuleLoader__.load({
     // a mutation invalidates an older GET even if its transport ignores abort.
     function createTokenFeed(merge) {
       var alive = true, busy = false, revision = 0, timer, controller
+      var page = typeof document !== 'undefined' ? document : null
+      var paused = !!(page && page.hidden)
+      function visibility() {
+        paused = !!page.hidden
+        if (paused) { if (!busy) cancelRead(); else clearTimeout(timer) }
+        else load()
+      }
+      if (page && page.addEventListener) page.addEventListener('visibilitychange', visibility)
       function cancelRead() {
         revision++
         clearTimeout(timer)
         if (controller) controller.abort()
       }
       function schedule() {
-        if (alive && !busy) timer = setTimeout(load, 2500)
+        if (alive && !busy && !paused) timer = setTimeout(load, 2500)
       }
       async function request(action, body) {
         var c = new AbortController(), timedOut = false
@@ -1819,7 +1713,7 @@ window.__ModuleLoader__.load({
         if (alive && ticket === revision) merge({ data: data, error: '' })
       }
       async function load() {
-        if (!alive || busy) return
+        if (!alive || busy || paused) return
         cancelRead()
         var ticket = revision
         try { await readData(ticket) }
@@ -1835,14 +1729,14 @@ window.__ModuleLoader__.load({
         try {
           var result = await request(action, body)
           if (!result || result.ok !== true) throw new Error('接口拒绝了这次改动')
-          if (alive && ticket === revision) await readData(ticket)
+          if (alive && ticket === revision && !paused) await readData(ticket)
         } catch (e) {
           if (alive && ticket === revision) merge({ error: String(e.message || e) })
         } finally {
           if (alive && ticket === revision) { busy = false; merge({ busy: '' }); schedule() }
         }
       }
-      return { load: load, post: post, dispose: function () { alive = false; cancelRead() } }
+      return { load: load, post: post, dispose: function () { alive = false; cancelRead(); if(page && page.removeEventListener)page.removeEventListener('visibilitychange', visibility) } }
     }
 
     function SaveTokenCard() {
@@ -1960,7 +1854,7 @@ window.__ModuleLoader__.load({
               }))),
         error ? h('p', { className: 'cc-err', role: 'alert' }, '接口出错：' + error) : null,
         h(Fold, { label: '说明' },
-          h('div', { className: 'cc-note' }, '无损优先：均匀数组确定性重编码（TOON 式），零信息损失；常规输出走结构感知窗口，中段按行号抽采样。每次替换前先落盘保存完整原文，再提供 save_token_expand 工具或原文路径供取回；保存失败就不替换。压缩只在 tools/post-execute 发生一次，重放不改写历史。上游的 compaction assist 与本页「省缓存」抢同一个引擎，嵌入时已整段删除。'),
+          h('div', { className: 'cc-note' }, '无损优先：均匀数组确定性重编码（TOON 式），零信息损失；常规输出走结构感知窗口，中段按行号抽采样。每次替换前先落盘保存完整原文，再提供 save_token_expand 工具或原文路径供取回；保存失败就不替换。压缩只在 tools/post-execute 发生一次，重放不改写历史。上游的 compaction assist 分支在嵌入时就整段删除（压缩契约原属本插件的「省缓存」一块，v1.14.0 起该块也随 DSH 0.1.7 一并移除）。'),
           h('div', { className: 'cc-path' }, '统计口径：只保留计数与字节数，不含任何 prompt 文本；计数与开关都在内存里，重启归零回到默认开（本页其余开关写 settings.json）。'),
           h('div', { className: 'cc-path' }, '压缩、去重、expand 三者共用同一份 spillStore 落盘；spillStore 不可用时压缩自动关闭，tool 输出原样进上下文。超过内存上限或重启后，取回可能需要根据提示中的原文路径调用 read 工具。')))
     }
@@ -1969,7 +1863,7 @@ window.__ModuleLoader__.load({
     function GateCard() {
       return RuleCard({
         key: 'gate',
-        title: '启用会话守则（下一个请求即生效，含已打开的会话）',
+        title: '启用会话守则（全局默认）',
         setEnabled: setGateEnabled,
         setDraft: function (v) { return { gateDraft: v } },
         save: saveGateText,
@@ -2003,20 +1897,25 @@ window.__ModuleLoader__.load({
     function ReviewCard() {
       var s = useCache()
       return h('div', { className: 'cc-card' },
-        Switch('注册 auto-code-review 技能（按需加载，不占常驻 token）', s.reviewEnabled, setReviewEnabled,
+        Switch('启用代码审查（需要时调用）', s.reviewEnabled, setReviewEnabled,
           !s.reviewReady || s.reviewSaving),
         !s.reviewReady
-          ? h('div', { className: 'cc-err' }, '未装载：当前运行的 host 还没有 /cc/review.json，请重启桌面应用后再操作。')
+          ? h('div', { className: 'cc-err' }, '审查服务尚未就绪，请重新检测；更新插件后需重启桌面应用。')
           : h('div', { className: 'cc-muted' },
-            '技能文件 ' + kb(s.reviewSkillBytes) + ' · ' + (s.reviewSkillPath || '（未知路径）') +
-            ' · 常驻注入 ' + (s.reviewRegistered ? '0 B（只进目录，用到才加载正文）' : '未注册')),
+            s.reviewRegistered ? '已加入可用技能，调用时才加载审查正文。' : s.reviewEnabled ? '已开启，但技能尚未注册，请检查宿主服务或重启。' : '尚未启用，模型不会调用这项审查技能。'),
         h('div', { className: s.reviewOcrFound ? 'cc-ok' : 'cc-warn' },
           s.reviewOcrFound
-            ? 'ocr 已就绪：v' + (s.reviewOcrVersion || '?') + '（' + (s.reviewOcrCommand || '') + '）'
-            : '没找到 ocr 可执行文件 —— 技能会照常注册，但跑到第一步就会停下说明。装一个：npm install -g @alibaba-group/open-code-review'),
+            ? '审查工具已就绪'
+            : '尚未安装审查工具，暂时无法执行。安装方式见下方“工具详情”。'),
         h('div', { style: { display: 'flex', gap: '8px' } },
-          h(Btn, { onClick: reloadReview }, '重新检测')),
+          h(Btn, { disabled: s.reviewSaving, onClick: reloadReview }, '重新检测')),
         s.reviewError ? h('p', { className: 'cc-err' }, s.reviewError) : null,
+        h(Fold, { label: '工具详情' },
+          h('div', { className: 'cc-muted cc-review-details' },
+            'auto-code-review · 正文 ' + kb(s.reviewSkillBytes) + ' · ' + (s.reviewSkillPath || '路径尚未读取')),
+          h('div', { className: 'cc-muted cc-review-details' }, s.reviewOcrFound
+            ? 'open-code-review ' + (s.reviewOcrVersion || '') + ' · ' + (s.reviewOcrCommand || '')
+            : '安装命令：npm install -g @alibaba-group/open-code-review')),
         h(Fold, { label: '为什么不是常驻规则' },
           h('div', { className: 'cc-note' },
             '上游 alibaba/open-code-review（Apache-2.0）的 README 把"通用 agent + 自然语言 skill 做审查"' +
@@ -2035,7 +1934,7 @@ window.__ModuleLoader__.load({
     function PonytailCard() {
       return RuleCard({
         key: 'ponytail',
-        title: '启用 ponytail 编码纪律（下一个请求即生效，含已打开的会话）',
+        title: '启用 ponytail 编码纪律（全局默认）',
         setEnabled: setPonytailEnabled,
         setDraft: function (v) { return { ponytailDraft: v } },
         save: savePonytailText,
@@ -2070,7 +1969,7 @@ window.__ModuleLoader__.load({
     function ShapeCard() {
       return RuleCard({
         key: 'shape',
-        title: '启用输出形状（下一个请求即生效，含已打开的会话；默认开）',
+        title: '启用输出形状（全局默认，初始开启）',
         setEnabled: setShapeEnabled,
         setDraft: function (v) { return { shapeDraft: v } },
         save: saveShapeText,
@@ -2253,82 +2152,99 @@ window.__ModuleLoader__.load({
     }
 
     function StorageCard() {
-      var pair = React.useState({ loading: true, error: '', data: null, busy: '' })
-      var st = pair[0]
-      var set = pair[1]
-      function load() {
-        set(function (p) { return Object.assign({}, p, { loading: true, error: '' }) })
-        fetch('/cc/storage', { cache: 'no-store' })
-          .then(function (r) { return r.json() })
-          .then(function (j) {
-            if (!j || j.ok !== true) throw new Error((j && j.error) || 'http')
-            set(function (p) { return Object.assign({}, p, { loading: false, data: j }) })
+      var pair = React.useState({ loading: true, error: '', data: null, busy: '', notice: '' })
+      var st = pair[0], set = pair[1], lifecycle = React.useRef({ alive: false, ticket: 0, controller: null, busy: false })
+      var confirmPair = React.useState(null), confirmation = confirmPair[0], confirm = confirmPair[1]
+      function merge(patch) {
+        if (lifecycle.current.alive) set(function (prev) { return Object.assign({}, prev, patch) })
+      }
+      // A new request invalidates its predecessor even when abort is ignored.
+      async function request(url, body) {
+        var owner = lifecycle.current, ticket = ++owner.ticket
+        if (owner.controller) owner.controller.abort()
+        var controller = new AbortController(), timedOut = false
+        owner.controller = controller
+        var timer = setTimeout(function () { timedOut = true; controller.abort() }, 15000)
+        try {
+          var options = { cache: 'no-store', signal: controller.signal }
+          if (body !== undefined) Object.assign(options, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
           })
-          .catch(function (e) { set(function (p) { return Object.assign({}, p, { loading: false, error: String((e && e.message) || e) }) }) })
+          var res = await fetch(url, options)
+          if (!res.ok) throw new Error('HTTP ' + res.status)
+          var data = await res.json()
+          if (!data || data.ok !== true) throw new Error(data && data.error || '服务返回异常')
+          return owner.alive && ticket === owner.ticket ? data : null
+        } catch (e) {
+          if (!owner.alive || ticket !== owner.ticket) return null
+          throw new Error(timedOut ? '统计或操作超时，请重试' : String(e.message || e))
+        } finally {
+          clearTimeout(timer)
+          if (owner.controller === controller) owner.controller = null
+        }
       }
-      React.useEffect(function () { load() }, [])
-      function post(url, body, label) {
-        set(function (p) { return Object.assign({}, p, { busy: label, error: '' }) })
-        fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })
-          .then(function (r) { return r.json() })
-          .then(function (j) {
-            set(function (p) { return Object.assign({}, p, { busy: '' }) })
-            if (!j || j.ok !== true) throw new Error((j && j.error) || 'http')
-            load()
-          })
-          .catch(function (e) { set(function (p) { return Object.assign({}, p, { busy: '', error: String((e && e.message) || e) }) }) })
+      async function load(force) {
+        if (lifecycle.current.busy) return
+        merge({ loading: true, error: '' })
+        try {
+          var data = await request('/cc/storage' + (force ? '?refresh=1' : ''))
+          if (data) merge({ data: data, loading: false })
+        } catch (e) { merge({ loading: false, error: e.message }) }
       }
-      var data = st.data
-      var body = null
-      if (st.loading && !data) body = h('div', { className: 'cc-sub' }, '读取中…')
-      else if (st.error && !data) body = h('div', { className: 'cc-err' }, '读取失败：' + st.error)
-      else if (data) {
-        var rows = data.categories.map(function (c) {
-          return h('div', { className: 'cc-row', key: c.id },
-            h('span', { style: { minWidth: '96px' } }, c.label),
-            h('span', { className: 'cc-val' }, c.exists ? fmtBytes(c.bytes) : '—'),
-            h('span', { className: 'cc-sub' }, c.exists ? c.files + ' 个文件' : '没有这个目录'),
-            h('span', { className: 'cc-sub', style: { flex: '1' } }, c.note),
-          )
-        })
-        var cands = (data.candidates || []).map(function (c, i) {
-          return h('div', { className: 'cc-row', key: 'c' + i },
-            h('span', { style: { minWidth: '96px' } }, c.label),
-            h('span', { className: 'cc-val' }, fmtBytes(c.bytes)),
-            h('span', { className: 'cc-sub' }, c.files + ' 个文件'),
-            h('span', { className: 'cc-sub', style: { flex: '1' }, title: c.path }, c.why + '（风险：' + c.risk + '）'),
-            h(Btn, { disabled: st.busy !== '', onClick: function () { post('/cc/storage/clean', { paths: [c.path] }, c.label) } }, '移入回收'),
-          )
-        })
-        body = h('div', null,
-          rows,
-          h('div', { className: 'cc-row', style: { borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: '6px', paddingTop: '6px' } },
-            h('span', { style: { minWidth: '96px' } }, '合计'),
-            h('span', { className: 'cc-val' }, fmtBytes(data.total.bytes)),
-            h('span', { className: 'cc-sub' }, data.total.files + ' 个文件'),
-            h('span', { className: 'cc-sub', style: { flex: '1' }, title: data.home }, data.home),
-          ),
-          h(Fold, { label: '清理预览（' + (data.candidates || []).length + ' 项可回收）' },
-            h('div', { className: 'cc-note' },
-              '只列**可以再生成**的东西，每项写清原因与风险。点「移入回收」是**移动**不是删除 —— 文件落到 ',
-              data.home + '\\dsh-cache-control\\recycle\\<时间戳>\\ 下，确认不要了再点「清空回收目录」。'),
-            h('div', null, cands.length ? cands : h('div', { className: 'cc-sub' }, '当前没有可回收的东西')),
-            h('div', { className: 'cc-row', style: { marginTop: '6px' } },
-              h('span', { className: 'cc-sub', style: { flex: '1' } }, '回收目录当前占用：' + fmtBytes(data.recycle.bytes) + '（' + data.recycle.files + ' 个文件）'),
-              h(Btn, { disabled: st.busy !== '', onClick: function () { post('/cc/storage/clean', {}, 'all') } }, '全部移入回收'),
-              h(Btn, { disabled: st.busy !== '', onClick: function () { post('/cc/storage/purge', {}, 'purge') } }, '清空回收目录'),
-            ),
-          ),
-        )
+      React.useEffect(function () {
+        var owner = lifecycle.current
+        owner.alive = true
+        load(false)
+        return function () {
+          owner.alive = false
+          owner.ticket++
+          if (owner.controller) owner.controller.abort()
+        }
+      }, [])
+      async function execute(action) {
+        var owner = lifecycle.current
+        if (owner.busy) return
+        owner.busy = true
+        confirm(null)
+        merge({ busy: action.label, error: '', notice: '' })
+        try {
+          var result = await request(action.url, action.body)
+          if (!result) return
+          var notice = action.url.indexOf('/purge') >= 0
+            ? '已清空回收目录，释放 ' + fmtBytes(result.freed)
+            : '已移入回收 ' + (result.moved || []).length + ' 项。'
+          if (result.skipped && result.skipped.length) {
+            notice += ' ' + result.skipped.length + ' 项未移动：' + result.skipped.map(function (x) { return x.reason }).join('；')
+          }
+          merge({ notice: notice })
+          owner.busy = false
+          await load(true)
+        } catch (e) { merge({ error: e.message }) }
+        finally { owner.busy = false; merge({ busy: '' }) }
       }
-      return h('div', { className: 'cc-card' },
-        h('div', { className: 'cc-row' },
-          h('span', { style: { flex: '1' } }, '各用途分别占多少盘；清理先给候选清单，且只「移入回收」不直接删'),
-          h(Btn, { disabled: st.loading || st.busy !== '', onClick: load }, st.loading ? '读取中…' : '刷新'),
-        ),
-        body,
-        st.error && data ? h('div', { className: 'cc-err' }, '上一次操作出错：' + st.error) : null,
-      )
+      var data=st.data, categories=data&&data.categories||[], candidates=data&&data.candidates||[]
+      var total=data&&data.total||{bytes:0,files:0}, recycle=data&&data.recycle||{bytes:0,files:0}
+      var reclaim=candidates.reduce(function(n,c){return n+c.bytes},0)
+      var disabled=st.loading||!!st.busy
+      return h('div',{className:'cc-card'},
+        h('div',{className:'cc-row'},h('span',{style:{flex:1}},st.loading?'正在统计目录占用…':data?'已统计 '+fmtBytes(total.bytes)+' · '+total.files+' 个文件':'读取失败，可重试'),
+          h(Btn,{disabled:disabled,onClick:function(){load(true)}},st.loading?'读取中…':'刷新统计')),
+        st.error?h('div',{className:'cc-err',role:'alert'},st.error):null,
+        st.notice?h('div',{className:'cc-note',role:'status'},st.notice):null,
+        st.busy?h('p',{className:'cc-muted',role:'status'},'正在'+st.busy+'…'):null,
+        data&&data.truncated?h('p',{className:'cc-warn'},'部分目录达到统计上限，当前显示的是已统计用量。'):null,
+        h('div',null,categories.slice().sort(function(a,b){return b.bytes-a.bytes}).map(function(c){return h('div',{className:'cc-storage-row',key:c.id},
+          h('span',null,c.label),h('span',{className:'cc-val'},c.exists?fmtBytes(c.bytes):'—'),
+          h('div',{className:'cc-storage-meter'},h('span',{style:{width:(total.bytes?Math.max(0.5,c.bytes/total.bytes*100):0)+'%'}})),
+          h('small',null,(c.exists?c.files+' 个文件':'暂无文件')+' · '+String(c.note||'').replace(/\*\*/g,'')))})),
+        data?h(Fold,{label:'清理预览 · '+candidates.length+' 项缓存 · '+fmtBytes(reclaim)},
+          h('p',{className:'cc-note'},'移入回收后仍占磁盘空间，可手动取回；清空回收目录才会释放空间。提示词产物、会话历史和附件不会在这里清理。'),
+          candidates.length?candidates.map(function(c){return h('div',{className:'cc-storage-row',key:c.path},h('span',null,c.label),h('span',{className:'cc-val'},fmtBytes(c.bytes)),h('small',{title:c.path},String(c.why||'').replace(/\*\*/g,'')),
+            h(Btn,{disabled:disabled,onClick:function(){confirm({url:'/cc/storage/clean',body:{paths:[c.path]},label:'移入回收',description:'将“'+c.label+'”的 '+fmtBytes(c.bytes)+' 缓存移入回收目录。'})}},'移入回收'))}):h('p',{className:'cc-muted'},'没有需要回收的缓存'),
+          h('div',{className:'cc-row',style:{marginTop:14}},h(Btn,{disabled:disabled||!candidates.length,onClick:function(){confirm({url:'/cc/storage/clean',body:{paths:candidates.map(function(c){return c.path})},label:'批量移入回收',description:'将上面 '+candidates.length+' 项缓存（'+fmtBytes(reclaim)+'）移入回收目录。'})}},'全部移入回收'))):null,
+        data?h('div',{className:'cc-row'},h('span',{className:'cc-muted',style:{flex:1}},'回收目录 · '+fmtBytes(recycle.bytes)+' · '+recycle.files+' 个文件'),
+          h(Btn,{disabled:disabled||!recycle.files,onClick:function(){confirm({url:'/cc/storage/purge',body:{},label:'清空回收目录',description:'永久删除回收目录内 '+recycle.files+' 个文件（'+fmtBytes(recycle.bytes)+'）。清空后无法从本插件取回。'})}},'清空回收目录')):null,
+        confirmation?h('div',{className:'cc-inline-alert',role:'alertdialog','aria-label':'确认清理'},h('div',null,h('p',null,confirmation.description),h('div',{className:'cc-row'},h(Btn,{onClick:function(){execute(confirmation)}},'确认'+confirmation.label),h(Btn,{onClick:function(){confirm(null)}},'取消')))):null)
     }
 
     function ChatPageCard() {
@@ -2363,59 +2279,278 @@ window.__ModuleLoader__.load({
               + ' 属性区分是哪一类；各自的开关拨开即隐藏，插件被停用时标记会自动撤干净。'))
     }
 
-    function CacheControlPage() {
-      var s = useCache()
-      // 名称一律压到 2–4 字（用户 2026-09-07）：目录里一眼能读完，细节写在每卡正文。
-      // **分区标题不带序号**（v1.11.1）：序号是"位置属性"、名字是"身份属性"，插一张卡就得把
-      // 全部下游引用重排一遍（v1.10.2 修"两个 ②"、v1.11.0 插自动审查，已经为此返工两次）。
-      // 顺序由下面 section 的书写顺序决定；要指代某块直接说名字（气泡置顶 / 对话页 …）。
-      return h('div', { className: 'cc-page' },
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '会话策略'),
-          h(Fold, { label: '总述' },
-            h('p', { className: 'cc-sub' }, '九个独立功能区：压缩策略改写 standard preset 的 compaction 参数（只对之后新建的会话生效）；省 token 提供统计台与压缩、去重开关（并入自 dsh-plugin-save-token：结构感知压缩 + 无损重编码 + 去重 + save_token_expand 取回工具，只计数与字节数、不含 prompt 文本，两个开关存内存、重启归默认开）；会话守则把长期规则常驻注入 system prompt（对所有会话的下一个请求生效）；ponytail 是第二段常驻规则（编码纪律，与守则互不影响）；输出形状是第三段常驻规则（回复形状，**默认开**，并入自原 dsh-output-shape 插件）；自动审查注册一个**按需技能**（一个字都不进 system prompt，靠外部 ocr 现取该审哪些文件与命中规则）；气泡置顶只管会话区样式（钉住最近一条提问 · 毛玻璃底衬随这条提问的长度伸缩 · 长文限高 38vh 可在气泡内滚轮 · 气泡透明）；对话页只管会话列宽（原底图工坊里的同名区块）；存储管各用途占盘与清理。'))),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '省缓存'),
-          CacheCard()),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '省 token'),
-          h(SaveTokenCard)),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '会话守则'),
-          GateCard()),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, 'ponytail'),
-          PonytailCard()),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '输出形状'),
-          ShapeCard()),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '自动审查'),
-          ReviewCard()),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '气泡置顶'),
-          AppearanceCard()),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '对话页'),
-          ChatPageCard()),
-        h('section', null,
-          h('h3', { className: 'cc-h' }, '存储'),
-          StorageCard()),
-        h('section', null,
-          h(Fold, { label: '关于本页' },
-            h('p', { className: 'cc-muted' }, '该页面由 dsh-cache-control 插件提供。开关写入 $DSH_HOME/dsh-cache-control/settings.json：压缩开关同步改写 standard preset 组装文件中 @deepseek-ai/dsh-compaction-basic 行的 config（关闭即移除 config 恢复出厂默认）；会话守则/ponytail/输出形状三个开关只决定各自规则段是否为空（空段在提示词渲染时被丢弃）；「气泡置顶」与「对话页」两项纯界面，只改样式与 CSS 变量。「省 token」的统计来自 /cc/st/api/dashboard（本插件自带的前缀路由），压缩与去重两个开关**只在内存里**、重启回到默认开，也不写 settings.json。规则文本见上列路径。'))))
+    // Advanced controls are lazy: the host API is read only while their view is mounted.
+    var RULE_NAMES = { gate: '会话守则', ponytail: 'ponytail', shape: '输出形状' }
+    function policyJson(url, body, signal) {
+      var options = { cache: 'no-store', signal: signal }
+      if (body !== undefined) Object.assign(options, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      return requestJson(url, options).then(function (res) {
+        if (!res.ok || !res.j || res.j.ok !== true) throw new Error(res.status === 404 ? '新功能需重启 DSH Desktop 后使用' : res.j && res.j.error || '读取失败：HTTP ' + res.status)
+        return res.j
+      })
     }
+    function usePolicyResource(url) {
+      var pair = React.useState({ data: null, error: '', busy: false, loading: !!url })
+      var value = pair[0], set = pair[1], owner = React.useRef(null)
+      var reload = React.useState(0), tick = reload[0], setTick = reload[1]
+      React.useEffect(function () {
+        var current = { alive: true, busy: false, controller: new AbortController() }
+        owner.current = current
+        set({ data: null, error: '', busy: false, loading: !!url })
+        if (url) policyJson(url, undefined, current.controller.signal).then(function (data) {
+          if (current.alive) set({ data: data, error: '', busy: false, loading: false })
+        }).catch(function (error) {
+          if (current.alive) set({ data: null, error: error.message, busy: false, loading: false })
+        })
+        return function () { current.alive = false; current.controller.abort() }
+      }, [url, tick])
+      async function run(body, replace) {
+        var current = owner.current
+        if (!url || !current || current.busy || STORE.state.policyWriting) return null
+        var mutation = url.indexOf('/cc/policy') === 0 && body.action !== 'preview'
+          || url.indexOf('/cc/history') === 0 && body.action === 'restore'
+        current.busy = true
+        if (mutation) STORE.set({ policyWriting: true })
+        set(function (prev) { return Object.assign({}, prev, { busy: true, error: '' }) })
+        try {
+          var result = await policyJson(url, body)
+          // Reconcile shared state even if the user leaves this view while the
+          // host finishes the write. Local component disposal only cancels UI updates.
+          if (mutation) {
+            if (body.action === 'restore' || body.action === 'apply' && body.scope === 'global') load()
+            policyChanged()
+          }
+          if (!current.alive) return null
+          if (replace) set(function (prev) { return Object.assign({}, prev, { data: result }) })
+          return result
+        } catch (error) {
+          if (current.alive) set(function (prev) { return Object.assign({}, prev, { error: error.message }) })
+          return null
+        } finally {
+          current.busy = false
+          if (mutation) STORE.set({ policyWriting: false })
+          if (current.alive) set(function (prev) { return Object.assign({}, prev, { busy: false }) })
+        }
+      }
+      return Object.assign({}, value, { run: run, refresh: function () { if (!owner.current || !owner.current.busy) setTick(function (n) { return n + 1 }) } })
+    }
+    function policyChanged() { STORE.set({ policyTick: (STORE.state.policyTick || 0) + 1 }) }
+    function policyLocked(s) {
+      return s.saving || s.policyWriting || ['gate', 'ponytail', 'shape'].some(function (key) {
+        return s[key + 'Saving'] || (s[key + 'Draft'] !== null && s[key + 'Draft'] !== s[key + 'Text'])
+      })
+    }
+    function ResourceError(props) {
+      return props.resource.error ? h('div', { className: 'cc-inline-alert', role: 'alert' },
+        h('span', { className: 'cc-err' }, props.resource.error),
+        h(Btn, { disabled: props.resource.busy, onClick: props.resource.refresh }, '重新读取')) : null
+    }
+    function DiffView(props) {
+      var diff = props.diff
+      if (!diff || !diff.changed) return h('p', { className: 'cc-muted' }, '正文没有变化')
+      return h('div', { className: 'cc-diff-grid' },
+        h('div', null, h('div', { className: 'cc-muted' }, '当前内容 · 从第 ' + diff.startLine + ' 行起'), h('pre', { className: 'cc-diff removed' }, diff.removed || '（空）')),
+        h('div', null, h('div', { className: 'cc-muted' }, '变更后内容'), h('pre', { className: 'cc-diff added' }, diff.added || '（空）')))
+    }
+    function RuleHistory(props) {
+      var s = useCache(), key = props.ruleKey
+      var resource = usePolicyResource('/cc/history?key=' + key + '&revision=' + (s.policyTick || 0))
+      var pair = React.useState(''), selected = pair[0], select = pair[1]
+      var detail = usePolicyResource(selected ? '/cc/history?key=' + key + '&id=' + encodeURIComponent(selected) : null)
+      var rows = resource.data && resource.data.history || []
+      var busy = resource.busy || policyLocked(s)
+      async function restore() {
+        var result = await resource.run({ action: 'restore', key: key, id: selected })
+        if (result) { acceptRule(key, result[key]); select('') }
+      }
+      return h('div', { className: 'cc-policy-stack' },
+        h('p', { className: 'cc-muted' }, '每次修改前保留原文，清除自定义也会留档。最近 50 版在此列出。'),
+        h(ResourceError, { resource: resource }),
+        resource.loading ? h('span', { className: 'cc-muted' }, '正在读取历史…') : null,
+        !resource.loading && !resource.error && !rows.length ? h('span', { className: 'cc-muted' }, '还没有历史版本；下次修改会自动记录。') : null,
+        rows.length ? h('select', { className: 'cc-select', 'aria-label': RULE_NAMES[key] + '历史版本', value: selected, disabled: busy, onChange: function (e) { select(e.target.value) } },
+          h('option', { value: '' }, '选择一个历史版本'), rows.map(function (row) { return h('option', { key: row.id, value: row.id }, new Date(row.at).toLocaleString('zh-CN') + ' · ' + row.reason + ' · ' + kb(row.bytes)) })) : null,
+        h(ResourceError, { resource: detail }),
+        detail.data ? h('div', null, h(DiffView, { diff: detail.data.history.diff }), h(Btn, { disabled: busy, onClick: restore }, resource.busy ? '正在恢复…' : '恢复此版本')) : null,
+        policyLocked(s) ? h('p', { className: 'cc-muted' }, '请先保存或取消当前草稿，再恢复历史。') : null)
+    }
+    function RuleFeedback() {
+      var s = useCache(), rules = {}
+      Object.keys(RULE_NAMES).forEach(function (key) { rules[key] = { enabled: key === 'shape' ? shapeInjected(s) : s[key + 'Enabled'], text: s[key + 'Draft'] !== null ? s[key + 'Draft'] : s[key + 'Text'] } })
+      var input = JSON.stringify(rules), pair = React.useState({ data: null, error: '' }), result = pair[0], set = pair[1]
+      React.useEffect(function () {
+        var alive = true, controller = new AbortController()
+        set({ data: null, error: '' })
+        var timer = setTimeout(function () {
+          policyJson('/cc/analyze', { rules: JSON.parse(input) }, controller.signal).then(function (data) { if (alive) set({ data: data, error: '' }) })
+            .catch(function (error) { if (alive) set({ data: null, error: error.message }) })
+        }, 350)
+        return function () { alive = false; clearTimeout(timer); controller.abort() }
+      }, [input])
+      if (result.error) return h('p', { className: 'cc-muted' }, result.error)
+      if (!result.data) return h('p', { className: 'cc-muted' }, '正在检查规则负担…')
+      var data = result.data
+      return h('div', { className: 'cc-feedback' },
+        h('strong', null, '启用规则合计 ' + kb(data.bytes) + ' · 粗估 ' + data.tokenEstimate.min + '–' + data.tokenEstimate.max + ' token / 请求'),
+        h('p', { className: 'cc-muted' }, data.note),
+        data.warnings.length ? data.warnings.map(function (warning, index) { return h('div', { className: 'cc-warn', key: index },
+          h('p', null, warning.message), warning.refs.map(function (ref, i) { return h('p', { className: 'cc-muted', key: i }, RULE_NAMES[ref.key] + ' 第 ' + ref.line + ' 行：' + ref.excerpt) })) })
+          : h('span', { className: 'cc-muted' }, '未发现常见重复或篇幅冲突；不代表已经完成语义审查。'))
+    }
+    function Diagnostics(props) {
+      var s = useCache(), sid = props.sessionId
+      var resource = usePolicyResource('/cc/diagnostics?sessionId=' + encodeURIComponent(sid || '') + '&revision=' + (s.policyTick || 0) + '-' + (s.savedAt || 0))
+      var data = resource.data, last = data && data.lastRequest
+      return h('div', { className: 'cc-policy-stack' },
+        h('div', { className: 'cc-row' }, h('strong', { style: { flex: 1 } }, '从配置到实际请求'), h(Btn, { disabled: resource.loading, onClick: resource.refresh }, '重新检查')),
+        h(ResourceError, { resource: resource }),
+        data ? h('div', null,
+          h('p', { className: 'cc-muted' }, '宿主插件 ' + data.version + ' 已加载 · ' + (data.requestProbe ? '请求检查已接入' : '请求检查未接入，请重启应用')),
+          Object.keys(RULE_NAMES).map(function (key) {
+            var present = last && last.rules[key]
+            var message = !data.mounted[key] ? '未挂载，需要重启或检查插件冲突'
+              : !sid ? '已挂载；打开会话后可核对实际请求'
+              : !last ? '已挂载；尚未观察到当前会话的新请求'
+              : !last.current ? '配置已有变化，等待下一次请求验证'
+              : present.status === 'present' ? '最近请求确认带上规则' : present.status === 'off' ? '当前配置关闭此规则，不作注入校验' : '最近请求未找到应有规则，请检查会话是否覆盖系统提示词'
+            return h('div', { className: 'cc-diagnostic-row', key: key }, h('strong', null, RULE_NAMES[key]), h('span', { className: !data.mounted[key] || last && last.current && present.status === 'missing' ? 'cc-warn' : 'cc-muted' }, message))
+          }),
+          last ? h('p', { className: 'cc-muted' }, '最近观察：' + new Date(last.at).toLocaleString('zh-CN') + '。只核对请求文本是否包含规则，不代表模型一定遵守；不保存对话正文。') : null) : null)
+    }
+    function PolicyWorkbench(props) {
+      var s = useCache(), sid = props.sessionId
+      var resource = usePolicyResource('/cc/policy?sessionId=' + encodeURIComponent(sid || '') + '&revision=' + (s.policyTick || 0) + '-' + (s.savedAt || 0))
+      var tabPair = React.useState('presets'), mode = tabPair[0], setMode = tabPair[1]
+      var scopePair = React.useState('global'), scope = scopePair[0], setScope = scopePair[1]
+      var presetPair = React.useState('builtin:daily'), selected = presetPair[0], select = presetPair[1]
+      var namePair = React.useState(''), name = namePair[0], setName = namePair[1]
+      var previewPair = React.useState(null), preview = previewPair[0], setPreview = previewPair[1]
+      var deletePair = React.useState(false), deleting = deletePair[0], setDeleting = deletePair[1]
+      var noticePair = React.useState(''), notice = noticePair[0], setNotice = noticePair[1]
+      var data = resource.data, locked = policyLocked(s), disabled = resource.busy || resource.loading || locked || !data
+      var presets = data && data.presets || [], chosen = presets.find(function (p) { return p.id === selected })
+      React.useEffect(function () { setPreview(null); setDeleting(false) }, [scope, selected, sid, s.savedAt, s.policyTick])
+      async function action(body, message) {
+        var result = await resource.run(Object.assign({ sessionId: sid, scope: scope }, body), false)
+        if (result) {
+          setNotice(message || '已保存'); setPreview(null); setDeleting(false)
+          if (body.action === 'create') { var row = result.presets.find(function (p) { return p.name === name.trim() }); if (row) select(row.id); setName('') }
+          if (body.action === 'delete') select('builtin:daily')
+        }
+      }
+      async function showPreview() {
+        var result = await resource.run({ action: 'preview', id: selected, scope: scope, sessionId: sid })
+        if (result) setPreview(result)
+      }
+      return h('div', { className: 'cc-card cc-policy-tools' },
+        h('div', { className: 'cc-policy-toolbar', 'aria-label': '策略工具' },
+          [['presets', '策略预设'], ['session', '当前会话'], ['diagnostics', '生效检查']].map(function (tab) {
+            return h('button', { type: 'button', key: tab[0], className: 'cc-policy-tool', 'aria-pressed': mode === tab[0], onClick: function () { setMode(tab[0]) } }, tab[1])
+          })),
+        mode === 'diagnostics' ? h(Diagnostics, { sessionId: sid }) : h(React.Fragment, null,
+          h(ResourceError, { resource: resource }),
+          resource.loading ? h('span', { className: 'cc-muted' }, '正在读取策略…') : null,
+          notice ? h('p', { className: 'cc-muted', role: 'status' }, notice) : null,
+          locked ? h('p', { className: 'cc-warn' }, '请先保存或取消规则草稿，等待设置保存完成。') : null,
+          mode === 'session' ? h('div', { className: 'cc-policy-stack' },
+            h('p', { className: 'cc-muted' }, sid ? '仅影响当前会话（' + sid.slice(-8) + '）的后续请求，其他会话保持各自设置。' : '先打开一个已有会话，才能单独设置。'),
+            data && sid ? Object.keys(RULE_NAMES).map(function (key) {
+              var overrides = data.session && data.session.overrides || {}, rule = overrides[key]
+              return h('label', { className: 'cc-policy-field', key: key }, h('span', null, RULE_NAMES[key]),
+                h('select', { className: 'cc-select', 'aria-label': RULE_NAMES[key] + '当前会话', disabled: disabled, value: !rule || typeof rule.enabled !== 'boolean' ? 'inherit' : String(rule.enabled),
+                  onChange: function (e) { action({ action: 'session', key: key, enabled: e.target.value === 'inherit' ? null : e.target.value === 'true' }, '当前会话已更新') } },
+                  h('option', { value: 'inherit' }, '跟随全局'), h('option', { value: 'true' }, '仅此会话开启'), h('option', { value: 'false' }, '仅此会话关闭')),
+                rule && typeof rule.text === 'string' ? h('small', { className: 'cc-muted' }, '正文使用此会话的预设快照；选“跟随全局”后恢复全局正文。') : null)
+            }) : null,
+            h(Btn, { disabled: disabled || !sid || !data || !data.session || !Object.keys(data.session.overrides).length, onClick: function () { action({ action: 'session', reset: true }, '当前会话已恢复跟随全局') } }, '全部恢复跟随全局'))
+          : h('div', { className: 'cc-policy-stack' },
+            h('p', { className: 'cc-muted' }, '预设保存三个常驻规则的开关和正文。内置组合使用插件自带正文；外观、审查工具与省 token 开关不随预设改变。'),
+            h('div', { className: 'cc-policy-fields' },
+              h('label', { className: 'cc-policy-field' }, h('span', null, '应用范围'), h('select', { className: 'cc-select', 'aria-label': '预设应用范围', value: scope, disabled: resource.busy, onChange: function (e) { setScope(e.target.value) } },
+                h('option', { value: 'global' }, '全局默认'), h('option', { value: 'session', disabled: !sid }, '仅当前会话'))),
+              h('label', { className: 'cc-policy-field' }, h('span', null, '规则组合'), h('select', { className: 'cc-select', 'aria-label': '规则组合', value: selected, disabled: disabled, onChange: function (e) { select(e.target.value) } },
+                presets.map(function (p) { return h('option', { key: p.id, value: p.id }, p.name + (p.builtin ? ' · 内置' : '')) }))),
+              h(Btn, { disabled: disabled || !chosen || scope === 'session' && !sid, onClick: showPreview }, '预览应用')),
+            preview ? h('div', { className: 'cc-policy-preview' },
+              h('strong', null, '将“' + preview.name + '”应用到' + (preview.scope === 'global' ? '全局默认' : '当前会话')),
+              preview.changes.map(function (change) { return h('div', { key: change.key },
+                h('p', null, change.label + '：' + (change.before ? '开' : '关') + ' → ' + (change.after ? '开' : '关') + (change.diff.changed ? ' · 正文有变化' : ' · 正文不变')),
+                change.diff.changed ? h(Fold, { label: change.label + '正文差异' }, h(DiffView, { diff: change.diff })) : null) }),
+              h('div', { className: 'cc-row' }, h(Btn, { disabled: disabled, onClick: function () { action({ action: 'apply', id: preview.id, revision: preview.revision }, '预设已应用，后续请求生效') } }, '确认应用'), h(Btn, { disabled: resource.busy, onClick: function () { setPreview(null) } }, '取消'))) : null,
+            h(Fold, { label: '保存与管理我的预设' },
+              h('div', { className: 'cc-policy-stack' },
+                h('input', { className: 'cc-select', 'aria-label': '预设名称', maxLength: 40, placeholder: '给这套规则起个名字', value: name, disabled: disabled, onChange: function (e) { setName(e.target.value) } }),
+                h('div', { className: 'cc-row cc-wrap' },
+                  h(Btn, { disabled: disabled || !name.trim() || scope === 'session' && !sid, onClick: function () { action({ action: 'create', name: name }, '当前组合已保存为预设') } }, '保存当前组合'),
+                  h(Btn, { disabled: disabled || !chosen || chosen.builtin || !name.trim(), onClick: function () { action({ action: 'rename', id: selected, name: name }, '预设已重命名') } }, '重命名所选预设'),
+                  h(Btn, { disabled: disabled || !chosen || chosen.builtin, onClick: function () { setDeleting(true) } }, '删除所选预设')),
+                deleting ? h('div', { role: 'alertdialog', 'aria-label': '删除预设', className: 'cc-inline-alert' }, h('span', null, '删除“' + chosen.name + '”？已应用的规则不会改变。'), h(Btn, { disabled: resource.busy, onClick: function () { action({ action: 'delete', id: selected }, '预设已删除') } }, '确认删除'), h(Btn, { onClick: function () { setDeleting(false) } }, '取消')) : null)))))
+    }
+    function hostSessionId(props) {
+      if (!props) return null
+      var fromStore = typeof props.useSessions === 'function' ? props.useSessions(function (state) {
+        if (!state) return null
+        if (typeof state.current === 'string') return state.current
+        var rows = state.byId || {}
+        return Object.keys(rows).find(function (id) { return rows[id] && rows[id].retainedBy && rows[id].retainedBy.mainView > 0 }) || null
+      }) : null
+      return props.sessionId || fromStore || null
+    }
+    function SettingsFrame(props) { return h(CacheControlPage, { sessionId: hostSessionId(props) }) }
 
-    // ------------------------------------------ 输入工具条 chip + 弹出面板 --
-    function SliderC(label, value, min, max, onChange) {
-      return h('div', { className: 'cc-prow' },
-        h('label', null, label),
-        h('input', {
-          type: 'range', min: String(min), max: String(max), step: '1',
-          value: String(value),
-          onChange: function (e) { onChange(Number(e.target.value)) },
-        }),
-        h('span', { className: 'cc-val' }, value + '%'))
+    var PAGE_TABS = [
+      { id: 'rules', label: '规则', title: '模型如何协作', description: '规则保存后从下一个请求生效，可单独设置当前会话；自动审查只在调用时加载。' },
+      { id: 'tokens', label: '省 token', title: '工具输出与用量', description: '查看压缩、去重和取回状态。统计只在此分区打开时刷新。' },
+      { id: 'appearance', label: '对话外观', title: '让对话更好读', description: '调整提问气泡与会话宽度，只影响界面，不改变模型行为。' },
+      { id: 'storage', label: '存储', title: '查看与整理占用', description: '先查看可回收缓存，再决定是否清理。会话历史、附件和提示词产物不参与批量清理。' },
+    ]
+    function CacheControlPage(props) {
+      props = props || {}
+      var s = useCache(), active = PAGE_TABS.find(function(t){return t.id === s.pageTab}) || PAGE_TABS[0]
+      var draft = ['gate','ponytail','shape'].some(function(pre){return s[pre+'Draft'] !== null && s[pre+'Draft'] !== s[pre+'Text']})
+      var enabled = (s.gateReady && s.gateEnabled ? 1 : 0) + (s.ponytailReady && s.ponytailEnabled ? 1 : 0) + (s.shapeReady && shapeInjected(s) ? 1 : 0)
+      var bytes = (s.gateReady && s.gateEnabled ? s.gateBytes : 0) + (s.ponytailReady && s.ponytailEnabled ? s.ponytailBytes : 0) + (s.shapeReady && shapeInjected(s) ? s.shapeBytes : 0)
+      function section(title, caption, component, key) {
+        return h('section', { key: title, className: key && (s[key+'Draft'] !== null || s[key+'HistoryOpen']) ? 'is-editing' : '' },
+          h('div',{className:'cc-section-head'},h('h3',{className:'cc-h'},title), key ? h('span',{className:'cc-section-kind'},'常驻规则') : null),
+          caption ? h('p',{className:'cc-section-caption'},caption) : null, h(component))
+      }
+      var content
+      if (active.id === 'rules') content = h(React.Fragment, null, h(PolicyWorkbench, { sessionId: props.sessionId }),
+        h('p', { className: 'cc-global-caption' }, '全局规则 · 下方开关与正文作为所有会话的默认值；当前会话单独设置可在上方调整。'),
+        h('div', { className: 'cc-analysis-area' }, ['gate','ponytail','shape'].some(function(key){return s[key+'Draft'] !== null}) ? h(RuleFeedback) : h(Fold, { label: '规则负担与检查' }, h(RuleFeedback))),
+        h('div',{className:'cc-rule-grid'},
+        section('会话守则','核实事实、必要提问与执行边界。',GateCard,'gate'),
+        section('ponytail','编码纪律：优先复用，避免过度实现。',PonytailCard,'ponytail'),
+        section('输出形状','控制回复的结构、重点与阅读节奏。',ShapeCard,'shape'),
+        section('自动审查','按需检查代码，不占用常驻规则篇幅。',ReviewCard)))
+      else if (active.id === 'tokens') content = section('省 token',null,SaveTokenCard)
+      else if (active.id === 'appearance') content = h('div',{className:'cc-appearance-grid'},section('气泡置顶','保留最近一条提问，长内容可在气泡内滚动。',AppearanceCard),section('对话页','设置阅读宽度和拖拽把手的显示方式。',ChatPageCard))
+      else content = section('存储',null,StorageCard)
+      return h('div',{className:'cc-page cc-workbench'},
+        h('header',{className:'cc-workbench-head'},
+          h('div',null,h('div',{className:'cc-eyebrow'},'对话控制台'),h('h1',{className:'cc-workbench-title'},'会话策略'),h('p',{className:'cc-sub'},'管理模型规则、工具输出与对话外观。')),
+          h('div',{className:'cc-head-actions'},h('span',{className:'cc-save-state'+(s.saving||s.error||!s.loaded?' pending':''),role:'status'},s.loading?'读取中':s.saving?'正在保存':s.error?'需要处理':s.loaded?'设置已同步':'尚未连接'),
+            h(Btn,{disabled:s.loading||s.saving||draft||Object.keys(pendingSettings).length>0,onClick:load},'重新读取'))),
+        s.error ? h('div',{className:'cc-inline-alert',role:'alert'},h('span',{className:'cc-err'},s.error),h(Btn,{disabled:s.saving,onClick:function(){if(Object.keys(pendingSettings).length)saveNow();else load()}},'重试')) : null,
+        h('div',{className:'cc-workbench-summary'},
+          h('div',null,h('span',{className:'cc-muted'},'全局常驻规则'),h('strong',null,s.loaded?enabled+' / 3 已启用':'读取中'),h('small',null,'会话可单独设置')),
+          h('div',null,h('span',{className:'cc-muted'},'全局附加文本'),h('strong',null,s.loaded?kb(bytes):'—'),h('small',null,'每次请求的规则量，并非计费 token')),
+          h('div',null,h('span',{className:'cc-muted'},'代码审查'),h('strong',null,!s.reviewReady?'未就绪':s.reviewRegistered?'按需可用':s.reviewEnabled?'等待服务':'未启用'),h('small',null,s.reviewRegistered&&!s.reviewOcrFound?'审查工具尚未安装':'使用时才加载规则'))),
+        h('div',{className:'cc-workbench-tabs',role:'tablist','aria-label':'会话策略分区'},PAGE_TABS.map(function(tab){return h('button',{
+          key:tab.id,id:'cc-tab-'+tab.id,type:'button',className:'cc-workbench-tab',role:'tab','aria-label':tab.label,'aria-selected':active.id===tab.id,'aria-controls':'cc-panel-'+tab.id,tabIndex:active.id===tab.id?0:-1,
+          onClick:function(){STORE.set({pageTab:tab.id})},
+          onKeyDown:function(e){
+            var step=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0
+            if(!step&&e.key!=='Home'&&e.key!=='End')return
+            e.preventDefault();var index=PAGE_TABS.indexOf(tab)
+            index=e.key==='Home'?0:e.key==='End'?PAGE_TABS.length-1:(index+step+PAGE_TABS.length)%PAGE_TABS.length
+            STORE.set({pageTab:PAGE_TABS[index].id});e.currentTarget.parentNode.querySelectorAll('[role=tab]')[index].focus()
+          }
+        },tab.label,tab.id==='rules'&&draft?h('span',{className:'cc-tab-dot',title:'有未保存的规则草稿','aria-label':'有未保存草稿'}):null)})),
+        h('div',{key:active.id,id:'cc-panel-'+active.id,role:'tabpanel','aria-labelledby':'cc-tab-'+active.id,tabIndex:0},
+          h('div',{className:'cc-tab-intro'},h('div',null,h('h2',null,active.title),h('p',null,active.description))),content),
+        h('footer',{className:'cc-workbench-footer'},h('span',null,'设置自动保存 · 规则正文需手动保存'),h('span',null,'会话策略 1.16.0')))
     }
 
     // ------------------------------------------------ 面板定位数学（纯函数）--
@@ -2447,8 +2582,25 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    function CacheControlComposerChip() {
-      var s = useCache()
+    function CacheControlComposerChip(props) {
+      var globalState = useCache(), sid = hostSessionId(props)
+      var scoped = usePolicyResource(sid ? '/cc/policy?sessionId=' + encodeURIComponent(sid) + '&revision=' + (globalState.policyTick || 0) + '-' + (globalState.savedAt || 0) : null)
+      var s = globalState
+      if (sid) {
+        s = Object.assign({}, globalState, { loading: globalState.loading || globalState.policyWriting || scoped.loading || scoped.busy || !scoped.data })
+        var effective = scoped.data && scoped.data.session && scoped.data.session.effective
+        if (effective) Object.keys(RULE_NAMES).forEach(function (key) {
+          var rule = effective[key]
+          s[key + 'Enabled'] = rule.enabled
+          s[key + 'Text'] = rule.text
+          s[key + 'Bytes'] = rule.injectedBytes
+        })
+      }
+      async function change(key, value) {
+        if (sid) {
+          await scoped.run({ action: 'session', sessionId: sid, key: key, enabled: value }, true)
+        } else ({ gate: setGateEnabled, ponytail: setPonytailEnabled, shape: setShapeEnabled })[key](value)
+      }
       var openPair = React.useState(FORCE_OPEN === true)
       var open = openPair[0]
       var setOpen = openPair[1]
@@ -2524,27 +2676,15 @@ window.__ModuleLoader__.load({
       }, [open])
 
       var header = h('div', { className: 'cc-panelHead' },
-        h('span', null, '会话策略'),
+        h('span', null, sid ? '会话策略 · 仅当前会话' : '会话策略 · 全局默认'),
         h('button', { className: 'cc-close', 'aria-label': '关闭', onClick: function () { setOpen(false) } }, '✕'))
-
-      // 省缓存
-      var cacheSection = [
-        h('div', { className: 'cc-sect', key: 'h', style: { borderTop: 'none', paddingTop: '0' } },
-          h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
-            h('span', { className: 'cc-sectTitle' }, '省缓存'), OnOff(s.enabled)),
-          h('span', { className: 'cc-sectHint' }, '新会话生效')),
-        h(React.Fragment, { key: 'on' }, Switch('启用（之后新建的会话）', s.enabled, setEnabled)),
-        h(React.Fragment, { key: 'tr' }, SliderC('压缩触发点', s.triggerPct, 5, 95, setTrigger)),
-        h(React.Fragment, { key: 'rt' }, SliderC('保留原文尾部', Math.min(s.retainPct, Math.max(1, s.triggerPct - 1)), 1, Math.max(1, s.triggerPct - 1), setRetain)),
-        h(React.Fragment, { key: 'au' }, Switch('自动压缩（关 = 仅手动 /compact）', s.auto, setAuto)),
-      ]
 
       // 会话守则 —— 同一个框内，独立开关
       var gateSection = [
-        h('div', { className: 'cc-sect', key: 'h' },
+        h('div', { className: 'cc-sect', key: 'h', style: { borderTop: 'none', paddingTop: '0' } },
           h('span', { className: 'cc-sectTitle' }, '会话守则'),
           h('span', { className: 'cc-sectHint' }, '下一步即生效')),
-        h(React.Fragment, { key: 'on' }, Switch('启用（规则 R1–R3 研判提问分工 / R5–R7 少犯错·查证·谨慎）', s.gateEnabled, setGateEnabled, !s.gateReady)),
+        h(React.Fragment, { key: 'on' }, Switch('启用（规则 R1–R3 研判提问分工 / R5–R7 少犯错·查证·谨慎）', s.gateEnabled, function(v){change('gate',v)}, s.loading || !s.gateReady)),
         s.gateReady ? h('div', { key: 'meta' }, GateSummary(s))
           : h('div', { className: 'cc-err', key: 'meta' }, '未装载：需重启桌面应用'),
         s.gateOpen ? h('div', { className: 'cc-gateBody', key: 'body' }, s.gateText || '（空）') : null,
@@ -2565,7 +2705,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'cc-sect', key: 'h' },
           h('span', { className: 'cc-sectTitle' }, 'ponytail'),
           h('span', { className: 'cc-sectHint' }, '下一步即生效')),
-        h(React.Fragment, { key: 'on' }, Switch('启用编码纪律（YAGNI / 梯子 / 修根因）', s.ponytailEnabled, setPonytailEnabled, !s.ponytailReady)),
+        h(React.Fragment, { key: 'on' }, Switch('启用编码纪律（YAGNI / 梯子 / 修根因）', s.ponytailEnabled, function(v){change('ponytail',v)}, s.loading || !s.ponytailReady)),
         s.ponytailReady ? h('div', { key: 'meta' }, RuleSummary(s, 'ponytail'))
           : h('div', { className: 'cc-err', key: 'meta' }, '未装载：需重启桌面应用'),
         s.ponytailOpen ? h('div', { className: 'cc-gateBody', key: 'body' }, s.ponytailText || '（空）') : null,
@@ -2586,7 +2726,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'cc-sect', key: 'h' },
           h('span', { className: 'cc-sectTitle' }, '输出形状'),
           h('span', { className: 'cc-sectHint' }, '下一步即生效')),
-        h(React.Fragment, { key: 'on' }, Switch('启用回复形状（首行给下一步 / 无客套）', s.shapeEnabled, setShapeEnabled, !s.shapeReady)),
+        h(React.Fragment, { key: 'on' }, Switch('启用回复形状（首行给下一步 / 无客套）', s.shapeEnabled, function(v){change('shape',v)}, s.loading || !s.shapeReady)),
         s.shapeReady ? h('div', { key: 'meta' }, RuleSummary(s, 'shape'))
           : h('div', { className: 'cc-err', key: 'meta' }, '未装载：需重启桌面应用'),
         s.shapeReady && s.shapeDisabledByEnv
@@ -2597,12 +2737,9 @@ window.__ModuleLoader__.load({
       ]
 
       var note = h('div', { className: 'cc-note' },
-        '压缩：' + (s.enabled
-          ? '触发 ~' + fmt(s.triggerTokens) + ' / 保留 ~' + fmt(s.retainTokens) + '（窗口 ' + fmt(s.windowTokens) + '），仅影响之后新建的会话。'
-          : '出厂默认（窗口 80% 压缩 / 保留 16%），仅影响之后新建的会话。')
-        + ' 守则：' + (!s.gateReady ? '未装载，需重启桌面应用。'
+        '守则：' + (!s.gateReady ? '未装载，需重启桌面应用。'
           : s.gateEnabled
-            ? kb(s.gateBytes) + ' 规则已常驻 system prompt，对所有会话的下一个请求生效，不被压缩稀释。'
+            ? kb(s.gateBytes) + ' 规则已常驻 system prompt，对当前所选范围的后续请求生效，不被压缩稀释。'
             : '未注入，模型不会看到 R1–R3/R5–R7。')
         + ' ponytail：' + (!s.ponytailReady ? '未装载，需重启桌面应用。'
           : s.ponytailEnabled
@@ -2611,11 +2748,11 @@ window.__ModuleLoader__.load({
         + ' 输出形状：' + (!s.shapeReady ? '未装载，需重启桌面应用。'
           : s.shapeDisabledByEnv ? '被环境变量 DSH_OUTPUT_SHAPE_DISABLE=1 强制关闭。'
             : s.shapeEnabled
-              ? kb(s.shapeBytes) + ' 回复形状常驻注入（默认开，对所有会话生效）。'
+              ? kb(s.shapeBytes) + ' 回复形状常驻注入（默认开，在所选范围生效）。'
               : '未注入，仅按需技能 i-have-adhd 可用。'))
-      var status = s.error || s.gateError || s.ponytailError || s.shapeError
+      var status = scoped.error ? h('div', { className: 'cc-err' }, scoped.error) : s.error || s.gateError || s.ponytailError || s.shapeError
         ? h('div', { className: 'cc-err' }, s.error || s.gateError || s.ponytailError || s.shapeError)
-        : h('div', { className: 'cc-ok' }, s.saving ? '正在保存…' : (s.enabled === s.applied ? '已与磁盘一致' : '待同步…'))
+        : h('div', { className: 'cc-ok' }, s.saving ? '正在保存…' : '已与磁盘一致')
 
       var panel = open ? h('div', {
         className: 'cc-panel',
@@ -2629,7 +2766,7 @@ window.__ModuleLoader__.load({
         },
       },
         header,
-        h(React.Fragment, null, cacheSection),
+        h('div', { className: 'cc-note' }, sid ? '这里的开关仅影响当前会话。设置页可恢复跟随全局；子会话保持自己的设置。' : '这里修改全局默认规则。'),
         h(React.Fragment, null, gateSection),
         h(React.Fragment, null, ponySection),
         h(React.Fragment, null, shapeSection),
@@ -2647,56 +2784,42 @@ window.__ModuleLoader__.load({
         ? ReactDOM.createPortal(panel, document.body)
         : panel
 
-      // ---- chip：两段各自可点（点哪段切哪个），竖线分隔，右侧 ▾ 才弹滑杆面板 ----
-      var cacheTitle = '省缓存 · 会话压缩策略：' + (s.enabled
-        ? '开（触发 ~' + fmt(s.triggerTokens) + ' / 保留 ~' + fmt(s.retainTokens) + '，窗口 ' + fmt(s.windowTokens) + '）'
-        : '关（出厂默认 80% / 16%）')
-        + '\n生效范围：只影响之后新建的"标准模式"会话。\n点这一段 = 直接开/关；要拖滑杆点右侧 ▾。'
+      // ---- chip：每段各自可点（点哪段切哪个），竖线分隔，右侧 ▾ 才弹面板 ----
       var gateTitle = '会话守则 · 长期规则：' + (!s.gateReady ? '未装载，需重启桌面应用。'
         : (s.gateEnabled ? '开（' : '关（') + kb(s.gateBytes) + ' · ' + s.gateLines + ' 行 · '
           + (s.gateSource === 'override' ? '自定义' : '内置') + '）'
           + '\nR1 独立研判 / R2 必要提问 / R3 分工固定 / R5 少犯错 / R6 查证 / R7 谨慎，常驻 system prompt。'
-          + '\n生效范围：所有会话（含子代理）的下一个请求，不被压缩稀释。'
+          + '\n生效范围：当前所选范围的后续请求，不被压缩稀释。'
           + '\n点这一段 = 直接开/关；要看或改规则点右侧 ▾。')
       var ponyTitle = 'ponytail 编码纪律：' + (!s.ponytailReady ? '未装载，需重启桌面应用。'
         : (s.ponytailEnabled ? '开（' : '关（') + kb(s.ponytailBytes) + ' · ' + s.ponytailLines + ' 行 · '
           + (s.ponytailSource === 'override' ? '自定义' : '内置') + '）'
           + '\nYAGNI / 七级梯子 / 修根因 / 禁没要求的抽象，常驻 system prompt。'
-          + '\n生效范围：所有会话的下一个请求；只对编码任务生效，但 token 对所有会话照收。'
+          + '\n生效范围：当前所选范围的后续请求；只对编码任务生效，但 token 对所有会话照收。'
           + '\n点这一段 = 直接开/关。')
       var shapeTitle = '输出形状（回复形状 · 默认开）：' + (!s.shapeReady ? '未装载，需重启桌面应用。'
         : (shapeInjected(s) ? '开（' : '关（') + kb(s.shapeBytes) + ' · ' + s.shapeLines + ' 行 · '
           + (s.shapeSource === 'override' ? '自定义' : '内置') + '）'
           + (s.shapeDisabledByEnv ? '\n注意：DSH_OUTPUT_SHAPE_DISABLE=1 正在强制关闭，开关状态不作数。' : '')
           + '\n首行给下一步 / 多步编号 / 状态复述 / 跑题后置 / 报错讲因果 / 无开场白无客套，常驻 system prompt。'
-          + '\n生效范围：所有会话的下一个请求（含子代理与子会话）。'
+          + '\n生效范围：当前所选范围的后续请求。'
           + '\n点这一段 = 直接开/关；要改规则去设置页「输出形状」。')
-      var caretTitle = '滑杆与规则面板：压缩触发点 / 保留尾部 / 自动压缩 / 查看·重读规则（气泡置顶与对话页宽度在设置页）'
+      var caretTitle = '规则面板：查看·重读规则（气泡置顶与对话页宽度在设置页）'
 
       return h(React.Fragment, null,
         h('span', {
-          className: 'cc-chip' + ((s.enabled || s.gateEnabled || s.ponytailEnabled || shapeInjected(s)) ? ' on' : ''),
+          className: 'cc-chip' + ((s.gateEnabled || s.ponytailEnabled || shapeInjected(s)) ? ' on' : ''),
           ref: btnRef,
           'data-cache-control-toggle': '1',
         },
-          h('button', {
-            type: 'button',
-            className: 'cc-seg' + (s.enabled ? ' on' : ''),
-            disabled: s.loading,
-            'aria-pressed': s.enabled === true,
-            title: cacheTitle,
-            onClick: flipCache,
-          },
-            h('span', { className: 'cc-segLabel' }, '省缓存'),
-            OnOff(s.enabled)),
-          h('span', { className: 'cc-div' }),
+          sid ? h('span', { className: 'cc-scope-label' }, '本会话') : null,
           h('button', {
             type: 'button',
             className: 'cc-seg' + (s.gateEnabled && s.gateReady ? ' on' : ''),
             disabled: s.loading || !s.gateReady,
             'aria-pressed': s.gateEnabled === true && s.gateReady === true,
-            title: gateTitle,
-            onClick: flipGate,
+            title: (sid ? '仅当前会话\n' : '全局默认\n') + gateTitle,
+            onClick: function(){change('gate', !s.gateEnabled)},
           },
             h('span', { className: 'cc-segLabel' }, '提问'),
             OnOff(s.gateEnabled, !s.gateReady)),
@@ -2706,8 +2829,8 @@ window.__ModuleLoader__.load({
             className: 'cc-seg' + (s.ponytailEnabled && s.ponytailReady ? ' on' : ''),
             disabled: s.loading || !s.ponytailReady,
             'aria-pressed': s.ponytailEnabled === true && s.ponytailReady === true,
-            title: ponyTitle,
-            onClick: flipPonytail,
+            title: (sid ? '仅当前会话\n' : '全局默认\n') + ponyTitle,
+            onClick: function(){change('ponytail', !s.ponytailEnabled)},
           },
             h('span', { className: 'cc-segLabel' }, '懒码'),
             OnOff(s.ponytailEnabled, !s.ponytailReady)),
@@ -2717,8 +2840,8 @@ window.__ModuleLoader__.load({
             className: 'cc-seg' + (shapeInjected(s) && s.shapeReady ? ' on' : ''),
             disabled: s.loading || !s.shapeReady,
             'aria-pressed': shapeInjected(s) === true && s.shapeReady === true,
-            title: shapeTitle,
-            onClick: flipShape,
+            title: (sid ? '仅当前会话\n' : '全局默认\n') + shapeTitle,
+            onClick: function(){change('shape', !s.shapeEnabled)},
           },
             h('span', { className: 'cc-segLabel' }, '形状'),
             OnOff(shapeInjected(s), !s.shapeReady)),
@@ -2758,7 +2881,7 @@ window.__ModuleLoader__.load({
           slots.inject('settings.section', function () {
             return slots.register(
               { name: 'settings.section', id: 'cache-control', order: 58, label: '会话策略' },
-              function () { return h(PageBoundary, null, h(CacheControlPage)) })
+              function (props) { return h(PageBoundary, null, h(SettingsFrame, props)) })
           })
         } catch (e) { errors.push('settings.section: ' + String((e && e.message) || e)) }
       }
@@ -2792,8 +2915,8 @@ window.__ModuleLoader__.load({
       }
       if (slots !== undefined) {
         slots.inject('conversation.input.right', function () {
-          return slots.register(rightEntry, function () {
-            return React.createElement(ChipBoundary, null, h(CacheControlComposerChip))
+          return slots.register(rightEntry, function (props) {
+            return React.createElement(ChipBoundary, null, h(CacheControlComposerChip, props))
           })
         })
       }
@@ -2812,8 +2935,9 @@ window.__ModuleLoader__.load({
       // production view/card; no test-only rendering branch.
       SaveTokenView: renderSaveTokenView,
       SaveTokenCard: SaveTokenCard,
+      CacheControlPage: CacheControlPage, StorageCard: StorageCard,
+      saveNow: saveNow, reloadSettings: load, saveGateText: saveGateText, reloadGate: reloadGate, setReviewEnabled: setReviewEnabled,
       ST_KIND: ST_KIND,
-      flipCache: flipCache,
       flipGate: flipGate,
       applyAppearance: applyAppearance,
       applyPin: applyPin,
@@ -2870,7 +2994,7 @@ window.__ModuleLoader__.load({
       setForceOpen: function (v) { FORCE_OPEN = !!v },
       setFoldsOpen: function (v) { FOLD_DEFAULT_OPEN = !!v },
       chipText: function () {
-        return { enabled: STORE.state.enabled, gateEnabled: STORE.state.gateEnabled, gateReady: STORE.state.gateReady }
+        return { gateEnabled: STORE.state.gateEnabled, gateReady: STORE.state.gateReady }
       },
       // v1.10.0 缝：ponytail 段与门禁互不影响，chip"点哪段切哪个"要能离线断言
       flipPonytail: flipPonytail,
