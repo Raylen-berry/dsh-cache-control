@@ -3,9 +3,26 @@
 //   [data-conversation-scroll] > column > flowItem > .userRow > .userStack > .bubble
 // 关键：sticky 的移动量 = 父高 − 自身高；.userRow 的父级 .userStack 等高 ⇒ 必须往上爬
 // 到 flowItem（它的父级 column 有剩余高度）才算钉对。
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
-const APP = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/';
-const ROOT = process.env.DSH_TOOL_HOME || 'D:/DeepSeek/03-调试临时/ui-appearance-home';
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../';
+const APP = process.env.DSH_APP_MODULES || '../node_modules/';
+const ROOT = process.env.DSH_TOOL_HOME || './.tool-home/';
 const fs = await import('node:fs')
 const pathMod = await import('node:path')
 const http = await import('node:http')
@@ -24,9 +41,9 @@ process.env.DSH_HOME = ROOT
 const settingsFile = pathMod.join(ROOT, 'dsh-cache-control', 'settings.json')
 fs.writeFileSync(settingsFile, JSON.stringify({ gateEnabled: true, pinLastUser: false, clearBubble: false }))
 
-const host = await import('file:///' + PLUGIN + 'index.js')
+const host = await import(__localFile(PLUGIN, 'index.js'))
 const unwrap = (m) => (m && m.default && m.default.createElement) ? m.default : m
-const React = unwrap(await import('file:///' + APP + 'react/index.js'))
+const React = unwrap(await import(__localFile(APP, 'react/index.js')))
 
 const routes = new Map()
 const webServer = { register: (r) => { routes.set(r.path, r.handler); return () => routes.delete(r.path) } }
@@ -149,7 +166,7 @@ globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
 globalThis.cancelAnimationFrame = (id) => clearTimeout(id)
 globalThis.fetch = recordedFetch
 
-await import('file:///' + PLUGIN + 'client.js?ui' + Date.now())
+await import(__localFile(PLUGIN, 'client.js?ui') + Date.now())
 if (!captured) throw new Error('client.js 未注册 factory')
 const exportsObj = captured.factory((name) => { if (name === 'react') return React; throw new Error('bad require ' + name) })
 const it = exportsObj.internals

@@ -4,13 +4,30 @@
 // 写进 <pre id="out">，stdout 直接重定向到文件（stdio 用文件描述符，不是命名管道）。
 // 产出：cc-appear-out\probe-{state}.html（每态一页）+ probe-{state}.json（页内测量）
 //      + probe-{state}.png（截图，肉眼判断左侧是否还糊着）
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const HERE = import.meta.dirname
 const CHAT = process.env.DSH_CHAT_BUNDLE || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js';
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../';
 const OUT = path.join(HERE, 'cc-appear-out')
 const CHROME = process.env.CHROME || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 fs.mkdirSync(OUT, { recursive: true })
@@ -28,9 +45,9 @@ if (!/_7mWUNa_column\{/.test(hostCss) || !/_userRow\{/.test(itemCss)) {
 }
 
 // —— 插件自己的外观 CSS：装载 client.js，捕获它注入的样式文本 ——
-const APP_MOD = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/'
+const APP_MOD = process.env.DSH_APP_MODULES || '../node_modules/'
 const unwrap = (m) => (m && m.default && m.default.createElement) ? m.default : m
-const ReactA = unwrap(await import('file:///' + APP_MOD + 'react/index.js'))
+const ReactA = unwrap(await import(__localFile(APP_MOD, 'react/index.js')))
 let capCss = ''
 let capLoader = null
 globalThis.window = { __ModuleLoader__: { load: (m) => { capLoader = m } }, innerWidth: 1280, innerHeight: 760 }
@@ -39,7 +56,7 @@ globalThis.document = {
   head: { appendChild: (el) => { if (el && el.textContent) capCss += el.textContent + '\n' } },
 }
 globalThis.fetch = () => Promise.reject(new Error('夹具不联网'))
-await import('file:///' + PLUGIN + 'client.js?pb' + Date.now())
+await import(__localFile(PLUGIN, 'client.js?pb') + Date.now())
 capLoader.factory((name) => { if (name === 'react') return ReactA; throw new Error('bad require ' + name) })
   .apply({ get: (n) => (n === 'slots' ? { inject: (name, fn) => fn((e) => e), register: (e) => e } : undefined), effect: (fn) => fn() })
 const appearCss = capCss.split('\n').filter((l) => /data-cc-|_userRow|_bubble/.test(l)).join('\n')
@@ -165,13 +182,13 @@ for (const st of STATES) {
     '--force-device-scale-factor=1', '--window-size=1280,760',
     '--virtual-time-budget=4000', '--user-data-dir=' + profile,
   ]
-  const r = spawnSync(CHROME, args.concat(['--dump-dom', 'file:///' + file.replace(/\\/g, '/')]),
+  const r = spawnSync(CHROME, args.concat(['--dump-dom', __localFile(file, '').replace(/\\/g, '/')]),
     { stdio: ['ignore', fs.openSync(dump, 'w'), fs.openSync(dump + '.err', 'w')] })
   const html = fs.readFileSync(dump, 'utf8')
   const m = /MEASURE (\{.*?\})<\/pre>/.exec(html)
   results[st.key] = m ? JSON.parse(m[1]) : null
   if (!m) console.log('  (chrome exit ' + r.status + ') stderr: ' + fs.readFileSync(dump + '.err', 'utf8').slice(0, 300))
-  spawnSync(CHROME, args.concat(['--screenshot=' + shot, 'file:///' + file.replace(/\\/g, '/')]), { stdio: 'ignore' })
+  spawnSync(CHROME, args.concat(['--screenshot=' + shot, __localFile(file, '').replace(/\\/g, '/')]), { stdio: 'ignore' })
   fs.rmSync(profile, { recursive: true, force: true })
 }
 console.log(JSON.stringify(results, null, 1))

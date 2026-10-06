@@ -1,8 +1,25 @@
 // 客户端半的渲染验证：真 React + react-dom/server，把 client.js 当浏览器那样
 // 通过 __ModuleLoader__ 装载，fetch 指向本脚本用 host 半真跑起来的 http 服务。
 // 证明：磁盘设置 → 路由 → STORE → DOM；两个开关互不牵连；chip 版式＝两段标签+徽标+竖线。
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
-const APP = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/';
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../';
+const APP = process.env.DSH_APP_MODULES || '../node_modules/';
 const fs = await import('node:fs')
 const pathMod = await import('node:path')
 const os = await import('node:os')
@@ -55,9 +72,9 @@ const realSettingsBefore = haveRealHome ? fs.readFileSync(pathMod.join(REAL_HOME
 const hadRealGateMd = haveRealHome && fs.existsSync(pathMod.join(REAL_HOME, 'gate.md'))
 
 const unwrap = (m) => (m && m.default && (m.default.createElement || m.default.renderToStaticMarkup)) ? m.default : m
-const host = await import('file:///' + PLUGIN + 'index.js')
-const React = unwrap(await import('file:///' + APP + 'react/index.js'))
-const ReactDOMServer = unwrap(await import('file:///' + APP + 'react-dom/server.js'))
+const host = await import(__localFile(PLUGIN, 'index.js'))
+const React = unwrap(await import(__localFile(APP, 'react/index.js')))
+const ReactDOMServer = unwrap(await import(__localFile(APP, 'react-dom/server.js')))
 // 宿主原子包（Switch/Button…）：client 半经 require('@deepseek-ai/dsh-client-ui-primitives') 取用。
 // Node 下它 import 'clsx' 解析不到（打包产物在浏览器里由 seed 提供），所以这里**不 import 真身**，
 // 而是按真签名复刻一份桩；读宿主 lib/index.js 只为确认签名没变（变了说明桩该跟着改）。
@@ -79,7 +96,7 @@ let primitives = null
 try {
   // 依次看 DSH_APP_MODULES、仓库自己的 node_modules、本机 DSH 安装目录；任一处签名对得上即确认。
   const primCandidates = [pathMod.join(APP, PRIM_REL), pathMod.join(REPO_ROOT, 'node_modules', PRIM_REL),
-    'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/' + PRIM_REL]
+    '../node_modules/' + PRIM_REL]
   let sigFound = false
   for (const p of primCandidates) {
     try { if (fs.readFileSync(p, 'utf8').indexOf(SW_SIG) >= 0) { sigFound = true; break } } catch { /* 下一个 */ }
@@ -130,7 +147,7 @@ async function bootClient(tag) {
     body: { nodeName: 'BODY', appendChild() {}, contains() { return false } },
   }
   globalThis.fetch = (u, o) => nodeFetch(base + String(u), o)
-  await import('file:///' + PLUGIN + 'client.js?' + tag)
+  await import(__localFile(PLUGIN, 'client.js?') + tag)
   if (!captured) throw new Error('client.js did not call __ModuleLoader__.load')
   const slots = []
   const fakeCtx = {
@@ -202,6 +219,10 @@ const disabled = (html, label) => {
 const L_GATE = '启用会话守则（全局默认）'
 const L_PIN = '把最近一条「我的提问」钉在会话区顶部'
 const L_CLEAR = '我的气泡背景透明（露出壁纸）'
+// v1.16.1：回答气泡限高开关（比例于视口）
+const L_OUTPUT_CAP = '限制回答气泡高度（超出部分在气泡内滚）'
+// v1.16.3：提问气泡限高开关（比例于视口）
+const L_USER_CAP = '限制提问气泡高度（超出部分在气泡内滚）'
 // chip 三段标签（v1.10.0 起第二段是 ponytail「懒码」；v1.12.0 起第三段是输出形状「形状」）。
 // v1.14.0：原第一段「省缓存」随压缩接管一并移除 ⇒ 徽标顺序 = 提问 / 懒码 / 形状。
 const CHIP_LABELS = ['提问', '懒码', '形状']
@@ -281,7 +302,9 @@ pageHtml = renderPage(c)
 const pageExpC = expanded(c)
 parts = chipParts(chipHtml)
 ok('chip 三个徽标都亮', parts.badges.length === 3 && parts.badges.every((b) => b.state === '开' && b.on === true))
-ok('五个勾选框全勾（门禁 + ponytail + 输出形状 + 钉顶 + 透明）', checkedCount(pageHtml) === 5, 'checked=' + checkedCount(pageHtml))
+ok('六个勾选框全勾（门禁 + ponytail + 输出形状 + 钉顶 + 透明 + 提问限高）', checkedCount(pageHtml) === 6, 'checked=' + checkedCount(pageHtml))
+ok('提问限高开关已勾选（v1.16.3，默认开）', checked(pageHtml, L_USER_CAP) === true)
+ok('回答限高的界面已撤（v1.16.6 默认关）', !pageHtml.includes('限制回答气泡高度'))
 ok('输出形状开关已勾选（默认开的段，关得掉也开得回来）', checked(pageHtml, L_SHAPE) === true)
 ok('外观两开关已勾选', checked(pageHtml, L_PIN) === true && checked(pageHtml, L_CLEAR) === true)
 ok('开着钉顶时给出自检行', pageHtml.includes('钉住位置自检'))
@@ -402,8 +425,9 @@ ok('底衬定长（按会话列宽 ×.55 与 em 上限折算，不写死像素�
   // v1.4.2 起宽度是 `var(--cc-pin-w, calc(min(…)))`：JS 量到实测宽就写 --cc-pin-w，
   // 量不到才落到括号里的 calc 兜底。断言随之更新 —— 原来只认 `width:calc(min(`，
   // 那层 var 一加进来它就一直假失败（早于 v1.5.0 的单位改动，与本轮无关）。
-  plateRule.includes('--dsh-chat-content-width') && plateRule.includes('* .55')
-  && /width:var\(--cc-pin-w,\s*calc\(min\(/.test(plateRule) && plateRule.includes('var(--cc-user-bubble-max,41em)')
+  // v1.16.10：em 保险已删 ⇒ 不再有 cc-user-bubble-max；基数先用会话区宽、v1.16.11 改回消息列宽。
+  plateRule.includes('--cc-col-w') && plateRule.includes('* .55')
+  && /width:var\(--cc-pin-w,\s*calc\(/.test(plateRule) && !plateRule.includes('cc-user-bubble-max')
   && plateRule.includes('max-width:calc(100% + .8em)'),
   plateRule.slice(0, 190))
 ok('底衬圆角/呼吸位是 em（跟随字号缩放）', /border-radius:1\.07em/.test(plateRule) && /right:-\.4em/.test(plateRule), plateRule.slice(0, 120))
@@ -411,17 +435,22 @@ ok('底衬圆角/呼吸位是 em（跟随字号缩放）', /border-radius:1\.07e
 ok('提问气泡尺寸一律 em/变量（没有写死的 px 微调）',
   /_bubble"\]\{display:block !important;padding:\.47em \.8em !important;border-radius:1\.45em/.test(ALLCSS)
   && /width:calc\(1\.5em \+ var\(--dsh-content-font-delta,0px\)\)/.test(ALLCSS)
-  && /padding-right:var\(--cc-tail-room,2\.4em\)/.test(ALLCSS)
+  && /padding-right:var\(--cc-tail-room-px, 2\.4em\)/.test(ALLCSS)
   && /\.cc-chip \.cc-segLabel\{position:relative;top:\.017em\}/.test(ALLCSS)
   && /\.cc-chip \.cc-badge\{height:1\.13em/.test(ALLCSS), (ALLCSS.match(/(\.47em|1\.45em|2\.4em|\.017em|1\.13em)/g) || []).join(','))
-ok('气泡上限用 em 常量（USER_BUBBLE_MAX_EM，随字号缩放）',
-  /var\(--cc-user-bubble-max,41em\)/.test(ALLCSS) && /--cc-user-bubble-max', USER_BUBBLE_MAX_EM \+ 'em'/.test(clientSrc), '')
+ok('v1.16.10/1.16.16：宽度上限只剩百分比（em 保险已删），且上限改由 JS 写 inline',
+  // 注释里会提到"已删的常量名"（那是给人看的线索），所以只查**去掉注释后的代码**。
+  !/cc-user-bubble-max/.test(ALLCSS)
+  && !/cc-user-bubble-max|USER_BUBBLE_MAX_EM/.test(clientSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, ''))
+  && /function applyStackCap\(/.test(clientSrc)
+  && /clampUserWidthPct\(STORE\.state\.userWidthPct\)/.test(clientSrc), '')
 ok('模糊度走可调变量 --cc-pin-blur（默认 10px）',
   plateRule.includes('blur(var(--cc-pin-blur,10px)') && (ALLCSS.match(/--cc-pin-blur/g) || []).length >= 2,
   (ALLCSS.match(/backdrop-filter:[^;]*;/g) || []).join(' '))
-ok('外观卡里有模糊度滑杆 0–24', (() => {
+ok('外观卡里有模糊度滑杆（位置 0–100，幂映射到 0–24px）', (() => {
   const html2 = renderPage(c)
-  return /min="0"/.test(html2) && /max="24"/.test(html2) && html2.includes('钉顶底衬模糊度')
+  return /min="0"/.test(html2) && /max="100"/.test(html2) && html2.includes('钉顶底衬模糊度')
+    && /blurPosToPx\(24/.test(clientSrc) === false && /blurPosToPx\(Number\(e\.target\.value\)\)/.test(clientSrc)
 })())
 // ③ chip 里的「开 / 关」徽标：纯透明，不留背景参与
 // 注意：`\.cc-badge\{` 这种写法在整段 CSS 里做子串搜索时，会把 `.cc-chip .cc-badge{…}`

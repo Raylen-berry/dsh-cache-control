@@ -1,12 +1,29 @@
 // 验证 dsh-cache-control 会话门禁：把插件的 gate 解析器接到 DSH 真实的
 // renderPrompt 上，证明 (1) 关=空段被丢弃 (2) 开=规则入提示词
 // (3) 用户写坏花括号也不会让组装抛错 (4) 设置清洗不丢字段、压缩接管确已移除。
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../';
 // 本包在 Node ESM 下没有自引用导出，裸 import('@deepseek-ai/dsh-system-prompt') 不会查自己的
 // node_modules ⇒ 用 createRequire(仓库 package.json) 解析（CI 里 npm ci 装出的那份），APP 兜底。
 const { createRequire } = await import('node:module')
 const selfRequire = createRequire(new URL('./package.json', import.meta.url))
-const APP = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/';
+const APP = process.env.DSH_APP_MODULES || '../node_modules/';
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => {
   if (cond) { pass++; console.log('  PASS  ' + name + (extra ? '  [' + extra + ']' : '')) }
@@ -19,9 +36,9 @@ async function importSystemPrompt() {
   try {
     const p = selfRequire.resolve('@deepseek-ai/dsh-system-prompt').replace(/\\/g, '/')
     spSource = selfRequire.resolve('@deepseek-ai/dsh-system-prompt')
-    return await import('file:///' + p)
+    return await import(__localFile(p, ''))
   } catch {
-    return await import('file:///' + APP + '@deepseek-ai/dsh-system-prompt/lib/index.js')
+    return await import(__localFile(APP, '@deepseek-ai/dsh-system-prompt/lib/index.js'))
   }
 }
 function hostSectionOrders() {
@@ -34,7 +51,7 @@ const fs = await import('node:fs')
 const pathMod = await import('node:path')
 const os = await import('node:os')
 
-const host = await import('file:///' + PLUGIN + 'index.js')
+const host = await import(__localFile(PLUGIN, 'index.js'))
 const spMod = await importSystemPrompt()
 const { renderPrompt } = spMod
 

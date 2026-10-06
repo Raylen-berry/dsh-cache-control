@@ -10,12 +10,29 @@
 //      但没有成对花括号 —— 有就要确认 renderPrompt 不炸）。
 //
 // 只在临时 DSH_HOME 里跑，绝不动 %APPDATA% 下真实 settings.json / ponytail.md。
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/'
-const host = await import('file:///' + PLUGIN + 'index.js')
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../'
+const host = await import(__localFile(PLUGIN, 'index.js'))
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => {

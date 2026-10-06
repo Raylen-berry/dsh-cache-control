@@ -4,14 +4,31 @@
 //
 // v1.5.0：对话页宽度单位从 **px 变百分比**（30–100）。盘上的旧 px 值（>100，例如 900/1920/3840）
 // 不再按 px 使用，一律落到默认 80%（约等于本机 1139px 会话区里 900px 的观感）。
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-host-'))
 process.env.DSH_HOME = HOME
-const MOD = process.env.DSH_CC_INDEX || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/index.js'
-const m = await import('file:///' + MOD + '?t' + Date.now())
+const MOD = process.env.DSH_CC_INDEX || '../index.js'
+const m = await import(__localFile(MOD, '?t') + Date.now())
 
 let bad = 0, passed = 0
 const t = (name, cond, extra) => { if (cond) { passed++; console.log('  PASS  ' + name) } else { bad++; console.log('  FAIL  ' + name + '  [' + extra + ']') } }

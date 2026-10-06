@@ -9,6 +9,23 @@
 //
 // 本清单只含**离线套件**：不联网、不起真浏览器、不读本机 DSH 安装目录、不碰 %APPDATA% 里的真实配置。
 // 需要上述任何一项的套件写在 EXCLUDED 里（含原因），不参与 CI，也请勿加回来。
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -18,7 +35,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const LIST_ONLY = process.argv.includes('--list')
 
 // ---- 仓库配置 -------------------------------------------------------------
-// 套件里写的是 `import('file:///' + PLUGIN + 'index.js')` 与 `import('file:///' + APP + 'react/index.js')`，
+// 套件里写的是 `import(__localFile(PLUGIN, 'index.js'))` 与 `import('file:///' + APP + 'react/index.js')`，
 // 所以在 POSIX 上必须去掉开头的斜杠（否则拼出 file:////home/...），Windows 上盘符路径原样可用。
 const urlPath = (p) => {
   const s = p.replace(/\\/g, '/')
@@ -56,6 +73,16 @@ const SUITES = [
   // 假 ctx 冒充 Cordis + 假 spillStore，离线，不碰真实 DSH_HOME。
   'tools/verify-save-token.mjs',
   'tools/verify-token-lifecycle.mjs',
+  // v1.16.1：钉顶 × 滚轮 × 回答限高的回归（滚动中不重算布局、pinTarget 无隐式全局、滚轮只在真能滚时接管）
+  'tools/verify-pin-scroll.mjs',
+  // v1.16.7：钉顶右对齐 + 提问气泡宽度的**真排版**回归 —— 把宿主编译产物里的真实 CSS 与
+  // 插件真实的 fitUserBubbles 实现一起搬进无头 Edge 跑（前两轮"改了 CSS 却不生效"就是
+  // 因为没人量过真排版）。找不到 Edge/宿主 bundle 时自己 SKIP 并退出 0，不污染 CI。
+  'tools/verify-pin-width.mjs',
+  // v1.16.20：技能清单对账 —— 「index.js 的声明 ↔ 磁盘 skills/ ↔ package.json 的 files」
+  // 三者摆在一起核。技能注册是静默失败（改名/缺 description/files 漏拷都不报错，
+  // 技能只是从目录里消失），而现有套件没有一条覆盖这层。只读本地文件、只 import 本插件 index.js。
+  'tools/verify-skills-manifest.mjs',
 ]
 
 const EXCLUDED = [
@@ -76,7 +103,7 @@ const EXCLUDED = [
 const ENV = {
   DSH_CC_PLUGIN: urlPath(REPO) + '/',
   DSH_CC_INDEX: urlPath(REPO) + '/index.js',
-  // DSH_APP_MODULES 默认写死了开发机的 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/'，
+  // DSH_APP_MODULES 默认写死了开发机的 '../node_modules/'，
   // 指向仓库自己的 node_modules 后，react 由 npm install / npm ci 装出即可。
   DSH_APP_MODULES: urlPath(REPO) + '/node_modules/',
 }

@@ -4,14 +4,31 @@
 //       ② 复制键到"最后一个字"的距离（跟着字尾走，不占位顶远）
 //       ③ 上下留白相等 ⇒ 文字在框内垂直居中
 //       ④ 任何容器宽度下文字都不越框。
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const HERE = import.meta.dirname
 const CHAT = process.env.DSH_CHAT_BUNDLE || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js';
-const APP = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/';
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
+const APP = process.env.DSH_APP_MODULES || '../node_modules/';
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../';
 const OUT = path.join(HERE, 'userrow-out')
 const CHROME = process.env.CHROME || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 fs.mkdirSync(OUT, { recursive: true })
@@ -32,7 +49,7 @@ if (!hostCss.includes('_userRow') || !hostCss.includes('npc0Lq_actions')) throw 
 
 // ---- 插件全量 CSS：boot client 捕获注入的样式文本 ----
 const unwrap = (m) => (m && m.default && m.default.createElement) ? m.default : m
-const React = unwrap(await import('file:///' + APP + 'react/index.js'))
+const React = unwrap(await import(__localFile(APP, 'react/index.js')))
 let capCss = ''
 globalThis.window = { __ModuleLoader__: { load: (m) => { globalThis.__cap = m } }, innerWidth: 1400, innerHeight: 900 }
 globalThis.document = {
@@ -41,7 +58,7 @@ globalThis.document = {
   body: { nodeName: 'BODY', appendChild() {}, contains() { return false } },
 }
 globalThis.fetch = () => Promise.reject(new Error('offline'))
-await import('file:///' + PLUGIN + 'client.js?ur' + Date.now())
+await import(__localFile(PLUGIN, 'client.js?ur') + Date.now())
 if (!globalThis.__cap) throw new Error('client.js 未注册 factory')
 const ex = globalThis.__cap.factory((name) => {
   if (name === 'react') return React
@@ -163,9 +180,9 @@ const profile = path.join(process.env.TEMP || OUT, 'ur-prof')
 fs.rmSync(profile, { recursive: true, force: true })
 const args = ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--force-device-scale-factor=1',
   '--window-size=1280,1500', '--virtual-time-budget=4000', '--user-data-dir=' + profile]
-spawnSync(CHROME, args.concat(['--dump-dom', 'file:///' + file.replace(/\\/g, '/')]),
+spawnSync(CHROME, args.concat(['--dump-dom', __localFile(file, '').replace(/\\/g, '/')]),
   { stdio: ['ignore', fs.openSync(dump, 'w'), fs.openSync(dump + '.err', 'w')] })
-spawnSync(CHROME, args.concat(['--screenshot=' + shot, 'file:///' + file.replace(/\\/g, '/')]), { stdio: 'ignore' })
+spawnSync(CHROME, args.concat(['--screenshot=' + shot, __localFile(file, '').replace(/\\/g, '/')]), { stdio: 'ignore' })
 fs.rmSync(profile, { recursive: true, force: true })
 const html = fs.readFileSync(dump, 'utf8')
 const m = /MEASURE (\{.*?\})<\/pre>/.exec(html)

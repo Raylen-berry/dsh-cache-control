@@ -4,8 +4,25 @@
 // 生效（因为 assemble 每次都重算 text），以及异常输入不会把服务打挂。
 // v1.14.0：压缩接管删除后不再需要 standard preset 夹具（preset 断言也一并删了）。
 // 仍排除在 CI 外 —— §8 要读真实 %APPDATA% 下的 settings.json 做"未被写入"比对。
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
-const ROOT = process.env.DSH_TOOL_HOME || 'D:/DeepSeek/03-调试临时/gate-e2e-home';
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../';
+const ROOT = process.env.DSH_TOOL_HOME || './.tool-home/';
 
 const fs = await import('node:fs')
 const pathMod = await import('node:path')
@@ -23,7 +40,7 @@ fs.mkdirSync(pathMod.join(ROOT, 'dsh-cache-control'), { recursive: true })
 fs.writeFileSync(pathMod.join(ROOT, 'dsh-cache-control', 'settings.json'), '{}')
 process.env.DSH_HOME = ROOT
 
-const host = await import('file:///' + PLUGIN + 'index.js')
+const host = await import(__localFile(PLUGIN, 'index.js'))
 
 // ---- 假 ctx：捕获 webServer.register 的路由与 systemPrompt.section -------
 const routes = new Map()

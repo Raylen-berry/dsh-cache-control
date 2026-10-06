@@ -16,6 +16,23 @@
 // 本套件在临时 DSH_HOME 里跑，绝不动 %APPDATA% 下那份真实 settings.json / gate.md / preset。
 // 反向验证：`DSH_CC_INDEX` 指到改动前的 index.js 即可（见仓库 README「验证」节）——
 //   本套件在旧实现上**必须失败**，否则说明它没有真的盯住这个缺陷（"假绿"）。
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -24,8 +41,8 @@ import http from 'node:http'
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-trunc-'))
 process.env.DSH_HOME = HOME
 // DSH_CC_INDEX 供反向验证用：指向别处的 index.js 副本（默认是本仓库这一份）。
-const MOD = process.env.DSH_CC_INDEX || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/index.js'
-const m = await import('file:///' + MOD + '?t' + Date.now())
+const MOD = process.env.DSH_CC_INDEX || '../index.js'
+const m = await import(__localFile(MOD, '?t') + Date.now())
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => {

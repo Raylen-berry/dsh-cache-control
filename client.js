@@ -41,11 +41,9 @@ window.__ModuleLoader__.load({
     var P = null
     try { P = require('@deepseek-ai/dsh-client-ui-primitives') } catch (e) { P = null }
     var PANEL_WIDTH = 302
-    /**
-     * 我的提问气泡宽度上限，单位 **em**（相对会话字号）：文字不到就一直贴文字，到此为止。
-     * 41em ≈ 15px 字号下的 615px；字号或页面缩放变了上限跟着变，不是钉死的像素数。
-     */
-    var USER_BUBBLE_MAX_EM = 41
+    // v1.16.10：`USER_BUBBLE_MAX_EM`（41em 的提问气泡上限）**已删**。
+    // 它曾是 `min(列宽×百分比, 41em+2em)` 的第二条上限，导致用户把宽度拉到 100% 也只到 ~645px
+    // （"还是半屏"）。现在宽度只有一个旋钮：设置页那个百分比（基数是会话区宽）。
     // 离线夹具用：让 chip 首帧就是展开态（React.useState 的初始值），
     // 省掉按 hook 调用次序猜哪个是 open —— 那种断言一改代码就假失败。
     var FORCE_OPEN = false
@@ -94,6 +92,8 @@ window.__ModuleLoader__.load({
       '.cc-warn{font-size:12px;color:var(--dsw-alias-label-warning,#b8860b)}',
       '.cc-ok{font-size:12px;color:var(--dsw-alias-label-success,#2da44e)}',
       '.cc-muted{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
+      // 卡片内的分组小标题（v1.16.1：对话外观卡里"气泡置顶 / 回答气泡限高"两段分隔）
+      '.cc-subhead{margin-top:6px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1);font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}',
       // ---- 省 token 卡（v1.13.0）的 KPI 小格与字节条（其余页面元素全复用上面已有的类）----
       '.cc-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,128px),1fr));gap:10px}',
       '.cc-kpi{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 12px;min-width:0;display:flex;flex-direction:column;gap:3px}',
@@ -173,7 +173,8 @@ window.__ModuleLoader__.load({
       // ---- 我的提问气泡（用户 2026）----
       // 块盒 + JS 量一次排版（inline 盒会让背景逐行着色、行内 padding 只落首末片段 ⇒ 框"超"到
       // 文字之外且不居中，已弃用）：
-      //   ① stack.width = 最宽那一行 + 左右内边距 ⇒ 框贴住文字，硬上限 min(列宽×.55, --cc-user-bubble-max)；
+      //   ① stack.width = 最宽那一行 + 左右内边距 ⇒ 框贴住文字，硬上限
+      //      **只有一个**：会话列宽 × --cc-user-width-pct（v1.16.10 删掉了 41em 那条第二上限）；
       //   ② userRow 右缘预留一条 --cc-tail-room 宽的**轨道**，时间/复制行 absolute 落在轨道里
       //      （right:2px，不参与排版）⇒ 键在**气泡右侧**，纵向 --cc-tail-y 对齐到最后一行；
       //   ③ 上下 padding 对称(7px) ⇒ 文字在框内垂直居中；行距/字号沿用宿主不动。
@@ -182,8 +183,82 @@ window.__ModuleLoader__.load({
       // 并 !important。
       // 尺寸一律 em / 宿主自己的字号变量（跟随会话字号与页面缩放自适应）；只有"轨道宽"这种
       // 需要精确让位的量由 JS 量完写 --cc-tail-room，纵向对齐写 --cc-tail-y。
-      'html [class*="_userRow"]{display:block !important;position:relative !important;box-sizing:border-box !important;width:-moz-fit-content !important;width:fit-content !important;max-width:min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,41em)) !important;margin-left:auto !important;margin-right:0 !important;padding-right:var(--cc-tail-room,2.4em) !important}',
-      'html [class*="_userRow"] [class*="_userStack"]{display:block !important;min-width:0 !important;max-width:100% !important}',
+      // v1.16.3 修"钉顶变居中"：宿主是 `display:flex; align-items:flex-end`，靠 flex 对齐把行推到右侧；
+      // 本插件把行改成 `display:block`（sticky/fit-content 需要），**flex 对齐随之失效**，
+      // 行内内容就按普通块级/文本对齐居中或居左了。这里显式补回右对齐。
+      //
+      // v1.16.7/1.16.8（用户 2026-10-01 两轮反馈"钉顶还在中间"）：真因**在更上一层**。
+      // 浏览器里 `margin-left:auto` 只吃"父盒宽 − 已用宽" ⇒ **父盒（钉顶那层 flowItem）多宽才是天花板**。
+      // 上一版留在 pick 上的 em"保险"上限把它夹成 688px（列 1476），行再 auto 也只能贴到 1184。
+      // 离线复现与线上读数都在 tools/verify-pin-width.mjs 的注释里。
+      // 所以：pick 只管"满宽车道"（上面那条规则），行这里只做 fit-content + 贴右。
+      'html [class*="_userRow"]{display:block !important;text-align:right !important;position:relative !important;box-sizing:border-box !important;width:fit-content !important;max-width:none !important;margin-left:auto !important;margin-right:0 !important;padding-right:var(--cc-tail-room-px, 2.4em) !important}',
+      // 提问气泡的上下限高（v1.16.3）：比例于视口，超出部分在气泡内滚。
+      // 默认 40vh（用户指定），开关默认开；关掉时标记会被摘掉、恢复全文。
+      // v1.16.6：上限同时加到**整条消息（userRow）与 stack**上，因为行里除气泡还有图片等块级内容，
+      // 只限气泡时图片会把整条撑高（用户反馈"限高没算上图片"）。
+      'html[data-cc-user-cap="1"] [class*="_userRow"],html[data-cc-user-cap="1"] [class*="_userRow"] > [class*="_userStack"]{max-height:min(var(--cc-user-cap-vh,40vh), calc(100vh - var(--dsh-composer-height,152px) - 24px));overflow-y:auto;overscroll-behavior:contain;scrollbar-width:auto;scrollbar-gutter:stable}',
+      'html[data-cc-user-cap="1"] [class*="_userRow"] [class*="_bubble"]{max-height:none;overflow:visible}',
+      'html[data-cc-user-cap="1"] [class*="_userRow"]::-webkit-scrollbar,html[data-cc-user-cap="1"] [class*="_userRow"] > [class*="_userStack"]::-webkit-scrollbar{width:16px}',
+      'html[data-cc-user-cap="1"] [class*="_userRow"]::-webkit-scrollbar-thumb,html[data-cc-user-cap="1"] [class*="_userRow"] > [class*="_userStack"]::-webkit-scrollbar-thumb{border:4px solid transparent;background-clip:content-box;border-radius:8px}',
+      // v1.16.17：**钉顶那条不吃「提问气泡最高」**。它的高度由「钉顶气泡最高」单独管。
+      // 否则把钉顶滑杆拉到超过提问滑杆时一点变化都没有（用户第十三轮："钉顶高度设置没效果"）
+      // —— 行/栈被提问限高（默认 30vh）先夹住，里面气泡的 19vh→45vh 就永远看不出来。
+      // 气泡自己仍然有 45vh 上限并在内部滚，这里只是把外面那层夹子摘掉。
+      // v1.16.19：这条也只在**真的顶在上沿**时才生效 —— 兜底钉住的那条按普通提问气泡算。
+      'html[data-cc-user-cap="1"] [data-cc-pin="1"][data-cc-pin-top="1"] [class*="_userRow"],html[data-cc-user-cap="1"] [data-cc-pin="1"][data-cc-pin-top="1"] [class*="_userStack"]{max-height:none;overflow:visible}',
+      // v1.16.4 兜底对齐：不再只依赖"行被推到右侧"。把提问气泡与 stack 自己在行内也右对齐
+      // （块级 + margin-left:auto），这样无论行的对齐方式怎么变，气泡都贴右侧 —— 居中问题从两处同时堵。
+      //
+      // v1.16.7：**宽度上限搬到这里**（行上留着它会把行先夹死，见上面 _userRow 的注释）。
+      // 栈是 fit-content（贴文字），margin-left:auto 把整块推到右侧；max-width 决定长句能铺多宽。
+      // 设置页「提问气泡宽度」= --cc-user-width-pct（占**会话列** %，列宽已含对话页%），短句不受影响。
+      // **只管没被钉住的那些提问气泡**；钉顶那条由「钉顶气泡宽度」单独管，见下面 v1.16.12 那条。
+      // （用户第八轮实测：两个滑杆原来都接在 --cc-user-width-pct 上 ⇒ "提问气泡宽度"实际在控钉顶，
+      //   普通气泡反而没有 UI 能调。拆成两个变量：--cc-user-width-pct / --cc-pin-width-cap。）
+      // v1.16.13（用户第九轮）：拆了变量还不够 —— 被钉住的那条**同时命中两条规则**（它既是
+      //   `_userStack` 又是钉顶栈），于是两个滑杆都写进它一个。现在把钉顶那条从这条通用规则里
+      //   排除掉（`:not()` 排除钉顶元素的内部栈），改由下面那条**只**认「钉顶气泡宽度」。
+      //   结果：有钉顶时钉顶那条跟钉顶滑杆、其余提问跟提问滑杆；页面上只有一条时它被钉住 ⇒
+      //   只跟钉顶滑杆（这正是用户要的"有钉顶就各管各的"）。
+      //
+      // v1.16.10（用户 2026-10-01 第六轮："拉到 100% 还是只显示半屏"）：这里有第二条上限
+      // `calc(var(--cc-user-bubble-max,41em) + 2em)` —— 它是 `min()` 的另一个参数，**100% 的比例
+      // 永远轮不到生效**，实际卡在 41em ≈ 645px 上。用户要的"100% 就是铺满"必须由百分比单独决定，
+      // 所以把 em 保险整条删掉：**唯一的宽度旋钮就是设置页那个百分比**，见下面 _userRow 那条。
+      // v1.16.15（用户第十一轮读数定案）：这条原来写成
+      //   `[class*="_userRow"]:not([data-cc-pin="1"] [class*="_userRow"]) [class*="_userStack"]`
+      // —— `:not()` 里带**后代组合器**是 Selectors Level 4，DSH 内嵌的 Electron Chromium 解析不了，
+      // **整条规则被丢弃**（我在系统 Edge 上测 CSS.supports 为 true，那是另一个版本 —— 验证漏洞）。
+      // 线上症状就是它的指纹：`row w25`（fit-content 塌成 0 + 轨道 padding）、
+      // `stack w1169`（比行宽 46 倍、溢出对外）、`marginL:0`（auto 边距根本没上场）。
+      // 现在**不再用 :not()**；而且 v1.16.16 起**宽度上限根本不在这条规则里** ——
+      // 上限由 `fitUserBubbles()` 逐条写成 `inline max-width`（inline + important 谁也抢不过），
+      // 这一条只负责骨架（display / fit-content / 右对齐）。规则里留一个 max-width 只作
+      // "JS 还没跑"时的兜底，故意**不带 !important**，免得再去和 inline 抢。
+      'html [class*="_userRow"] [class*="_userStack"]{display:block !important;min-width:0 !important;width:fit-content !important;text-align:right !important;margin-left:auto !important;margin-right:0 !important;max-width:var(--cc-cap-user,none) !important}',
+      // ---- 钉顶那条的宽度：**独立**由「钉顶气泡宽度」滑杆控制（v1.16.12）----
+      // 为什么上限压在 `_userStack`（而不是钉顶元素/pick）上：
+      //   `margin-left:auto` 只吃"父盒宽 − 已用宽"，父盒被夹窄会让整行贴到中间（1.16.8 踩过）；
+      //   压在栈上则栈仍是 fit-content + 右对齐，气泡只在超过上限时长句折行 —— 位置不受影响。
+      // v1.16.15/1.16.16：钉顶规则只保留 max-width 这一件（骨架由上面那条给，两条规则不再各写一半）；
+      // 实际的宽度上限由 JS 写成变量，这条是"JS 还没跑"时的兜底。
+      // v1.16.17（用户第十三轮，真浏览器实测）：下面几条钉顶规则原来都写作
+      //   `[data-cc-pin="1"] > [class*="_userRow"]` —— **`>` 直接子选择器根本没匹配上**：
+      //   钉顶元素（flowItem）底下先垫了一层**无 class 的 div**，行是它的孙子。
+      //   本机读数：row.matches('… > [class*="_userRow"]') === false、stack 同理。
+      //   于是"钉顶宽度上限 / 钉顶右对齐三连"这几条从来没有生效过（居中问题的真凶之一）。
+      //   现在一律换后代选择器（`[data-cc-pin="1"] [class*="_userRow"]`），宿主再加包装层也不会失效。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"][data-cc-pin-top="1"] [class*="_userStack"]{max-width:var(--cc-cap-pin, calc(var(--cc-col-w, var(--dsh-chat-content-width,748px)) * var(--cc-pin-width-cap,55) / 100)) !important}',
+      'html [class*="_userRow"] [class*="_bubble"]{text-align:left !important;margin-left:auto !important;margin-right:0 !important}',
+      // v1.16.6：**被钉住那一行**再强制一遍右对齐。实测（用户 2026-09-30 自检）
+      // 贴顶后宿主把这行重新排成 row[l801 r1028]，而会话列右缘是 1972 ⇒ 气泡落在中间；
+      // 通用规则压不住这种情况，所以钉顶态用"直接子选择器 + 更靠后"双保险再钉一次。
+      // v1.16.7：这里**不再**给栈写 width:auto（那会把量好的内联宽撤掉，长度又由 JS 决定），
+      // 也不给行写 max-width（在钉顶态把上限压在行上会重演"行被夹死 ⇒ auto 边距失效"）。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_userRow"]{margin-left:auto !important;margin-right:0 !important;text-align:right !important;max-width:none !important;width:fit-content !important}',
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_userRow"] [class*="_userStack"]{margin-left:auto !important;margin-right:0 !important;text-align:right !important}',
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_userRow"] [class*="_userStack"] [class*="_bubble"]{margin-left:auto !important;margin-right:0 !important;text-align:left !important}',
       // 上下 padding 对称(.47em)：单行/多行都垂直居中；圆角随字号走
       'html [class*="_userRow"] [class*="_bubble"]{display:block !important;padding:.47em .8em !important;border-radius:1.45em !important}',
       'html [class*="_userRow"] [class*="_actions"]{position:absolute !important;right:.13em !important;left:auto !important;top:var(--cc-tail-y, auto) !important;display:inline-flex !important;align-items:center !important;white-space:nowrap !important;margin:0 !important;gap:.13em !important}',
@@ -203,7 +278,7 @@ window.__ModuleLoader__.load({
       // 的模糊，并且要是**圆角矩形**、模糊度可调。
       // 长度（用户 2026-09-08 第二次反馈改）：不再"定长"。JS 在钉住/重排时量出这条提问
       // 气泡（含图标轨道）的实际宽度写成 --cc-pin-w（再放 .8em 呼吸位），短句底衬就短；
-      // 读不到几何时退回旧上限 min(会话内容宽 × .55, --cc-user-bubble-max) 兜底。
+      // 读不到几何时退回旧上限（会话列宽 × .55）兜底。
       // 高度（同次反馈）：长文本钉住时不再无限撑高——气泡本体 max-height 38vh，超出
       // 滚轮在气泡内滚（overscroll-behavior:contain，滚到底才交还给会话流）。
       // 行本身只留 sticky；::before 用 z-index:-1 —— 行自成堆叠上下文，
@@ -222,35 +297,64 @@ window.__ModuleLoader__.load({
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]{position:sticky;top:0;z-index:500;will-change:transform}',
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{content:"";position:absolute;z-index:-1;'
         + 'top:-.13em;bottom:-.13em;right:-.4em;'
-        + 'width:var(--cc-pin-w, calc(min(calc(var(--dsh-chat-content-width,748px) * .55), var(--cc-user-bubble-max,41em)) + .8em));'
+        + 'width:var(--cc-pin-w, calc(var(--cc-col-w, var(--dsh-chat-content-width,748px)) * .55 + .8em));'
         + 'max-width:calc(100% + .8em);'
         + 'border-radius:1.07em;'
-        + 'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#202024) 58%,transparent);'
+        // v1.16.9：底衬透明度从 58% 降到 46% —— 用户"以后要看到壁纸"。但只降底衬不够：
+        // 钉顶那条里的图片会**盖在底衬上面**（图片是钉顶元素的子节点，底衬的 backdrop-filter
+        // 采不到它自己之后的层），于是"透过图片能很清楚看到底下的字"。所以气泡自己也补一层
+        // 同口径的磨砂 + 半透明背景，两层叠起来：底下文字糊掉、图片与壁纸都还能透出来。
+        + 'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#202024) 46%,transparent);'
         + '-webkit-backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2);'
         + 'backdrop-filter:blur(var(--cc-pin-blur,10px)) saturate(1.2)}',
+      // 钉顶气泡的底色（v1.16.9 加、v1.16.14 减负）：**不再叠第二层 backdrop-filter**。
+      // 用户第十轮实测"交接时闪烁、滚轮划不动"：滚动每一帧都要重采两层毛玻璃，代价极高。
+      // 底下文字靠**底衬那一层**糊掉就够；气泡这层只用半透明底色压暗（图片仍会透出壁纸，
+      // 只是不再二次模糊）—— 视觉几乎不变，滚动开销砍掉一半。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]{'
+        + 'background:var(--cc-pin-bubble-bg, color-mix(in srgb,var(--dsw-specific-bubble,rgba(255,255,255,.06)) 55%,transparent))}',
+      // 气泡透明开关开着时，钉顶气泡的磨砂底也得让路（否则盖掉"露出壁纸"那条规则）。
+      // 用变量覆盖而不是再加一条选择器：少一条同特异性的规则，就少一处将来互相打架的地方。
+      'html[data-cc-pin-last-user="1"][data-cc-clear-bubble="1"] [data-cc-pin="1"] [class*="_bubble"]{--cc-pin-bubble-bg:transparent}',
+      // v1.16.19（用户第十五轮）：**钉子那条里的图片淡出**。「气泡背景透明」只管气泡底色，
+      // 图片是不透明的，于是壁纸/底下滚过去的正文全被它挡住。这里给图片（视频同理）一个
+      // 可调不透明度（设置页「钉顶图片不透明度」，100% = 原样）。只动 opacity，不动尺寸圆角。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"] img,html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"] video{opacity:var(--cc-img-fade,1) !important}',
       // ---- 长提问的显示上限 + 气泡内滚轮 ----
-      //   上限值不再是写死的 38vh：由 --cc-pin-max-vh 决定（设置页"钉顶气泡最高"滑杆），
-      //   上限调高 = 钉住时能直接看到更多原文，代价是它挡住的身后内容也更多。
-      //   槽宽（2026-09-10 用户反馈"右侧滑块极度不敏感"实测后改）：
-      //   原来写 scrollbar-width:thin，Chromium 里这一属性只要不是 auto 就会**忽略**
-      //   ::-webkit-scrollbar 的 width —— 宿主 dsh-client-ui-theme 那套 width:8px 的定制
-      //   会一起失效，实得槽宽钉死在 ~10px 且槽底全透明，可抓的滑块极细。
-      //   改成 auto + 自定 16px：外观仍是细条（4px 透明描边把"条"从 16px 视觉上收成 8px），
-      //   但可抓范围翻倍。实测：thin=10px、auto+自定16px=16px。
-      //   再加 scrollbar-gutter:stable（2026-09-10 同批）：长提问一超过 38vh 就出现滚动条、
-      //   占掉内容宽 ⇒ 最后一行重折行，而折行又改签名触发下一轮量宽，来回抖动；reserve 提前
-      //   把这条槽留出来，长度变化时排版不再跳。**代价**：这条槽无条件占 16px，所以下面
-      //   fitUserBubbles() 量宽时必须补回来（否则短提问也会被凭空挤窄一行）。
-      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]{max-height:min(var(--cc-pin-max-vh,38vh), calc(100vh - var(--dsh-composer-height,152px) - 24px));overflow-y:auto;overscroll-behavior:contain;scrollbar-width:auto;scrollbar-gutter:stable}',
+      //   v1.16.14（用户第十轮"钉顶范围不能是固定值，要可迁移且适配桌面上下高度"）：
+      //   上限由**两件事取小**，都是比例/实测，没有写死的像素：
+      //     ① 用户滑杆值（vh，占视口高的比例）；
+      //     ② 视口高 − 输入卡高（宿主发布的 --dsh-composer-height）− 24px 呼吸位。
+      //   所以：窗口矮 / 输入卡高 ⇒ 自动收窄；窗口高 ⇒ 按滑杆放。默认从 38vh 提到 45vh
+      //   （现代屏幕更高，38vh 显得只用了一半）。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]{max-height:min(var(--cc-pin-max-vh,45vh), calc(100vh - var(--dsh-composer-height,152px) - 24px));overflow-y:auto;overscroll-behavior:contain;scrollbar-width:auto;scrollbar-gutter:stable}',
       //   ↑ 高度封顶（2026-09-10 同批）：钉条现在 z-index:500 高于输入卡，若把「钉顶气泡最高」
       //   拉到很大就会压住底部输入卡。所以取"用户设的 vh"与"视口高 − 输入卡高 − 24px 呼吸位"
       //   的较小值：滑杆随便拉，钉条**永远够不到**输入卡。--dsh-composer-height 是宿主自己
       //   发布的输入卡高度变量，读不到时按 152px 兜底。
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]::-webkit-scrollbar{width:16px}',
       'html[data-cc-pin-last-user="1"] [data-cc-pin="1"] [class*="_bubble"]::-webkit-scrollbar-thumb{border:4px solid transparent;background-clip:content-box;border-radius:8px}',
+        // ---- 钉顶提问气泡的宽度（比例于会话列宽；v1.16.2 之前写死 .55）----
+      // v1.16.7：这里**不再**按列宽百分比夹 pick。
+      // v1.16.8（用户 2026-10-01 的 DevTools 实测，三轮没修好的真凶）：
+      //   PIN   xz4KEq_flowItem  w:687.99px  maxW:66.5px   rect:988@1184
+      //   ROW   cJsG2q_userRow   w:305.85px  ml:382.14px   rect:300@1184
+      //   col   w:1476  r:1972
+      // 钉顶**那一层自己**被上一版留的 em"保险"上限夹到半宽，于是行再 auto 也只能贴到 1184。
+      // `margin-left:auto` 只吃"父盒宽 − 已用宽" —— **父盒多宽才是天花板**。
+      // 所以 pick 只管"满宽车道"，宽度上限一律写在下面的 _userRow 与 _userStack 上。
+      'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]{width:auto !important;max-width:none !important;min-width:0 !important}',
       // color-mix 不支持时退到固定半透明（Electron Chromium 都支持，这条只是保险）。
       '@supports not (color: color-mix(in srgb, white 50%, transparent)){'
         + 'html[data-cc-pin-last-user="1"] [data-cc-pin="1"]::before{background:rgba(32,32,36,.6)}}',
+      // ---- 回答气泡限高（v1.16.1）----
+      // 由 JS 给"不含提问行的 flow item"打上 [data-cc-output="1"]。比例于视口（vh 由
+      // --cc-output-max-vh 给出），超出的部分在气泡内滚 —— 效果是长回答不再把整页拉长，
+      // 滚动位置在各条目之间更稳；这也顺带缓解"钉顶那条很高时整页划不动"的观感。
+      // 只碰 max-height 与 overflow，不动宽度/内边距，宿主排版不受影响。
+      'html [data-cc-output="1"]{max-height:min(var(--cc-output-max-vh,45vh), calc(100vh - var(--dsh-composer-height,152px) - 24px));overflow-y:auto;overscroll-behavior:contain}',
+      'html [data-cc-output="1"]::-webkit-scrollbar{width:16px}',
+      'html [data-cc-output="1"]::-webkit-scrollbar-thumb{border:4px solid transparent;background-clip:content-box;border-radius:8px}',
       // ---- 空会话「工作区行」左边缘对齐输入卡（2026-09-28 实测复现）----
       //   宿主自己就跟自己对不齐：.heroWorkspaceRow 是 padding:0 16px 0 20px，而 heroModeClusterCss
       //   又把右内边距改成 20px —— 输入卡所在容器只有 16px 内边距，所以本来就差 4px。
@@ -344,8 +448,15 @@ window.__ModuleLoader__.load({
         // 会话区外观
         pinLastUser: false,
         clearBubble: false,
+        imgFade: 100,       // v1.16.19：钉顶气泡里图片的不透明度（%），100 = 原样；调低让底下的壁纸/文字透出来
         pinBlur: 10,        // 钉顶底衬（圆角矩形毛玻璃）的模糊半径 px，0–24
-        pinMaxVh: 38,       // 被钉气泡自身的最高高度（vh），12–80；超出部分在气泡内滚
+        pinMaxVh: 45,       // 被钉气泡自身的最高高度（vh），12–80；还会被"视口高−输入卡−24px"再夹一次（v1.16.14）
+        pinWidthPct: 55,    // v1.16.2：钉顶提问气泡宽度占会话列宽的百分比（30–100）
+        userWidthPct: 58,   // v1.16.7：**普通**提问气泡宽度占会话列宽的百分比（30–100），写在栈的 max-width 上
+        userCapEnabled: true,  // v1.16.3：提问气泡限高（比例于视口），超长提问内部滚动
+        userCapVh: 40,         // 提问气泡最高高度（vh），15–80
+        outputCapEnabled: false,  // v1.16.6：默认关（界面已撤），保留字段供手动开启
+        outputCapVh: 45,         // 回答气泡最高高度（vh），15–80
         pinMarked: '',
         fitTick: 0,        // 「重读」按钮用的自增计数：只为触发一次重渲染去重新读实测值
         appearanceReady: true,
@@ -400,6 +511,64 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 模糊度滑杆的**非线性分布**（v1.16.9，用户要求"0~1 之间灵敏、12~24 钝"）。
+     *
+     * 为什么不能只靠 step：滑杆是线性的，0–24 均分 24 格 ⇒ 每格 1px。想让 0–1 有五格、
+     * 12–24 变钝，就必须在"滑杆位置 0–100"与"模糊 px 0–24"之间放一条幂曲线：
+     *
+     *     blur = 24 × (pos/100)^2.5        pos = 100 × (blur/24)^0.4
+     *
+     * 实测每格步进：pos 5→0.13px、pos 10→0.76px（小值区约 0.1–0.3px/格，够灵敏）；
+     * pos 50→4.42px、pos 70→9.81px、pos 90→18.46px（大值区 0.5px/格，够钝）。
+     * 盘上仍存**px 值**（旧值原样兼容，host 的 0–24 钳制也不用改），滑杆只是显示位置。
+     */
+    function blurPosToPx(pos) {
+      var p = Math.min(100, Math.max(0, Number(pos) || 0))
+      if (p <= 0) return 0
+      return clampBlur(24 * Math.pow(p / 100, 2.5))
+    }
+    function blurPxToPos(px) {
+      var b = clampBlur(px)
+      if (b <= 0) return 0
+      return Math.round(100 * Math.pow(b / 24, 0.4))
+    }
+
+    /**
+     * 宽度百分比的两个基数（v1.16.9 起量、v1.16.11 修正语义）：
+     *
+     *   --cc-area-w = 会话区（`[data-conversation-scroll]`）的实际宽 px
+     *   --cc-col-w  = **消息列**（`[class*="_column"]`）的实际宽 px ← 气泡宽度用它做基数
+     *
+     * 为什么气泡要用**列宽**而不是会话区宽（用户 2026-10-01 第七轮）：
+     * 列宽本身就等于「会话区宽 × 对话页宽度%」。拿会话区宽当基数，等于把对话页那一步乘比例
+     * 丢掉了 —— 用户把"对话页 80%"与"提问气泡 80%"都设成 80%，两者却一样宽；
+     * 他要的是 80% × 80% = 会话区的 64%。用列宽当基数，两个设置自然相乘，且列宽的
+     * 定义就是"气泡能铺到的最右边"，100% 就是铺满列。
+     *
+     * 量不到（首屏 / 老引擎）时 CSS 里退回 `--dsh-chat-content-width`（同样代表列宽），
+     * 行为与旧版一致。两处都各写一次：resize、「对话页宽度」变更、applyAppearance 都会调。
+     */
+    function measureWidthVars() {
+      if (!domReady()) return 0
+      var root = document.documentElement
+      var setVar = function (name, px) {
+        try {
+          if (root.style && root.style.setProperty && px > 0) root.style.setProperty(name, Math.round(px) + 'px')
+        } catch (e) { warnOnce('measureWidthVars', e) }
+      }
+      var scroll = null
+      try { scroll = document.querySelector('[data-conversation-scroll]') } catch (e) { scroll = null }
+      var col = null
+      try { col = document.querySelector('[class*="_column"]') } catch (e) { col = null }
+      var areaW = 0, colW = 0
+      try { if (scroll) areaW = scroll.clientWidth || Math.round(scroll.getBoundingClientRect().width) } catch (e) { areaW = 0 }
+      try { if (col) colW = col.clientWidth || Math.round(col.getBoundingClientRect().width) } catch (e) { colW = 0 }
+      if (areaW > 0) setVar('--cc-area-w', areaW)
+      if (colW > 0) setVar('--cc-col-w', colW)
+      return colW || areaW
+    }
+
+    /**
      * 对话页宽度：**百分比**（v1.5.0 起，原来是 640–3840px）。30–100 取整，与 host 侧同口径。
      * 迁移：盘上存的 px 值（>100，例如 900）一律当旧值，落到默认 80% —— 900px 在本机
      * 1139px 的会话区里正好≈79%，所以 80% 是等价的观感；转换需要知道当时的区域宽度，
@@ -417,8 +586,46 @@ window.__ModuleLoader__.load({
     /** 被钉气泡最高高度：12–80 vh，取整（与 host 侧 sanitize 同口径，两端都钳一次）。 */
     function clampPinMaxVh(v) {
       v = Math.round(Number(v))
-      if (!Number.isFinite(v)) v = 38
+      if (!Number.isFinite(v)) v = 45
       return Math.min(80, Math.max(12, v))
+    }
+
+    /** 回答气泡限高：15–80 vh（与 host 侧 OUTPUT_CAP_VH_* 同口径）。 */
+    function clampOutputCapVh(v) {
+      v = Math.round(Number(v))
+      if (!Number.isFinite(v)) v = 45
+      return Math.min(80, Math.max(15, v))
+    }
+
+    /** 钉顶提问气泡宽度比例：30–100 %（55 = v1.16.1 之前的写死值，旧盘缺键时落到它）。 */
+    function clampPinWidthPct(v) {
+      v = Math.round(Number(v))
+      if (!Number.isFinite(v) || v <= 0) v = 55
+      return Math.min(100, Math.max(30, v))
+    }
+
+    /** 普通提问气泡宽度比例：30–100 %（v1.16.7 新增；58 = 宿主自己那条 .702 上限的等效观感）。 */
+    function clampUserWidthPct(v) {
+      v = Math.round(Number(v))
+      if (!Number.isFinite(v) || v <= 0) v = 58
+      return Math.min(100, Math.max(30, v))
+    }
+
+    /** 提问气泡限高：15–80 vh（与 host 侧 USER_CAP_VH_* 同口径），默认 40。 */
+    function clampUserCapVh(v) {
+      v = Math.round(Number(v))
+      if (!Number.isFinite(v) || v <= 0) v = 40
+      return Math.min(80, Math.max(15, v))
+    }
+
+    /**
+     * 钉顶气泡里图片的不透明度（%）：0–100，100 = 原样（v1.16.19）。
+     * 注意这里**不能**把 0 当"缺键"——0（全透明）是合法档位，和 pinBlur 同族。
+     */
+    function clampImgFade(v) {
+      v = Math.round(Number(v))
+      if (!Number.isFinite(v)) v = 100
+      return Math.min(100, Math.max(0, v))
     }
 
     function applyGate(g) {
@@ -502,6 +709,19 @@ window.__ModuleLoader__.load({
         patch.clearBubble = s.clearBubble === true
         patch.pinBlur = clampBlur(s.pinBlur)
         patch.pinMaxVh = clampPinMaxVh(s.pinMaxVh)
+        // v1.16.20（用户报"钉顶里发出去的图片还是不透明，调了也白调"）：**这里原来漏了 imgFade**。
+        // 后果：pull() 从不把盘上的值搬进 STORE ⇒ 每次加载都停在 DEFAULTS.imgFade=100，
+        // 表现是"滑杆当时有效、刷新/重启后又变回不透明"，且盘上那份值被完全忽略。
+        // 判据必须用 `!== undefined`：旧盘没这个键时保留默认 100，而不是被 undefined 钳成 0（全透明）。
+        if (s.imgFade !== undefined) patch.imgFade = clampImgFade(s.imgFade)
+        // v1.16.1：回答气泡限高。默认**开**（`!== false`），与 shapeEnabled 同族判据。
+        if (s.outputCapEnabled !== undefined) patch.outputCapEnabled = s.outputCapEnabled !== false
+        if (s.outputCapVh !== undefined) patch.outputCapVh = clampOutputCapVh(s.outputCapVh)
+        // v1.16.2：钉顶气泡宽度比例（旧盘缺键时 clamp 落到 55，与改前一致）
+        if (s.pinWidthPct !== undefined) patch.pinWidthPct = clampPinWidthPct(s.pinWidthPct)
+        // v1.16.3：提问气泡限高（默认开；旧盘缺键判为开）
+        if (s.userCapEnabled !== undefined) patch.userCapEnabled = s.userCapEnabled !== false
+        if (s.userCapVh !== undefined) patch.userCapVh = clampUserCapVh(s.userCapVh)
         // 对话页固定宽度（bg-atelier 移入）：host 侧 sanitize 负责区间钳制。
         // v1.5.0 起是百分比；盘上的旧 px 值（>100）会被 clampChatWidth 落到默认 80%。
         patch.chatWidth = clampChatWidth(s.chatWidth)
@@ -734,13 +954,20 @@ window.__ModuleLoader__.load({
     // 就完全不动。所以运行时从气泡往上找，标记"滚动内容直接子元素"那一层。
     // CSS 侧只认 [data-cc-pin="1"]，且按 CSS Module 类名后缀匹配
     // （uSmzmW_ 这类前缀是构建哈希，不能硬编码）。
-    var APPEAR_ATTRS = { pin: 'data-cc-pin', on: '1' }
+    // top = "真的顶在会话区上沿"（v1.16.19）：只有它才吃「钉顶气泡宽度/最高」；
+    // 兜底钉住的那条（最新一条但没贴顶）仍旧按普通提问气泡的口径显示。
+    var APPEAR_ATTRS = { pin: 'data-cc-pin', top: 'data-cc-pin-top', on: '1' }
     var pinObserver = null
     var pinFrame = 0
     /** 判定"这条提问已经越过会话区上沿"的容差 px（亚像素/缩放余量）。 */
     var PIN_TOP_EPS = 2
     /** 动态贴合时给图标行预留的高度 px（与 CSS 里 .cc-actions 按钮 22px 对齐）。 */
     var FIT_ICON_H = 22
+    /**
+     * 每条气泡量过的"自然宽"缓存（v1.16.7）：量一次要在 body 上挂隐藏克隆盒（强制布局），
+     * 所以按元素缓存；文字变了或列宽变了才重量。WeakMap 拿不到（老引擎）就每次重量，只慢不错。
+     */
+    var fitNaturalCache = (typeof WeakMap === 'function') ? new WeakMap() : null
     var fitScrollHandler = null
     var fitResizeHandler = null
 
@@ -779,7 +1006,7 @@ window.__ModuleLoader__.load({
         }
         return row
       }
-      node = row
+      var node = row
       var guard = 0
       while (node && node.parentElement && guard++ < 8) {
         var parent = node.parentElement
@@ -793,8 +1020,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 钉住条目的底衬宽度：量被钉行（含右侧图标轨道）的实际像素宽 + .8em 呼吸位，
-     * 写进 --cc-pin-w（短句 ⇒ 短底衬）。量不到就清掉变量，退回 CSS 里的旧上限。
+     * 钉住条目的底衬宽度（v1.16.5 修正）：量**可见气泡**的宽度 + .8em 呼吸位，写进 --cc-pin-w。
+     *
+     * 为什么不再量整行：行宽 = 气泡 + 右侧图标轨道(`--cc-tail-room` ≈ 2.4em) + 内边距，
+     * 实测（用户 2026-09-30 自检）行 141.99px、可见正文只有 94px ⇒ 底衬比气泡宽出约 48px，
+     * 远看就像气泡被居中摆在一块大板子上（"钉顶变居中"的真正观感来源）。
+     * 现在的顺序：气泡 → stack → 行（逐级兜底，拿不到才退回行宽）。
      */
     function updatePinPlate(pickEl) {
       try {
@@ -802,12 +1033,44 @@ window.__ModuleLoader__.load({
         var pick = pickEl || document.querySelector('[' + APPEAR_ATTRS.pin + ']')
         if (!pick || !pick.style || !pick.style.setProperty) return
         var row = pick.querySelector ? pick.querySelector('[class*="_userRow"]') : pick
-        var w = row && row.getBoundingClientRect ? row.getBoundingClientRect().width : 0
+        // v1.16.13：先只找气泡（贴文字的那层），找不到才逐级退回 stack → 行。
+        // 上一版的写法 `row.querySelector(...bubble) || row.querySelector(...stack)` 其实没问题，
+        // 但底衬宽度一旦误量到行就会"比气泡宽一截"，所以这里把顺序与兜底写明确。
+        var bubble = row && row.querySelector ? row.querySelector('[class*="_bubble"]') : null
+        var stack = row && row.querySelector ? row.querySelector('[class*="_userStack"]') : null
+        var target = bubble || stack || row
+        var w = target && target.getBoundingClientRect ? target.getBoundingClientRect().width : 0
         if (!(w > 0)) { pick.style.removeProperty('--cc-pin-w'); return }
         var rootFont = 14
         try { rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14 } catch (e) {}
         pick.style.setProperty('--cc-pin-w', Math.ceil(w + rootFont * 0.8) + 'px')
       } catch (e) { warnOnce('updatePinPlate', e) }
+    }
+
+    /**
+     * 给"回答"那一条的 flow item 打 [data-cc-output="1"]（v1.16.1）。
+     * 判据：flow item 里有气泡类元素、且**没有**提问行 ⇒ 是回答。
+     * 与钉顶标记同构（都打在 flow 的直接子元素上），由 CSS 负责限高与内部滚动。
+     * 幂等：属性已正确就不再动 DOM（避免每帧无谓写入）。
+     * @returns 本次真正改动的条数
+     */
+    function applyOutputCap(rows) {
+      if (!domReady()) return 0
+      var on = STORE.state.outputCapEnabled !== false
+      var flows
+      try { flows = document.querySelectorAll('[data-chat-flow] > *') } catch (e) { return 0 }
+      var changed = 0
+      for (var i = 0; i < flows.length; i++) {
+        var el = flows[i]
+        if (!el || !el.querySelector || !el.setAttribute || !el.removeAttribute) continue
+        var hasBubble = el.querySelector('[class*="_bubble"]')
+        if (!hasBubble) continue
+        var hasUser = el.querySelector('[class*="_userRow"]')
+        var marked = el.getAttribute('data-cc-output') === '1'
+        if (on && !hasUser && !marked) { el.setAttribute('data-cc-output', '1'); changed++ }
+        else if ((!on || hasUser) && marked) { el.removeAttribute('data-cc-output'); changed++ }
+      }
+      return changed
     }
 
     /**
@@ -821,8 +1084,29 @@ window.__ModuleLoader__.load({
       var rows
       try { rows = document.querySelectorAll('[class*="_userRow"]') } catch (e) { return }
       var prev = document.querySelectorAll('[' + APPEAR_ATTRS.pin + ']')
-      for (var i = 0; i < prev.length; i++) prev[i].removeAttribute(APPEAR_ATTRS.pin)
-      if (!rows.length) { if (STORE.state.pinMarked !== '') STORE.set({ pinMarked: '' }); return }
+      // 还没选出这一轮的 pick，先记下"上一轮钉的是谁"，选完再统一摘（否则会把当前这条的
+      // pinLane inline 也一并撤掉、同帧再写回来 —— 白白抖一帧）。
+      var prevList = []
+      for (var i = 0; i < prev.length; i++) prevList.push(prev[i])
+      if (!rows.length) {
+        for (var i2 = 0; i2 < prevList.length; i2++) { clearPinLane(prevList[i2]); prevList[i2].removeAttribute(APPEAR_ATTRS.pin); prevList[i2].removeAttribute(APPEAR_ATTRS.top) }
+        if (STORE.state.pinMarked !== '') STORE.set({ pinMarked: '' })
+        return
+      }
+      // v1.16.19（用户第十五轮："慢慢划时在交接处闪烁、还划不动；划快了反而没事"）：
+      // **滚动手势进行中不换钉**。换钉会同时改这条的宽度与高度（钉顶口径 ≠ 提问口径时必然如此）
+      // ⇒ 会话整体重排 ⇒ 手底下那段内容自己往上蹦，看起来就是"闪烁 + 划不动"；
+      // 划得快时一帧就跨过阈值，重排发生在你没盯着的瞬间，所以感觉不到。
+      // 现在手势期间维持现有那条（只刷新底衬与车道），换钉留到滚动静默后那一次
+      // （noteScrolling 的收尾回调会再排一次 applyPin）。
+      if (isScrolling) {
+        var held = document.querySelector('[' + APPEAR_ATTRS.pin + '="' + APPEAR_ATTRS.on + '"]')
+        if (held && held.isConnected !== false) {
+          pinLane(held)
+          updatePinPlate(held)
+          return
+        }
+      }
       var scroller = scrollerFor(rows[rows.length - 1])
       var limit = (scroller && scroller.getBoundingClientRect)
         ? scroller.getBoundingClientRect().top + PIN_TOP_EPS : null
@@ -837,27 +1121,85 @@ window.__ModuleLoader__.load({
           if (r.top <= limit) pick = t
         }
       }
+      // 这一轮是不是"真的顶在上沿"（v1.16.19）：只有它为真，那条才吃「钉顶气泡宽度/最高」；
+      // 兜底钉住的最后一条仍旧按普通提问气泡的宽度/高度显示，免得"最新那条提问"明明没贴顶
+      // 却跟着钉顶滑杆走（用户第十五轮点名要的口径）。
+      var atTop = !!pick
       // 一条都没越过上沿（会话很短 / 刚发完还没有长回答）时退回"钉最后一条"：
       // 底衬于是始终存在，模糊度滑杆看得见也调得动；滚出篇幅后自动回到分节标题语义。
       if (!pick) pick = pinTarget(rows[rows.length - 1])
       if (!pick || !pick.setAttribute) {
+        for (var i3 = 0; i3 < prevList.length; i3++) { clearPinLane(prevList[i3]); prevList[i3].removeAttribute(APPEAR_ATTRS.pin); prevList[i3].removeAttribute(APPEAR_ATTRS.top) }
         if (STORE.state.pinMarked !== '') STORE.set({ pinMarked: '' })
         return
       }
+      // 摘掉上一轮的那条（保留本轮的，避免同帧抖动）
+      for (var i4 = 0; i4 < prevList.length; i4++) {
+        if (prevList[i4] === pick) continue
+        clearPinLane(prevList[i4]); prevList[i4].removeAttribute(APPEAR_ATTRS.pin); prevList[i4].removeAttribute(APPEAR_ATTRS.top)
+      }
       pick.setAttribute(APPEAR_ATTRS.pin, APPEAR_ATTRS.on)
+      if (atTop) pick.setAttribute(APPEAR_ATTRS.top, APPEAR_ATTRS.on)
+      else pick.removeAttribute(APPEAR_ATTRS.top)
+      pinLane(pick)
       updatePinPlate(pick)
       // 自检文案用完整 class 串：真出问题时这是唯一能对着看的线索。
       var label = String(pick.className || pick.tagName).trim().replace(/\s+/g, ' ')
-        + ' · 共 ' + rows.length + ' 条提问'
+        + ' · 共 ' + rows.length + ' 条提问' + (atTop ? ' · 已贴顶' : ' · 兜底钉住（未贴顶）')
       if (STORE.state.pinMarked !== label) STORE.set({ pinMarked: label })
+    }
+
+    /**
+     * 把"钉顶那一层"钉成**无上限的满宽车道**（v1.16.8）。
+     *
+     * 为什么必须在 JS 里再写一遍 inline（CSS 里也有一条同口径的规则）：
+     * `margin-left:auto` 只吃"父盒宽 − 已用宽"，**父盒（这一层 flowItem）多宽才是天花板**。
+     * 用户 2026-10-01 的 DevTools 读数：这一层 w:687.99px、maxW:66.5px，而列宽 1476
+     * ⇒ 行再 auto 也只能贴到 1184（气泡看着还在屏幕中间）。前三轮都在调行/栈的对齐，
+     * 修的都是**没有天花板的那一层**。这里显式用 inline + important 钉死：
+     *   width:auto（块级满宽）+ max-width:none（任何上限都不许留在这一层）+ min-width:0。
+     * 幂等：值已经对了就不写（applyPin 在滚动中每帧都可能跑）。
+     */
+    function pinLane(pick) {
+      try {
+        if (!pick || !pick.style || !pick.style.setProperty) return
+        var want = { width: 'auto', 'max-width': 'none', 'min-width': '0' }
+        for (var k in want) {
+          if (pick.style.getPropertyValue(k) !== want[k]) pick.style.setProperty(k, want[k], 'important')
+        }
+      } catch (e) { warnOnce('pinLane', e) }
+    }
+
+    /**
+     * 撤掉 pinLane 写下的 inline 痕迹（停用/卸载时回到宿主原样）。
+     */
+    function clearPinLane(pick) {
+      try {
+        if (!pick || !pick.style || !pick.style.removeProperty) return
+        pick.style.removeProperty('width')
+        pick.style.removeProperty('max-width')
+        pick.style.removeProperty('min-width')
+      } catch (e) { /* 忽略 */ }
+    }
+
+    /**
+     * applyPin 的**单帧合并器**（2026-09-30 修长文滚动卡顿）。
+     * 症状：长提问被钉住后，滚轮翻会话会卡住/发顿。
+     * 原因：applyPin() 每次都要量**全部** [class*="_userRow"] 的 getBoundingClientRect
+     *      （O(提问数) 次强制布局），而 fitScrollHandler 挂在 capture 阶段的 scroll 上，
+     *      滚动期间**每个 scroll 事件都直调一次** ⇒ 一帧内反复强制同步布局，滚轮像被拽住。
+     * 修法：与 requestFit 同一套 rAF 合并 —— 一帧最多真正跑一次 applyPin()。
+     *      标记结果不变时不再动 DOM（applyPin 内部对 pinMarked 已有判等）。
+     */
+    function requestApplyPin() {
+      if (pinFrame) return
+      if (typeof requestAnimationFrame !== 'function') { try { applyPin() } catch (e) { warnOnce('applyPin', e) } ; return }
+      pinFrame = requestAnimationFrame(function () { pinFrame = 0; try { applyPin() } catch (e) { warnOnce('applyPin', e) } })
     }
 
     function startPinWatch() {
       if (!domReady() || pinObserver) return
-      pinObserver = new MutationObserver(function () {
-        if (pinFrame) return
-        pinFrame = requestAnimationFrame(function () { pinFrame = 0; applyPin() })
-      })
+      pinObserver = new MutationObserver(function () { requestApplyPin() })
       pinObserver.observe(document.body, { childList: true, subtree: true })
       applyPin()
     }
@@ -866,7 +1208,7 @@ window.__ModuleLoader__.load({
       if (pinFrame) { cancelAnimationFrame(pinFrame); pinFrame = 0 }
       if (!domReady()) return
       var prev = document.querySelectorAll('[' + APPEAR_ATTRS.pin + ']')
-      for (var i = 0; i < prev.length; i++) prev[i].removeAttribute(APPEAR_ATTRS.pin)
+      for (var i = 0; i < prev.length; i++) { clearPinLane(prev[i]); prev[i].removeAttribute(APPEAR_ATTRS.pin); prev[i].removeAttribute(APPEAR_ATTRS.top) }
       STORE.set({ pinMarked: '' })
     }
 
@@ -886,6 +1228,93 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 气泡"文字自然宽"（v1.16.7 的测量口径修正）。
+     *
+     * 为什么不能再用 lineBoxes() 量：那量的是**已经在当下宽度里折好行**的矩形。
+     * 一旦内联宽先被写成一个错值（用户 2026-10-01 实测 192px），文字就在 192px 里折行，
+     * 量出来最宽的一行也正好 ≈ 192px ⇒ 下一轮把 192px 再写一遍 —— **自锁**，
+     * 签名（data-cc-fit）再把这个错值永久焊死。这就是"提问框被限死、显示不下"的根因。
+     *
+     * 现在的口径：把内容拷进一个宽度不受限的隐藏盒量一次真·max-content，
+     * 再由 CSS 的 max-width（--cc-user-width-pct）决定要不要夹。
+     * 量不到（老引擎/异常）返回 0，调用方退回旧逻辑。
+     */
+    function naturalBubbleWidth(bubble) {
+      if (!bubble || !document.createElement || !document.body || !document.body.appendChild) return 0
+      var box = null
+      // 手搓 DOM 的宿主/离线夹具里 createElement 出来的可能没有 style ⇒ 当成"量不到"，返回 0 走旧的兜底
+      try { if (!document.createElement('div').style) return 0 } catch (e) { return 0 }
+      try {
+        var cs = typeof getComputedStyle === 'function' ? getComputedStyle(bubble) : null
+        box = document.createElement('div')
+        if (cs) {
+          // 逐条拷**计算后**的值（都是绝对 px），不依赖宿主变量在探针盒里能否解析
+          var keys = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing',
+            'whiteSpace', 'wordBreak', 'overflowWrap', 'textTransform', 'fontVariant']
+          for (var i = 0; i < keys.length; i++) {
+            var v = cs[keys[i]]
+            if (v) box.style[keys[i]] = v
+          }
+        }
+        box.style.cssText = (box.style.cssText || '') + ';position:absolute;left:-99999px;top:0;display:inline-block;'
+          + 'width:max-content;max-width:none;padding:0;border:0;margin:0;visibility:hidden;pointer-events:none'
+        box.innerHTML = bubble.innerHTML
+        document.body.appendChild(box)
+        var w = box.getBoundingClientRect ? box.getBoundingClientRect().width : 0
+        return w > 0 ? Math.ceil(w) : 0
+      } catch (e) {
+        return 0
+      } finally {
+        if (box && box.parentNode) box.parentNode.removeChild(box)
+      }
+    }
+
+    /**
+     * 逐条给提问栈写**宽度上限**（v1.16.16）。
+     *
+     * 为什么改成 JS 写 inline：用户第九～十二轮连续三次"两个滑杆互串/一边失灵"，
+     * 每次都是我在 CSS 里加一条规则去覆盖另一条 —— 说明"两套百分比共用同一批布局属性、
+     * 靠特异性分胜负"这件事本身不牢靠（而且已经因为 `:not(后代组合器)` 被 Electron 整条丢弃过）。
+     * 现在骨架（display / fit-content / 右对齐）由 CSS 给，**宽度上限一律由这里写 inline**：
+     * inline + important 谁也抢不过，也就没有"哪条规则赢"的问题。
+     *
+     * 判据：这条提问在不在"被钉住的那条"里面 —— 是就吃「钉顶气泡宽度」，否则吃「提问气泡宽度」。
+     * 于是：有钉顶时钉顶那条跟钉顶滑杆、其余提问（几条都行）跟提问滑杆；
+     * 页面上只有一条时它被钉住 ⇒ 只跟钉顶滑杆（用户第九轮要的口径）。
+     */
+    function applyStackCap(stack, colW) {
+      try {
+        if (!stack || !stack.style || !stack.style.setProperty) return
+        var cw = Number(colW) || 0
+        // v1.16.17（用户第十三轮"两条还在打架、一闪一闪"）：两个上限都写成**变量**，
+        // "这条现在算不算钉顶"交给 CSS 选择器当场判；不再写 inline max-width。
+        // 原因：钉顶标记在滚动中每帧都可能换行，而 inline 值"谁也抢不过" ⇒ 上限只能等下一次
+        // JS 贴合才刷新。真浏览器实测（本机 0.2.0-rc.2 + 854px 列宽）滚动采样：
+        //   step7 pin=1 cap=495px(w495) → step9 pin=1 cap=854px(w804)
+        //   step4 pin=0 cap=854px(非钉顶那条带着钉顶上限)
+        // 就是"钉顶那条先按提问宽度渲染、停下后再跳成钉顶宽度"的那一闪。
+        if (!(cw > 0)) return
+        var want = {
+          '--cc-cap-user': Math.round(cw * clampUserWidthPct(STORE.state.userWidthPct) / 100) + 'px',
+          '--cc-cap-pin': Math.round(cw * clampPinWidthPct(STORE.state.pinWidthPct) / 100) + 'px',
+        }
+        for (var k in want) {
+          if (stack.style.getPropertyValue(k) !== want[k]) stack.style.setProperty(k, want[k])
+        }
+      } catch (e) { warnOnce('applyStackCap', e) }
+    }
+
+    /** 撤掉 applyStackCap 写的 inline 上限（停用/卸载时回到宿主原样）。 */
+    function clearStackCap(stack) {
+      try {
+        if (!stack || !stack.style || !stack.style.removeProperty) return
+        stack.style.removeProperty('max-width')
+        stack.style.removeProperty('--cc-cap-user')
+        stack.style.removeProperty('--cc-cap-pin')
+      } catch (e) { /* 忽略 */ }
+    }
+
+    /**
      * 气泡"贴文字"的唯一办法：CSS 里块盒的宽度与文字末端无关（块宽=可用宽），
      * 所以这里量一次真实排版再写回：
      *   ① stack.width = min(100%, 最宽行 + 左右内边距)  ⇒ 框贴住文字，列宽变窄自动夹回；
@@ -898,17 +1327,39 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || !document.querySelectorAll || !document.createRange) return 0
       var rows
       try { rows = document.querySelectorAll('[class*="_userRow"]') } catch (e) { return 0 }
+      // 列宽只量一次，整轮共用（每条各自量会多 O(行数) 次强制布局）
+      var colW = 0
+      try {
+        var colEl = document.querySelector('[class*="_column"]')
+        if (colEl && colEl.getBoundingClientRect) colW = Math.round(colEl.getBoundingClientRect().width)
+      } catch (e) { colW = 0 }
+      if (!(colW > 0)) { try { colW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cc-col-w')) || 0 } catch (e2) { colW = 0 } }
       var done = 0
       for (var i = 0; i < rows.length; i++) {
         var row = rows[i]
         var stack = row.querySelector ? row.querySelector('[class*="_userStack"]') : null
         if (!stack || !stack.getBoundingClientRect || !stack.style) continue
+        // v1.16.16：宽度上限**先写**（在任何 skip 之前）—— 含图片/内嵌块的那些行量不准、
+        // 不参与"贴文字"，但它们的宽度上限照样得跟滑杆走。上限写成 CSS 变量，见 applyStackCap。
+        applyStackCap(stack, colW)
         var bubble = stack.querySelector ? stack.querySelector('[class*="_bubble"]') : null
         if (!bubble || !bubble.getBoundingClientRect) continue
         // 只跳过"含图片/内嵌块"的气泡（那种量不准）。文字里带 @路径 渲染出的 <span> 子节点
         // 照常量 —— 上一版按 children.length>0 整条跳过，把带文件引用的提问全漏掉了，
         // 框宽就退回"块宽 = 上限"的固定观感（用户反馈的"完全不动态"正是这个）。
-        if (bubble.querySelector && bubble.querySelector('img,video,canvas,svg:not([class*="_action"])')) continue
+        // v1.16.15：这里的 `svg:not([class*="_action"])` 拆成"先查 img/video/canvas，再单独看 svg"
+        // —— 没有任何 `:not()` 留在选择器里（同一份代码里已经因为 L4 的 `:not()` 被整条丢弃过一次，
+        // 凡是能便宜地绕开的地方都绕开，免得以后又踩同一类解析差异）。
+        if (bubble.querySelector && bubble.querySelector('img,video,canvas')) continue
+        if (bubble.querySelector) {
+          var svgs = bubble.querySelectorAll('svg')
+          var hasNonActionSvg = false
+          for (var si = 0; si < svgs.length; si++) {
+            var sc = svgs[si].getAttribute ? (svgs[si].getAttribute('class') || '') : ''
+            if (sc.indexOf('_action') < 0) { hasNonActionSvg = true; break }
+          }
+          if (hasNonActionSvg) continue
+        }
         var probe = lineBoxes(bubble)
         if (!probe.length) continue
         var baseLineH = probe[0].bottom - probe[0].top
@@ -921,16 +1372,16 @@ window.__ModuleLoader__.load({
         if (!text) continue
         var sr = stack.getBoundingClientRect()
         if (!sr || !sr.width) continue
-        var applied = stack.style.width || ''
-        var sig = text.length + '|' + Math.round(sr.width) + '|' + applied
-        if (bubble.getAttribute && bubble.getAttribute('data-cc-fit') === sig) { done++; continue }
-        var lines = probe
-        if (!lines.length) continue
-        var left = lines[0].left, right = lines[0].right
-        for (var k = 1; k < lines.length; k++) {
-          if (lines[k].left < left) left = lines[k].left
-          if (lines[k].right > right) right = lines[k].right
-        }
+        // 缓存键用的"这条行所在包含块的内容宽"（拿不到就退回行自身宽）；列宽变了要重量自然宽。
+        // v1.16.18（用户第十四轮："两个都拉满了气泡还是不宽"）：这里原来**也叫 colW**，
+        // 而 var 是函数级作用域 ⇒ 第一圈迭代跑完就把上面"整轮量一次的会话列宽"覆盖成
+        // "某一行的包含块宽/栈自身宽"。applyStackCap 在第 2..N 圈拿到的就是那个被压扁的值：
+        // 线上读数 = 列宽 1476、两条滑杆都 100%，栈上限却是 **167px**（= 上一圈那行的宽）。
+        // 改名成 baseW 后，上限基数恒为会话列宽。
+        var baseW = 0
+        var cb = row.parentElement
+        if (cb && typeof cb.clientWidth === 'number' && cb.clientWidth > 0) baseW = cb.clientWidth
+        if (!baseW) baseW = Math.round(sr.width)
         var cs = typeof getComputedStyle === 'function' ? getComputedStyle(bubble) : null
         var padL = cs ? (parseFloat(cs.paddingLeft) || 0) : 12
         var padR = cs ? (parseFloat(cs.paddingRight) || 0) : 12
@@ -942,15 +1393,53 @@ window.__ModuleLoader__.load({
           fitGutter = (bubble.offsetWidth || 0) - (bubble.clientWidth || 0)
           if (!(fitGutter > 0)) fitGutter = 0
         }
-        var target = Math.ceil(right - left + padL + padR + fitGutter)
+        // v1.16.7：宽度改成先量**自然宽**（不受当下折行影响），再由 CSS 的 max-width 夹。
+        // 旧口径（量已折行的矩形）会在"内联宽先被写小"时自锁成窄框，见 naturalBubbleWidth 的注释。
+        //
+        // 代价控制（v1.16.7）：量自然宽要在 body 上挂一个隐藏克隆盒 ⇒ 一次强制布局。
+        // 所以只在"这条气泡的文字变了 / 还没量过 / 列宽变了"时真量；否则复用上次的自然宽。
+        // 缓存按元素存（WeakMap），不会拦着节点被回收。
+        var natRec = fitNaturalCache ? fitNaturalCache.get(bubble) : null
+        var textSig = text.length + ':' + text
+        var needMeasure = !natRec || natRec.text !== textSig || natRec.colW !== baseW
+        var natural = 0
+        if (needMeasure) {
+          natural = naturalBubbleWidth(bubble)
+          if (natural > 0 && fitNaturalCache) {
+            fitNaturalCache.set(bubble, { text: textSig, nat: natural, colW: baseW })
+          }
+        } else {
+          natural = natRec.nat
+        }
+        var target
+        if (natural > 0) {
+          target = natural + Math.ceil(padL + padR + fitGutter)
+        } else {
+          // 量不到自然宽（老引擎 / 克隆失败）⇒ 退回旧口径：当下折行里最宽的一行 + 内边距
+          var lines0 = probe
+          var l0 = lines0[0].left, r0 = lines0[0].right
+          for (var m0 = 1; m0 < lines0.length; m0++) {
+            if (lines0[m0].left < l0) l0 = lines0[m0].left
+            if (lines0[m0].right > r0) r0 = lines0[m0].right
+          }
+          target = Math.ceil(r0 - l0 + padL + padR + fitGutter)
+        }
         if (target <= 0) continue
         // 用普通 px（不用百分比：shrink-to-fit 容器里百分比会绕回父宽）。
-        // CSS 那边给了 _userStack{max-width:100%}，列宽变窄时自然夹回，签名变化后下一轮重算。
-        stack.style.width = target + 'px'
+        // CSS 那边 _userStack 有 max-width:min(列宽×--cc-user-width-pct, 41em+2em)，超上限时由它夹回；
+        // 所以这里写的是"希望多宽"，不是"一定这么宽"。
+        var nextW = target + 'px'
+        // 已经是想要的值 ⇒ 只刷新签名，不再动 DOM（避免每帧写样式触发重排）
+        if (stack.style.width === nextW) {
+          if (bubble.setAttribute) bubble.setAttribute('data-cc-fit', text.length + '|' + nextW)
+          done++
+          continue
+        }
+        stack.style.width = nextW
         // 图标行：实测它的宽高 ⇒ 轨道宽 = 图标行宽 + 一点余量（跟着字号/DPI 走，不写死 34px），
         // 纵向 top 对齐到**最后一行**的中心（变量必须写在 row 上：图标是 row 的子节点，
         // 挂在 stack 上继承不到 —— 这是上一版复制键跑偏的直接原因）。
-        lines = lineBoxes(bubble)
+        var lines = lineBoxes(bubble)
         if (!lines.length) continue
         var last = lines[lines.length - 1]
         var rr = row.getBoundingClientRect ? row.getBoundingClientRect() : stack.getBoundingClientRect()
@@ -960,7 +1449,7 @@ window.__ModuleLoader__.load({
         var iconW = (ar && ar.width) ? ar.width : FIT_ICON_H
         if (row.style && row.style.setProperty) {
           row.style.removeProperty('--cc-tail-x')            // 横向改用 right 定位，旧变量不再需要
-          row.style.setProperty('--cc-tail-room', Math.ceil(iconW + iconH * 0.45) + 'px')
+          row.style.setProperty('--cc-tail-room-px', Math.ceil(iconW + iconH * 0.45) + 'px')
           var tailY = Math.round(last.top - rr.top + (last.bottom - last.top - iconH) / 2)
           if (tailY < 0) tailY = 0
           var rowH = rr.height || 0
@@ -974,12 +1463,18 @@ window.__ModuleLoader__.load({
         done++
       }
       updatePinPlate()   // 量完宽度顺手刷新底衬长度（短句贴短句）
+      applyOutputCap(rows)   // 新消息进入时补上回答限高标记（幂等，不改动就不写 DOM）
       return done
     }
 
     /** 撤掉自家写的一切内联痕迹（停用/卸载时必须回到宿主原样）。 */
     function clearFit() {
       if (typeof document === 'undefined' || !document.querySelectorAll) return
+      // 回答限高标记（v1.16.1）：停用/关开关时一并摘掉
+      try {
+        var marked = document.querySelectorAll('[data-cc-output]')
+        for (var mi = 0; mi < marked.length; mi++) marked[mi].removeAttribute('data-cc-output')
+      } catch (e) { /* 忽略 */ }
       var rows
       try { rows = document.querySelectorAll('[class*="_userRow"]') } catch (e) { return }
       for (var i = 0; i < rows.length; i++) {
@@ -987,11 +1482,12 @@ window.__ModuleLoader__.load({
         if (row.style && row.style.removeProperty) {
           row.style.removeProperty('--cc-tail-x')
           row.style.removeProperty('--cc-tail-y')
-          row.style.removeProperty('--cc-tail-room')
+          row.style.removeProperty('--cc-tail-room-px')
         }
         var stack = row.querySelector ? row.querySelector('[class*="_userStack"]') : null
         if (!stack || !stack.style) continue
         stack.style.width = ''
+        clearStackCap(stack)   // v1.16.16：inline 的宽度上限也是自家写的，停用时要一起撤
         if (stack.style.removeProperty) {
           stack.style.removeProperty('--cc-tail-x')
           stack.style.removeProperty('--cc-tail-y')
@@ -1003,6 +1499,35 @@ window.__ModuleLoader__.load({
 
     var fitObserver = null
     var fitTimer = 0
+    /**
+     * 正在滚动期间**不跑** fitUserBubbles（2026-09-30 修"一顿一顿、划不上去"）。
+     *
+     * 实测口径：fitUserBubbles() 对每一条提问气泡做「读几何 → 写 stack.width → 再读几何」，
+     * 本身就会产生 O(提问数) 次强制同步布局；它又挂在 capture 阶段的 scroll 上（每个 scroll 事件
+     * 都排队一次，rAF 合并后仍等于"每帧一次全量重排"）。长会话（发过长提问后页面上有几十条气泡）
+     * 下，这会把主线程占满 —— 表现为滚轮一顿一顿、怎么划都不上去。
+     *
+     * 所以：滚动中只标记 dirty，等滚动事件静默 SCROLL_IDLE_MS 之后再补一次。
+     * 钉顶（applyPin）不受此限制 —— 它需要在滚动中保持跟随。
+     */
+    var SCROLL_IDLE_MS = 160
+    var scrollIdleTimer = 0
+    var fitDirtyWhileScrolling = false
+    var isScrolling = false
+
+    function noteScrolling() {
+      isScrolling = true
+      if (scrollIdleTimer) return
+      scrollIdleTimer = setTimeout(function () {
+        scrollIdleTimer = 0
+        isScrolling = false
+        if (fitDirtyWhileScrolling) { fitDirtyWhileScrolling = false; requestFit() }
+        // v1.16.19：滚动期间不换钉（见 applyPin 里那段），所以静默后必须补一次重选，
+        // 否则一直停在这条上不动了。一起重排贴合：两者都会改几何，顺序上先量再钉。
+        try { if (STORE.state.pinLastUser) requestApplyPin() } catch (e) { warnOnce('pinIdleReapply', e) }
+      }, SCROLL_IDLE_MS)
+    }
+
     // 同一类失败只提示一次：静默吞异常会让人完全看不出"框为什么不贴文字/底衬为什么不出来"。
     var warnedKeys = {}
     function warnOnce(tag, e) {
@@ -1015,6 +1540,7 @@ window.__ModuleLoader__.load({
     }
     function requestFit() {
       if (fitTimer) return
+      if (isScrolling) { fitDirtyWhileScrolling = true; return }   // 滚动中只记账，等静默再量
       // 90ms → **两帧**（2026-09-15，与宽度那个"切会话闪一下"同一类排查）：
       // fitUserBubbles() 要量元素几何，而换会话瞬间新消息还没排版，**同步量到的是空/旧值**
       // —— 这正是它当初要延迟的原因，所以不能像宽度那样改同步。
@@ -1051,17 +1577,36 @@ window.__ModuleLoader__.load({
         var sc = scrollerFor(b)
         if (!sc) return
         var max = b.scrollHeight - b.clientHeight
+        var dy = e.deltaY
         if (max <= 1) {                     // 气泡不够高、没得滚 ⇒ 直接转给会话
-          sc.scrollTop += e.deltaY
-          if (e.cancelable) e.preventDefault()
+          if (handOffToScroller(sc, dy, e)) e.preventDefault()
           return
         }
-        var atTop = b.scrollTop <= 0 && e.deltaY < 0
-        var atBottom = b.scrollTop >= max - 1 && e.deltaY > 0
+        var atTop = b.scrollTop <= 0 && dy < 0
+        var atBottom = b.scrollTop >= max - 1 && dy > 0
         if (!atTop && !atBottom) return     // 气泡内还能滚 ⇒ 维持原样（内层滚）
-        sc.scrollTop += e.deltaY            // 到边 ⇒ 手动补上被 contain 挡住的串联
-        if (e.cancelable) e.preventDefault()
+        if (handOffToScroller(sc, dy, e)) e.preventDefault()   // 到边 ⇒ 手动补上被 contain 挡住的串联
       } catch (err) { warnOnce('pinWheelHandler', err) }
+    }
+    /**
+     * 把一次滚轮增量交给会话滚动区；**只在它真的还能往这个方向走时才接管**
+     * （2026-09-30 修"长文钉顶时滚轮像被拽住"）。
+     *
+     * 原先无论会话到没到边都 scrollTop += deltaY 后再 preventDefault：
+     * ① 会话已到顶/到底时，这次滚轮本该由浏览器交还给更外层（或什么都不做），却被我们吃掉；
+     * ② 每次事件都手动改 scrollTop 会与浏览器自己的滚动/惯性抢同一个滚动位，
+     *    在长文（钉顶气泡很高、事件密集）下表现得像"滚不动"。
+     * 现在只在真有位移可做时接管；否则一律不 preventDefault，交回浏览器原生串联。
+     * @returns 是否已接管这次事件（true ⇒ 调用方可以 preventDefault）
+     */
+    function handOffToScroller(sc, dy, e) {
+      if (!sc || !(dy > 0 || dy < 0)) return false
+      var scMax = sc.scrollHeight - sc.clientHeight
+      if (scMax <= 0) return false
+      if (dy > 0 && sc.scrollTop >= scMax - 1) return false   // 会话已到底
+      if (dy < 0 && sc.scrollTop <= 0) return false           // 会话已到顶
+      sc.scrollTop += dy
+      return true
     }
     /**
      * 观察器只挂在会话流容器上（比 body 便宜得多）：新消息/流式改字 ⇒ 重贴合；
@@ -1076,13 +1621,17 @@ window.__ModuleLoader__.load({
       fitObserver = new MutationObserver(function () { requestFit() })
       fitObserver.observe(flow || document.body, { childList: true, subtree: true })
       fitScrollHandler = function () {
+        noteScrolling()                       // 滚动中禁止全量贴合（见 noteScrolling 注释）
         requestFit()
-        if (STORE.state.pinLastUser) { try { applyPin() } catch (e) { /* 忽略 */ } }
+        if (STORE.state.pinLastUser) requestApplyPin()
       }
       fitResizeHandler = function () {
+        // 会话区/列宽变了 ⇒ 先更新两个宽度基数（--cc-area-w / --cc-col-w），再重算贴合与钉子。
+        // 顺序不能反：fitUserBubbles 的 max-width 与 updatePinPlate 都读这个变量。
+        try { measureWidthVars() } catch (e) { warnOnce('measureWidthVars', e) }
         clearFit()
         requestFit()
-        if (STORE.state.pinLastUser) { try { applyPin() } catch (e) { /* 忽略 */ } }
+        if (STORE.state.pinLastUser) requestApplyPin()
       }
       // 手搓 DOM / 老引擎可能没有事件 API ⇒ 逐个判类型再挂，缺了什么就少一份能力，不抛错。
       if (typeof document.addEventListener === 'function') document.addEventListener('scroll', fitScrollHandler, true)
@@ -1106,6 +1655,10 @@ window.__ModuleLoader__.load({
     function stopFitWatch() {
       if (fitObserver) { fitObserver.disconnect(); fitObserver = null }
       if (fitTimer) { cancelAnimationFrame(fitTimer); fitTimer = 0 }   // fitTimer 现在是 rAF 句柄，不是定时器
+      // 滚动静默计时器也要清：否则停用插件后 160ms 还会再触发一次贴合
+      if (scrollIdleTimer) { clearTimeout(scrollIdleTimer); scrollIdleTimer = 0 }
+      isScrolling = false
+      fitDirtyWhileScrolling = false
       if (typeof document !== 'undefined' && fitScrollHandler && document.removeEventListener) {
         document.removeEventListener('scroll', fitScrollHandler, true)
       }
@@ -1122,8 +1675,8 @@ window.__ModuleLoader__.load({
 
     /**
      * 把外观开关映射到 <html> 上：data-* 决定"生不生效"，CSS 变量决定"长什么样"
-     * （--cc-pin-blur = 钉顶底衬的模糊半径；--cc-user-bubble-max = 提问气泡宽度上限，
-     *   单位 em，改 USER_BUBBLE_MAX_EM 一处即可，随会话字号一起缩放）。
+     * （--cc-pin-blur = 钉顶底衬的模糊半径；--cc-area-w / --cc-user-width-pct / --cc-pin-width-pct
+     *   = 宽度与它的基数；v1.16.10 起宽度只剩百分比一个旋钮，41em 那条上限已删）。
      * 每一步各自 try/catch：以前一处抛错（例如常量改名）会连带把后面的观察器全跳过，
      * 表现就是"底衬根本不出现 ⇒ 模糊度像失效了一样"。
      */
@@ -1133,19 +1686,44 @@ window.__ModuleLoader__.load({
       try {
         if (s.pinLastUser) el.setAttribute('data-cc-pin-last-user', '1'); else el.removeAttribute('data-cc-pin-last-user')
         if (s.clearBubble) el.setAttribute('data-cc-clear-bubble', '1'); else el.removeAttribute('data-cc-clear-bubble')
+        // v1.16.3：提问气泡限高（属性驱动，关掉即刻恢复全文）
+        if (s.userCapEnabled !== false) el.setAttribute('data-cc-user-cap', '1'); else el.removeAttribute('data-cc-user-cap')
       } catch (e) { warnOnce('applyAppearance attrs', e) }
       // 取值 0 也要写（"完全不模糊、只留半透明底"是合法档位），所以不做真值判断。
       try {
         if (el.style && el.style.setProperty) {
           el.style.setProperty('--cc-pin-blur', clampBlur(s.pinBlur) + 'px')
           el.style.setProperty('--cc-pin-max-vh', clampPinMaxVh(s.pinMaxVh) + 'vh')
-          el.style.setProperty('--cc-user-bubble-max', USER_BUBBLE_MAX_EM + 'em')
+          // v1.16.10：--cc-user-bubble-max（41em 上限）已删 —— 宽度只由下面两个百分比决定。
+          // v1.16.1：回答气泡限高（比例于视口，关掉时标记会被 clearFit/applyOutputCap 摘掉）
+          el.style.setProperty('--cc-output-max-vh', clampOutputCapVh(s.outputCapVh) + 'vh')
+          // v1.16.2：钉顶提问气泡宽度比例（%）
+          el.style.setProperty('--cc-pin-width-pct', clampPinWidthPct(s.pinWidthPct) + '')
+          // v1.16.12：钉顶那条的宽度上限用**独立**变量（两个滑杆各管各的，不再共用一个）
+          el.style.setProperty('--cc-pin-width-cap', clampPinWidthPct(s.pinWidthPct) + '')
+          // v1.16.7：普通提问气泡宽度比例（%）；上限写在 _userStack 上，见 CSS 注释
+          el.style.setProperty('--cc-user-width-pct', clampUserWidthPct(s.userWidthPct) + '')
+          // v1.16.3：提问气泡限高（比例于视口）
+          el.style.setProperty('--cc-user-cap-vh', clampUserCapVh(s.userCapVh) + 'vh')
+          // v1.16.19：钉顶气泡里图片的不透明度（0–1，CSS 用 opacity）
+          el.style.setProperty('--cc-img-fade', clampImgFade(s.imgFade) / 100 + '')
         }
       } catch (e) { warnOnce('applyAppearance vars', e) }
+      // v1.16.9/1.16.11：宽度百分比的基数是**会话列实际宽**（--cc-col-w）。这里量一次，
+      // 之后窗口 resize 与「对话页宽度」变更时各再量一次。量不到时 CSS 会退回列宽基数。
+      try { measureWidthVars() } catch (e) { warnOnce('measureWidthVars', e) }
+      // 回答限高标记：开关一关就立刻摘掉，不必等下一轮贴合
+      try { applyOutputCap() } catch (e) { warnOnce('applyOutputCap', e) }
       try { if (s.pinLastUser) startPinWatch(); else stopPinWatch() } catch (e) { warnOnce('pinWatch', e) }
       // 气泡贴文字/字尾定位与"钉哪一条"要跟着滚动与消息变化重算 ⇒ 观察器常驻（只挂会话流容器）；
       // 停用插件时 stopFitWatch() 会把内联 width / --cc-tail-* / data-cc-fit 全部撤干净。
       try { startFitWatch() } catch (e) { warnOnce('fitWatch', e) }
+      // v1.16.17（用户第十三轮"宽度滑杆拖了没反应"）：滑杆改的只是 CSS 变量，而各条 stack 上的
+      // 宽度上限是 JS 量列宽后写下去的 —— startFitWatch() 在观察器已挂时是**空操作**
+      // （`if (!domReady() || fitObserver) return`），所以拖滑杆不会触发任何重算：
+      // 变量变了、已经在 DOM 上的上限没变 ⇒ 界面纹丝不动。
+      // 这里显式排一次贴合（重写各条的上限变量）与钉顶重算（底衬宽度 --cc-pin-w）。
+      try { requestFit(); if (s.pinLastUser) requestApplyPin() } catch (e) { warnOnce('appearanceRefit', e) }
       // 宽度观察器只在开关开着时才挂：关着没必要为一条不存在的钉法盯整棵 body。
       try {
         if (s.chatWidthEnabled && s.appearanceReady) startWidthWatch(); else stopWidthWatch()
@@ -1167,6 +1745,16 @@ window.__ModuleLoader__.load({
       applyAppearance(STORE.state)
       scheduleSave({ clearBubble: STORE.state.clearBubble })
     }
+    /**
+     * 钉顶气泡里图片的不透明度（%，v1.16.19）：只写 CSS 变量 --cc-img-fade。
+     * 用户要的是"淡化图片，让底下的壁纸/文字透出来"——背景透明那条只管气泡底色，管不到图片。
+     */
+    function setImgFade(v) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ imgFade: clampImgFade(v) })
+      applyAppearance(STORE.state)
+      scheduleSave({ imgFade: STORE.state.imgFade })
+    }
     /** 钉顶底衬的模糊度（px）：只写 CSS 变量，0 = 只留半透明底、不模糊。 */
     function setPinBlur(v) {
       if (!STORE.state.appearanceReady) return
@@ -1183,6 +1771,60 @@ window.__ModuleLoader__.load({
       STORE.set({ pinMaxVh: clampPinMaxVh(v) })
       applyAppearance(STORE.state)
       scheduleSave({ pinMaxVh: STORE.state.pinMaxVh })
+    }
+    /**
+     * 回答气泡限高开关（v1.16.1）：关掉立刻摘掉全部 [data-cc-output] 标记，回答恢复全文展开。
+     * 不做"只影响新回答"的渐进口径 —— 一半限高一半不限高的界面比两种极端都难用。
+     */
+    function setOutputCapEnabled(on) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ outputCapEnabled: on === true })
+      applyAppearance(STORE.state)
+      scheduleSave({ outputCapEnabled: STORE.state.outputCapEnabled })
+    }
+    /** 回答气泡最高高度（vh）：比例于视口；超出的部分在气泡内滚。 */
+    function setOutputCapVh(v) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ outputCapVh: clampOutputCapVh(v) })
+      applyAppearance(STORE.state)
+      scheduleSave({ outputCapVh: STORE.state.outputCapVh })
+    }
+    /**
+     * **钉顶那条**提问气泡的宽度比例（% 会话列宽）。v1.16.12 起它真的只管钉顶那条：
+     *   写 `--cc-pin-width-cap`（钉顶栈的 max-width）+ `--cc-pin-width-pct`（底衬兜底宽度）；
+     *   普通提问气泡走 `--cc-user-width-pct`（另一个滑杆）。此前两者共用一个变量，
+     *   于是"提问气泡宽度"实际在控钉顶、普通气泡没有 UI 可调（用户第八轮实测）。
+     */
+    function setPinWidthPct(v) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ pinWidthPct: clampPinWidthPct(v) })
+      applyAppearance(STORE.state)
+      scheduleSave({ pinWidthPct: STORE.state.pinWidthPct })
+    }
+    /**
+     * **普通**提问气泡的宽度比例（% 会话列宽，v1.16.7 新增）。
+     * 与 setPinWidthPct 同一口径、不同落点：这里改的是 _userStack 的 max-width，
+     * 作用于所有提问气泡（被钉住那条也吃这条上限）；短句仍由 JS 量宽后贴文字。
+     */
+    function setUserWidthPct(v) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ userWidthPct: clampUserWidthPct(v) })
+      applyAppearance(STORE.state)
+      scheduleSave({ userWidthPct: STORE.state.userWidthPct })
+    }
+    /** 提问气泡限高开关（v1.16.3）：关掉即恢复全文展开（属性一摘就生效）。 */
+    function setUserCapEnabled(on) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ userCapEnabled: on === true })
+      applyAppearance(STORE.state)
+      scheduleSave({ userCapEnabled: STORE.state.userCapEnabled })
+    }
+    /** 提问气泡最高高度（vh）：比例于视口；超出的部分在气泡内滚。 */
+    function setUserCapVh(v) {
+      if (!STORE.state.appearanceReady) return
+      STORE.set({ userCapVh: clampUserCapVh(v) })
+      applyAppearance(STORE.state)
+      scheduleSave({ userCapVh: STORE.state.userCapVh })
     }
 
     // ------------------------------------------------------ 对话页固定宽度 --
@@ -1218,6 +1860,9 @@ window.__ModuleLoader__.load({
       var pct = enabled && Number(rawPct) > 0 ? Math.round(Number(rawPct)) : null
       var root = findChatRoot()
       syncWidthStyle(pct)   // :root 兜底与根节点钉法并行：composer 还没挂上时也能生效
+      // v1.16.11：对话页宽度**直接决定列宽**，所以这里必须重量一次（气泡基数就是列宽）——
+      // 这也是两个设置相乘的地方。
+      try { measureWidthVars() } catch (e) { /* 只是量不到，CSS 会退回列宽基数 */ }
       if (!root) return false
       if (pct) {
         root.style.setProperty('--dsh-chat-content-width', pct + '%', 'important')
@@ -2032,6 +2677,9 @@ window.__ModuleLoader__.load({
         var root = getComputedStyle(document.documentElement)
         out.blurVar = root.getPropertyValue('--cc-pin-blur').trim()
         out.font = (root.getPropertyValue('--dsh-content-font-size').trim() || root.fontSize || '').trim()
+        // v1.16.9：宽度百分比的基数（量不到时为空，CSS 会退回列宽）
+        out.areaW = root.getPropertyValue('--cc-area-w').trim()
+        out.colW = root.getPropertyValue('--cc-col-w').trim()
         if (el) {
           var cs = getComputedStyle(el, '::before')
           out.filter = cs.backdropFilter || cs.webkitBackdropFilter || ''
@@ -2041,20 +2689,96 @@ window.__ModuleLoader__.load({
       return out
     }
 
+    /**
+     * 钉顶几何自检（v1.16.4）：把**被钉那一行 / 行内 stack / 气泡**的计算样式与几何打出来。
+     * 为什么需要：用户报"钉顶变居中"时，光看截图分不清是行被居中、stack 被居中、还是宽度上限把它挤小；
+     * 又不能要求用户开 DevTools。这一行直接把判定所需的量摊在设置页上：
+     *   行的 left/right/width/maxW/marginL + display + textAlign
+     *   stack 的 width/innerWidth/alignSelf、气泡的 rect
+     * 只要看行 right 与列 right 的差、以及 marginL 是否为 auto/像素，就能判定。
+     */
+    function readPinGeometry() {
+      try {
+        if (typeof document === 'undefined' || !document.querySelector || typeof getComputedStyle !== 'function') return ''
+        var el = document.querySelector('[' + APPEAR_ATTRS.pin + ']')
+        if (!el) return '（当前没有被钉住的条目）'
+        var row = el.querySelector ? (el.querySelector('[class*="_userRow"]') || el) : el
+        var stack = row.querySelector ? row.querySelector('[class*="_userStack"]') : null
+        var bubble = row.querySelector ? row.querySelector('[class*="_bubble"]') : null
+        var flow = el.closest ? el.closest('[data-chat-flow]') : null
+        var R = function (n) {
+          if (!n || !n.getBoundingClientRect) return null
+          var r = n.getBoundingClientRect()
+          return { l: Math.round(r.left), r: Math.round(r.right), w: Math.round(r.width) }
+        }
+        var fr = R(flow), rr = R(row), sr = R(stack), br = R(bubble)
+        var rcs = getComputedStyle(row)
+        var scs = stack ? getComputedStyle(stack) : null
+        // 判定（v1.16.5）：看**气泡**是否贴住会话列右缘、行左外边距是否为负（负=被拽到左边）。
+        // 注意：margin-left:auto 在 getComputedStyle 里会被解析成具体像素（403px 那种），
+        // 那是它已生效的证据，不是故障 —— 之前那条判定把它当错误报，属于误判，已改。
+        var verdict = ''
+        if (fr && rr) {
+          var col = el.closest ? el.closest('[class*="_column"]') : null
+          var colR = col ? col.getBoundingClientRect() : fr
+          var bubbleRight = br ? br.r : rr.r
+          var gapB = Math.round(colR.right - bubbleRight)
+          var negMargin = parseFloat(rcs.marginLeft) < 0
+          var descGap = Math.round(rr.r - bubbleRight)   // 行右缘到气泡右缘 = 图标轨道预留
+          verdict = '判定: 气泡右缘差=' + gapB + (Math.abs(gapB) <= 4 ? '(贴住✓)' : '(未贴住✗)')
+            + ' 行左外边距=' + (negMargin ? rcs.marginLeft + '✗被拽左' : '非负✓')
+            + ' 行右余量=' + descGap + 'px(字尾图标预留，非异常)'
+            + (Math.abs(gapB) <= 4 && !negMargin ? ' → 右对齐正常' : ' → 这才是居中成因')
+        }
+        var parts = []
+        if (verdict) parts.push(verdict)
+        parts.push('钉顶元素=' + String(el.className || el.tagName).trim().split(/\s+/)[0])
+        if (fr) parts.push('flow[l' + fr.l + ' r' + fr.r + ' w' + fr.w + ']')
+        if (rr) parts.push('row[l' + rr.l + ' r' + rr.r + ' w' + rr.w + ']')
+        parts.push('row{display:' + rcs.display + ' textAlign:' + rcs.textAlign + ' maxW:' + rcs.maxWidth
+          + ' marginL:' + rcs.marginLeft + ' marginR:' + rcs.marginRight + '}')
+        if (sr) parts.push('stack[l' + sr.l + ' r' + sr.r + ' w' + sr.w + ' 内联:' + (stack.style.width || '—') + ']')
+        if (scs) parts.push('stack{textAlign:' + scs.textAlign + ' alignSelf:' + scs.alignSelf + ' maxW:' + scs.maxWidth + '}')
+        if (br) parts.push('bubble[l' + br.l + ' r' + br.r + ' w' + br.w + ']')
+        // v1.16.7：宽度看这两行就够 —— stack 的内联宽若明显小于文字自然宽，就是"被限死"。
+        // 用户第三轮反馈的那条自检里 stack 内联宽 192px，正是这个口径的实证。
+        parts.push('宽度: 提问气泡上限=' + (scs ? scs.maxWidth : '?')
+          + ' · 气泡内容宽=' + (bubble && bubble.scrollWidth ? bubble.scrollWidth : '?')
+          + (stack && stack.style.width ? ' · 栈内联宽=' + stack.style.width : ' · 栈内联宽=—'))
+        // v1.16.8：把**钉顶那一层自己**的宽/上限也打出来。三轮"气泡在屏幕中间"的真凶就在这一层：
+        // 线上实测 w:687.99px / maxW:66.5px（列 1476），而它才是行右对齐的天花板。
+        // 这两个数只要不满足"w≈列宽 且 maxW=none"，居中问题就一定复现。
+        var pcs = getComputedStyle(el)
+        var colW = col ? Math.round(col.getBoundingClientRect().width) : (fr ? fr.w : 0)
+        parts.push('钉顶车道: w=' + Math.round(el.getBoundingClientRect().width)
+          + ' / 列宽=' + colW + ' · maxW=' + pcs.maxWidth + ' · minW=' + pcs.minWidth)
+        return parts.join(' · ')
+      } catch (e) { return '读取失败: ' + String((e && e.message) || e) }
+    }
+
     function AppearanceCard() {
       var s = useCache()
       var b = clampBlur(s.pinBlur)
-      // 小数值细分：<3.5 按 0.1 步进（能选到 1.3/1.5/1.7 这类微调档），≥3.5 按 0.5 足够。
-      var blurStep = b < 3.5 ? '0.1' : '0.5'
+      // v1.16.9：滑杆位置 0–100 走**幂函数**映射（见 blurPosToPx），所以 0–1px 那段占约十格、
+      // 12–24px 那段每格 0.5px —— 用户要的"小的灵敏、大的钝"。step 恒为 1（一个位置一格）。
+      var blurPos = blurPxToPos(b)
       var plate = readPlateState()
       return h('div', { className: 'cc-card' },
         Switch('把最近一条「我的提问」钉在会话区顶部', s.pinLastUser, setPinLastUser, !s.appearanceReady),
         Switch('我的气泡背景透明（露出壁纸）', s.clearBubble, setClearBubble, !s.appearanceReady),
+        // v1.16.19：钉子那条里的图片也能淡出（背景透明只管气泡底色，图片是不透明的 —— 壁纸与
+        // 底下滚过去的正文都会被它挡住）。100% = 原样；调低就能透出后面。
+        h('div', { className: 'cc-row' },
+          h('span', { style: { minWidth: '108px' } }, '钉顶图片不透明度'),
+          h('input', { type: 'range', min: '0', max: '100', step: '1',
+            value: String(clampImgFade(s.imgFade)), disabled: !s.appearanceReady,
+            onChange: function (e) { setImgFade(Number(e.target.value)) } }),
+          h('span', { className: 'cc-val' }, clampImgFade(s.imgFade) + '%')),
         h('div', { className: 'cc-row' },
           h('span', { style: { minWidth: '108px' } }, '钉顶底衬模糊度'),
-          h('input', { type: 'range', min: '0', max: '24', step: blurStep,
-            value: String(b), disabled: !s.appearanceReady,
-            onChange: function (e) { setPinBlur(Number(e.target.value)) } }),
+          h('input', { type: 'range', min: '0', max: '100', step: '1',
+            value: String(blurPos), disabled: !s.appearanceReady,
+            onChange: function (e) { setPinBlur(blurPosToPx(Number(e.target.value))) } }),
           h('span', { className: 'cc-val' }, b + 'px')),
         // 钉顶气泡的最高高度：38vh 是"能看多少原文"与"挡多少正文"的折中，按需调。
         h('div', { className: 'cc-row' },
@@ -2063,10 +2787,36 @@ window.__ModuleLoader__.load({
             value: String(s.pinMaxVh), disabled: !s.appearanceReady,
             onChange: function (e) { setPinMaxVh(Number(e.target.value)) } }),
           h('span', { className: 'cc-val' }, s.pinMaxVh + 'vh')),
+        // 钉顶气泡的宽度：按**会话列**宽的比例（v1.16.11 起基数是消息列 —— 列宽已含「对话页宽度」%）,\n        // 所以「对话页 80%」+「气泡 80%」= 会话区的 64%，与用户预期一致。
+        h('div', { className: 'cc-row' },
+          h('span', { style: { minWidth: '108px' } }, '钉顶气泡宽度'),
+          h('input', { type: 'range', min: '30', max: '100', step: '1',
+            value: String(clampPinWidthPct(s.pinWidthPct)), disabled: !s.appearanceReady,
+            onChange: function (e) { setPinWidthPct(Number(e.target.value)) } }),
+          h('span', { className: 'cc-val' }, clampPinWidthPct(s.pinWidthPct) + '% 会话列')),
+        // 普通提问气泡的宽度（v1.16.7 用户要求）：同一口径，作用在栈的 max-width 上。
+        // 短句仍是"量完文字再贴"，这里只决定长句能铺多宽。
+        h('div', { className: 'cc-row' },
+          h('span', { style: { minWidth: '108px' } }, '提问气泡宽度'),
+          h('input', { type: 'range', min: '30', max: '100', step: '1',
+            value: String(clampUserWidthPct(s.userWidthPct)), disabled: !s.appearanceReady,
+            onChange: function (e) { setUserWidthPct(Number(e.target.value)) } }),
+          h('span', { className: 'cc-val' }, clampUserWidthPct(s.userWidthPct) + '% 会话列')),
+        // 提问气泡的上下限高（v1.16.3）：比例于视口，长提问超出的部分在气泡内滚
+        Switch('限制提问气泡高度（超出部分在气泡内滚）', s.userCapEnabled !== false, setUserCapEnabled, !s.appearanceReady),
+        h('div', { className: 'cc-row' },
+          h('span', { style: { minWidth: '108px' } }, '提问气泡最高'),
+          h('input', { type: 'range', min: '15', max: '80', step: '1',
+            value: String(clampUserCapVh(s.userCapVh)), disabled: !s.appearanceReady || s.userCapEnabled === false,
+            onChange: function (e) { setUserCapVh(Number(e.target.value)) } }),
+          h('span', { className: 'cc-val' }, clampUserCapVh(s.userCapVh) + 'vh')),
         !s.appearanceReady ? h('div', { className: 'cc-err' },
           '气泡置顶等功能未装载：当前运行的 host 还不认识这几个字段，写盘会被旧版抹掉。请重启桌面应用。') : null,
         s.pinLastUser && s.appearanceReady ? h('div', { className: 'cc-muted' },
           '钉住位置自检：' + (s.pinMarked || '还没找到 [class*="_userRow"]（当前页面可能没有会话，或类名已变）')) : null,
+        // v1.16.4：钉顶几何自检（定位"变居中"这类问题用；点「重读」可刷新）
+        s.pinLastUser && s.appearanceReady ? h('div', { className: 'cc-muted', style: { wordBreak: 'break-all' } },
+          '钉顶几何：' + readPinGeometry()) : null,
         // 实测读数（拖滑杆时能立刻看到 blur(...) 有没有跟着变）
         h('div', { className: 'cc-row', style: { gap: '8px', flexWrap: 'wrap' } },
           h('span', { className: 'cc-muted' },
@@ -2074,11 +2824,17 @@ window.__ModuleLoader__.load({
             + ' · --cc-pin-blur=' + (plate.blurVar || '(未设置)')
             + ' · backdrop-filter=' + (plate.filter || '(无)')
             + ' · 底衬宽=' + (plate.plateW || '(无)')
+            + ' · 会话区宽=' + (plate.areaW || '(量不到)')
+            + ' · 会话列宽=' + (plate.colW || '(量不到，退回比例基数)')
             + ' · 会话字号=' + (plate.font || '(未知)')),
           h('button', {
             className: 'cc-mini', type: 'button',
             onClick: function () { STORE.set({ fitTick: (STORE.state.fitTick || 0) + 1 }) },
           }, '重读')),
+        // v1.16.6：回答限高的界面按用户要求撤掉（"回答气泡好像不需要限制"）。
+        // 字段仍在 host 白名单里，默认改成**关**，想手动开就编辑 settings.json 的
+        // outputCapEnabled（保留能力，不占界面）。
+        h('div', { className: 'cc-subhead' }, '说明'),
         h(Fold, { label: '说明' },
           h('div', { className: 'cc-note' },
             '三项都是纯界面开关：只往 <html> 上加 data-cc-* / --cc-pin-blur 并注入样式，不改消息数据、不改宿主代码。'
@@ -2871,7 +3627,9 @@ window.__ModuleLoader__.load({
             document.documentElement.removeAttribute('data-cc-pin-last-user')
             document.documentElement.removeAttribute('data-cc-clear-bubble')
             document.documentElement.style.removeProperty('--cc-pin-blur')
-            document.documentElement.style.removeProperty('--cc-user-bubble-max')
+            document.documentElement.style.removeProperty('--cc-user-width-pct')
+            document.documentElement.style.removeProperty('--cc-area-w')
+            document.documentElement.style.removeProperty('--cc-col-w')
           }
         }
       }, 'cache-control-appearance')
@@ -2942,6 +3700,7 @@ window.__ModuleLoader__.load({
       applyAppearance: applyAppearance,
       applyPin: applyPin,
       pinTarget: pinTarget,
+      pinLane: pinLane,
       fitUserBubbles: fitUserBubbles,
       clearFit: clearFit,
       pinWheelHandler: pinWheelHandler,
@@ -2951,30 +3710,36 @@ window.__ModuleLoader__.load({
       domReady: domReady,
       setPinLastUser: setPinLastUser,
       setClearBubble: setClearBubble,
+      // v1.16.19：钉顶气泡里图片的不透明度
+      setImgFade: setImgFade,
+      clampImgFade: clampImgFade,
       setPinBlur: setPinBlur,
       setPinMaxVh: setPinMaxVh,
+      // v1.16.1：回答气泡限高（离线套件据此断言"每个 DEFAULTS 键都有可保存控件"）
+      setOutputCapEnabled: setOutputCapEnabled,
+      setOutputCapVh: setOutputCapVh,
+      // v1.16.2：钉顶气泡宽度比例
+      setPinWidthPct: setPinWidthPct,
+      clampPinWidthPct: clampPinWidthPct,
+      // v1.16.9：模糊滑杆的幂函数映射 + 会话区宽基数（离线套件据此断言分布与会话区联动）
+      blurPosToPx: blurPosToPx,
+      blurPxToPos: blurPxToPos,
+      measureWidthVars: measureWidthVars,
+      // v1.16.7：普通提问气泡宽度比例 + 自然宽量法（离线套件/探针据此断言）
+      setUserWidthPct: setUserWidthPct,
+      clampUserWidthPct: clampUserWidthPct,
+      naturalBubbleWidth: naturalBubbleWidth,
+      // v1.16.3：提问气泡限高
+      setUserCapEnabled: setUserCapEnabled,
+      setUserCapVh: setUserCapVh,
+      clampUserCapVh: clampUserCapVh,
       clampPinMaxVh: clampPinMaxVh,
+      clampOutputCapVh: clampOutputCapVh,
       clampBlur: clampBlur,
       clampChatWidth: clampChatWidth,
       CHAT_PCT_MIN: CHAT_PCT_MIN,
       CHAT_PCT_MAX: CHAT_PCT_MAX,
       CHAT_PCT_DEFAULT: CHAT_PCT_DEFAULT,
-      bubbleMaxEm: function () { return USER_BUBBLE_MAX_EM },
-      setBubbleMaxEm: function (v) {
-        USER_BUBBLE_MAX_EM = Math.min(120, Math.max(8, Math.round(Number(v) * 10) / 10 || 41))
-        applyAppearance(STORE.state)
-      },
-      // 兼容旧测试缝：给 px 就按当前会话字号折算成 em。
-      setBubbleMaxPx: function (v) {
-        var fs = 15
-        try {
-          if (typeof getComputedStyle === 'function' && document.documentElement) {
-            fs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dsh-content-font-size')) || 15
-          }
-        } catch (e) { /* 用默认字号 */ }
-        USER_BUBBLE_MAX_EM = Math.min(120, Math.max(8, Math.round((Number(v) || 620) / fs * 10) / 10))
-        applyAppearance(STORE.state)
-      },
       applyChatWidth: applyChatWidth,
       // v1.6.0 缝：面板定位数学（纯函数，离线可断言收敛性）与原生拖拽条隐藏。
       computePanelPatch: computePanelPatch,

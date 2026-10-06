@@ -1,6 +1,6 @@
 {
   "name": "dsh-cache-control",
-  "version": "1.16.0",
+  "version": "1.16.20",
   "description": "DSH Desktop 会话策略：常驻规则注入（会话守则 / ponytail / 输出形状）、按需审查、工具输出压缩与取回、对话外观和存储管理。迁移及生效范围见 README。",
   "keywords": [
     "dsh",
@@ -65,7 +65,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.2-alpha.1 <0.3.0",
     "react": "^18.2.0"
   },
   "repository": {

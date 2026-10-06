@@ -8,6 +8,8 @@ pnpm-lock.yaml
 # tools/ 里脚本跑出来的产物与临时 home
 tools/*-out/
 tools/*-home/
+# verify-pin-width.mjs 从 app.asar 里抽出来的宿主 chat 包（宿主换版本会自动重抽）
+tools/.cache/
 tools/cc-appear-out/
 tools/gate-*-home/
 tools/live-*-home/

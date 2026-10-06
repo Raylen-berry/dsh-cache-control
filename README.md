@@ -276,17 +276,32 @@ ocr delegate rule --format json <path>...   # 这些文件命中哪些规则（g
 但背景逐行着色、行内 padding 只落在首末片段 ⇒ 框"超"到文字之外、文字也不垂直居中）。所以：
 
 - **CSS 定骨架（尺寸一律 em / 宿主字号变量）**：`userRow` = `display:block; position:relative;
-  box-sizing:border-box; width:fit-content; margin-left:auto`，上限 `min(列宽×.55,
-  var(--cc-user-bubble-max,41em))`，右缘再留一条轨道 `padding-right:var(--cc-tail-room,2.4em)`；
+  box-sizing:border-box; width:fit-content; margin-left:auto; max-width:none`（只当"右侧车道"），
+  右缘再留一条轨道 `padding-right:var(--cc-tail-room-px, 2.4em)`；`userStack` 只给骨架：
+  `display:block; width:fit-content; margin-left:auto`；
+  **宽度上限由 JS 逐条写 inline**（v1.16.16）：
+  `fitUserBubbles()` 对每条提问判"在不在被钉住的那条里面" ⇒
+  `stack.style.setProperty('max-width', 消息列宽 × (钉顶? pinWidthPct : userWidthPct) / 100 + 'px', 'important')`。
+  为什么用 inline 而不是 CSS 规则：两套百分比共用同一批布局属性时，"哪条规则赢"换版本就会翻车
+  （1.16.12 拆变量 → 1.16.13 `:not(后代组合器)` 被 Electron 整条丢弃 → 1.16.15 两规则各写全仍不稳）；
+  `inline + important` 优先级最高，没有分胜负这回事，且逐条判定天然支持"1 条钉顶 + N 条普通"。
+  CSS 里两条规则只留骨架 + 一条**不带 `!important`** 的兜底上限（JS 还没跑时用）。
   `bubble` = 块盒 + **上下对称 padding .47em** + 圆角 `1.45em`；图标行 `position:absolute;
   right:.13em; left:auto; top:var(--cc-tail-y,auto)` ⇒ 落在轨道里 = **气泡右侧**；图标尺寸
   `calc(1.5em + var(--dsh-content-font-delta,0px))` 跟宿主字号走。字号变、页面缩放变，这些一起变 ——
   不再有任何"某次量出来好看就钉死"的像素数。
-- **JS 量一次**（`fitUserBubbles()`）：`Range.getClientRects()` 取逐行矩形 ⇒
-  ① `stack.style.width = 最宽行 + 左右内边距`（框贴文字；列宽变窄靠 `max-width:100%` 自动夹回）；
-  ② 实测图标行宽高 ⇒ 写 `--cc-tail-room`（轨道 = 图标行宽 + .45×图标高）与 `--cc-tail-y`
-  （与**最后一行**同高）。变量必须写在 `userRow` 上：图标行是 row 的子节点，写到 `userStack` 上
-  继承不到 —— 这是复制键一度跑偏的直接原因。
+- **为什么上限不能写在行上（v1.16.7 实测）**：`margin-left:auto` 只吃"包含块宽 − 已用宽"，
+  而 `width:fit-content` 的已用宽是**先被 max-width 夹出来的** ⇒ 剩余为 0 ⇒ auto 退化成 0，
+  行停在左边缘、短句气泡看着像"居中"。离线复现见 `tools/verify-pin-width.mjs`
+  （列 1140、45%：行上写 max-width ⇒ 气泡右缘差 663px；上限搬到栈上 ⇒ 36px）。
+- **JS 量一次**（`fitUserBubbles()`）：先用 `naturalBubbleWidth()` 量**文字自然宽**
+  （内容拷进 `width:max-content` 的隐藏盒量一次，与当下折行无关），再 `stack.style.width =
+  自然宽 + 左右内边距`（框贴文字，超上限由栈的 `max-width` 夹回）；接着实测图标行宽高 ⇒
+  写 `--cc-tail-room`（轨道 = 图标行宽 + .45×图标高）与 `--cc-tail-y`（与**最后一行**同高）。
+  自然宽按元素缓存在 `WeakMap` 里，文字或列宽变了才重量。
+- **为什么不能量"折好的行"（v1.16.7 实测）**：那种量法会在内联宽先被写小的时候**自锁** ——
+  文字在那个小宽度里折行，量出来最宽的一行也正好 ≈ 那个小宽度，下一轮把错值再写一遍，
+  `data-cc-fit` 签名再把它焊死（用户实测到的 192px 就是这么来的）。
 - 实测（列宽 1180、字号 15px）：10 字 174px、30 字 444px、长文 579px；复制键距气泡右缘
   **13.1px**（em 轨道，随字号缩放）且与末行同高；上下留白 8/8.1 相等；420px 窄容器不越框。
 - **两条踩过的坑（别改回去）**：
@@ -303,10 +318,19 @@ ocr delegate rule --format json <path>...   # 这些文件命中哪些规则（g
   把 `stack.style.width` / `--cc-tail-*` / `data-cc-fit` 全撤干净。
 - **时间戳零占位**：平时 `opacity:0` 却仍占位 ⇒ `max-width:0;padding:0;overflow:hidden`，
   `:hover` 才展开（展开后的内边距也是 em）。
-- 可调点：`USER_BUBBLE_MAX_EM`（上限，默认 41em；测试缝 `internals.setBubbleMaxEm` /
-  `setBubbleMaxPx`）、`--cc-tail-room`（轨道宽 = 复制键离框缘的距离，JS 自动量、也可手动覆盖）、
-  `FIT_ICON_H`（仅量不到图标时的兜底高度）。钉顶底衬宽度自 **v1.4.2** 起按这条提问的**实测宽度**
-  写入 `--cc-pin-w`（量不到才退回 `min(列宽×.55, 上限) + .8em` 的旧上限）。
+- 可调点：**`userWidthPct`（设置页「提问气泡宽度」滑杆，30–100% **消息列宽**，默认 58，
+  写 `--cc-user-width-pct`，**只管普通提问气泡**；v1.16.7 新增；v1.16.9 曾改成会话区、
+  v1.16.11 按用户实测改回**消息列**）**、
+  **`pinWidthPct`（设置页「钉顶气泡宽度」滑杆，同样 30–100% 消息列宽，写 `--cc-pin-width-cap`，
+  只管被钉住那条；v1.16.12 起两个滑杆才真正分开 —— 此前它们共用一个变量，
+  于是"提问气泡宽度"实际在控钉顶、普通气泡没有 UI 可调）**、
+  `--cc-col-w` = **消息列**实测宽（气泡宽度基数，已含「对话页宽度」% ⇒ 两个设置相乘）、
+  `--cc-area-w` = 会话区实测宽（同一函数 `measureWidthVars()` 写入；量不到时 CSS 退回比例基数）、
+  `--cc-tail-room-px`（轨道宽 = 复制键离框缘的距离，JS 自动量、也可手动覆盖）、
+  `FIT_ICON_H`（仅量不到图标时的兜底高度）。
+  **v1.16.10：`USER_BUBBLE_MAX_EM`（41em）已删** —— 每个气泡的宽度只有各自那个百分比旋钮，
+  之前它是 `min()` 的第二条上限，导致百分比拉到 100% 也只到 ~645px。钉顶底衬宽度自
+  **v1.4.2** 起按这条提问的**实测宽度**写入 `--cc-pin-w`（量不到才退回 `消息列宽×.55 + .8em`）。
 
 底衬形态的三次选定：
 2026-09-07 选**半透明毛玻璃**（不是实底、不是无底衬）；
@@ -479,6 +503,15 @@ node tools/run-all.mjs --list  # 只看清单：跑哪些、以及哪些被排�
 
 **出网边界**：只有 `npm ci` / `npm install` 那一步出网（按 `package-lock.json` 装 devDependencies）。
 `npm test` 本身**不出网** —— 不做真实下载、不调模型、不读 `%APPDATA%` 下的真实 settings.json。
+
+**可迁移性（2026-09-30 起）**：`tools/` 下各套件不再写死开发机路径 ——
+
+- 插件目录默认按**本文件位置**推导（`../`），换盘符/换目录直接跑；
+- `DSH_APP_MODULES` 默认指向**仓库自身的 `node_modules/`**，所以先 `npm ci` 装出 devDependencies 即可，
+  不再依赖本机 DSH Desktop 的安装目录；
+- 各环境的 `DSH_CC_PLUGIN` / `DSH_APP_MODULES` / `DSH_TOOL_HOME` / `DSH_BGA_CLIENT` 覆盖项全部保留。
+
+所以在任何机器上，只要 `npm ci && npm test`，就能拿到与 CI 一致的结果。
 
 `tools/run-all.mjs` 把每套都跑完再汇总（不用 `&&` 串，避免第一套一失败就看不到后面），
 任一套非 0 退出 ⇒ `npm test` 退出码 1 ⇒ CI 变红。CI 用 Node 20/22/24 三档矩阵、windows-latest。

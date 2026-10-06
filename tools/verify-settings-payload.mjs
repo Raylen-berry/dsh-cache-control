@@ -31,9 +31,19 @@ const cases = [
   ['gateEnabled', () => x.flipGate()], ['ponytailEnabled', () => x.setPonytailEnabled(true)],
   ['shapeEnabled', () => x.setShapeEnabled(false)], ['pinLastUser', () => x.setPinLastUser(true)],
   ['clearBubble', () => x.setClearBubble(true)], ['pinBlur', () => x.setPinBlur(18)],
+  // v1.16.19：钉顶气泡里图片的不透明度（0 是合法档位，用例取 35 走一趟真实保存）
+  ['imgFade', () => x.setImgFade(35)],
   ['pinMaxVh', () => x.setPinMaxVh(52)], ['chatWidth', () => x.commitChatWidth(88)],
   ['chatWidthEnabled', () => x.setChatWidthEnabled(true)], ['hideResizer', () => x.setHideResizer(true)],
   ['hideDivider', () => x.setHideDivider(true)],
+  // v1.16.1：回答气泡限高（开关 + 比例值）
+  ['outputCapEnabled', () => x.setOutputCapEnabled(false)], ['outputCapVh', () => x.setOutputCapVh(58)],
+  // v1.16.2：钉顶气泡宽度比例
+  ['pinWidthPct', () => x.setPinWidthPct(78)],
+  // v1.16.7：普通提问气泡宽度比例
+  ['userWidthPct', () => x.setUserWidthPct(72)],
+  // v1.16.3：提问气泡限高（开关 + 比例值）
+  ['userCapEnabled', () => x.setUserCapEnabled(false)], ['userCapVh', () => x.setUserCapVh(52)],
 ]
 for (const [key, action] of cases) {
   const start = requests.length; action(); await tick(250)
@@ -78,6 +88,19 @@ x.setPinBlur(21); await tick(250); await settle(requests.at(-1))
 await settle(oldSettings,{settings:{...DEFAULTS,pinBlur:1},gate:{text:'old',enabled:true}})
 await settle(oldReview,{review:{enabled:false,registered:false}})
 check('迟到的全量读取不会回滚刚改好的设置',store.state.pinBlur===21 && !store.state.loading)
+
+// v1.16.20：**加载路径也要搬 imgFade**。这里原来是漏的 —— pull() 只写了一半字段，
+// imgFade 永远停在 DEFAULTS=100，用户报"钉顶里的图片还是不透明，调完刷新又变回去"。
+// 本用例直接对一个"盘上 imgFade=35 的 GET 响应"断言它进了 STORE（缺陷时这里拿到的是 100）。
+store.set({imgFade:100})
+x.reloadSettings()
+await settle(requests.findLast(r=>r.url==='/cc/settings.json' && !r.options.method),{settings:{...DEFAULTS,imgFade:35}})
+check('全量读取把盘上的 imgFade 搬进状态（原来漏搬 ⇒ 永远 100）',store.state.imgFade===35)
+check('imgFade 的合法档位可钳（0 = 全透明）',x.clampImgFade(0)===0 && x.clampImgFade(500)===100 && x.clampImgFade('x')===100)
+// 旧盘没有这个键 ⇒ 必须保留当前值，而不是被 undefined 钳成 0（那会让图片直接消失）
+x.reloadSettings()
+await settle(requests.findLast(r=>r.url==='/cc/settings.json' && !r.options.method),{settings:{...DEFAULTS,imgFade:undefined}})
+check('旧盘缺 imgFade 时保留现值（不落成全透明）',store.state.imgFade===35)
 
 x.setClearBubble(false);await tick(250);const timeout=requests.at(-1)
 await tick(10000)

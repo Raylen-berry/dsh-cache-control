@@ -388,8 +388,25 @@ export const DEFAULTS = Object.freeze({
   shapeEnabled: true,
   pinLastUser: false,    // 会话区外观：最近一条"我的提问"钉在顶部
   clearBubble: false,    // 会话区外观：我的气泡背景透明（露出壁纸）
+  imgFade: 100,          // 会话区外观：钉顶气泡里图片的不透明度 %（v1.16.19；100 = 原样，调低让壁纸/文字透出来）
   pinBlur: 10,           // 会话区外观：钉顶底衬（圆角矩形毛玻璃）的模糊半径 px
-  pinMaxVh: 38,          // 会话区外观：被钉气泡自身的最高高度（vh；超出的部分在气泡内滚）
+  pinMaxVh: 45,          // 会话区外观：被钉气泡自身的最高高度（vh；超出的部分在气泡内滚）。v1.16.14 起默认 45，且实际会被"视口高−输入卡−24px"再夹一次
+  // v1.16.1 的"回答气泡限高"在 v1.16.6 按用户要求改为**默认关**（界面也撤掉）：
+  // 字段保留在白名单里，想用就手动把 outputCapEnabled 改成 true。
+  outputCapEnabled: false,
+  outputCapVh: 45,
+  // v1.16.2：钉顶那条提问气泡的宽度 —— **按会话列宽的比例**（此前是写死的 .55）。
+  // 行宽仍是 fit-content（短句贴文字），这里只决定长句能铺多宽；比例随列宽缩放，
+  // 因此不会出现"固定像素在半屏里显得特别宽"的比例/固定冲突。
+  pinWidthPct: 55,
+  // v1.16.7：**普通提问气泡**（不钉顶的那些，含钉顶那一条自己）的宽度上限 —— 同样按会话列宽的比例。
+  // 默认 58 ≈ 宿主自己那条 `.userStack{max-width:min(702px,82%)}` 在 1140px 列宽下的 70.2%，
+  // 但我们是量完文字再夹，所以短句仍然贴文字、只有长句才吃到这个上限。
+  userWidthPct: 58,
+  // v1.16.3：提问气泡（含被钉住那条）的上下限高 —— **比例于视口**，默认 40vh。
+  // 与回答限高同一口径（"占多少屏高"）；超出的部分在气泡内滚，关掉即恢复全文。
+  userCapEnabled: true,
+  userCapVh: 40,
   chatWidth: 80,         // 对话页：会话列宽占**可用宽度的百分比**（v1.5.0 起；原为 640–3840px）
   chatWidthEnabled: false, // 对话页：是否启用固定列宽（关 = 跟随 DSH 自适应）
   // 对话页（v1.6.0，v1.7.0 拆成两个开关）：隐藏 DSH 原生拖拽把手。
@@ -406,9 +423,28 @@ export const DEFAULTS = Object.freeze({
 /** 钉顶底衬模糊半径的取值区间（与 client 侧 clampBlur 同口径）。 */
 export const PIN_BLUR_MIN = 0
 export const PIN_BLUR_MAX = 24
+/** 钉顶气泡里图片的不透明度区间（%，v1.16.19）：0 = 全透明、100 = 原样（与 client 侧 clampImgFade 同口径）。
+ *  注意 0 是合法档位，不能像百分比宽度那样把 <=0 当"缺键"。 */
+export const IMG_FADE_MIN = 0
+export const IMG_FADE_MAX = 100
 /** 被钉气泡最高高度的取值区间，单位 vh（与 client 侧 clampPinMaxVh 同口径）。 */
 export const PIN_MAX_VH_MIN = 12
 export const PIN_MAX_VH_MAX = 80
+/** 回答气泡限高的取值区间，单位 vh（与 client 侧 clampOutputCapVh 同口径）。 */
+export const OUTPUT_CAP_VH_MIN = 15
+export const OUTPUT_CAP_VH_MAX = 80
+/** 钉顶提问气泡宽度占会话列宽的比例（%）；55 是 v1.16.1 之前的写死值。 */
+export const PIN_WIDTH_PCT_MIN = 30
+export const PIN_WIDTH_PCT_MAX = 100
+/** **普通提问气泡**宽度占会话列宽的比例（%）；口径与 pinWidthPct 相同，只是作用在没被钉顶的气泡上。
+ *  默认 58：本机 1140px 列宽下气泡外框约 663px —— 和改前写死的 45% 上限（≈513px）相比明显变宽，
+ *  但仍留出右侧图标轨道与视觉呼吸位；长句才吃这个上限，短句照旧贴文字。 */
+export const USER_WIDTH_PCT_MIN = 30
+export const USER_WIDTH_PCT_MAX = 100
+export const USER_WIDTH_PCT_DEFAULT = 58
+/** 提问气泡限高的取值区间，单位 vh（与 client 侧 clampUserCapVh 同口径）。 */
+export const USER_CAP_VH_MIN = 15
+export const USER_CAP_VH_MAX = 80
 /** 对话页宽度的取值区间：**百分比**（v1.5.0 起；原为 640–3840px）。
  *  30% 是"再窄就没法读了"的下限，100% = 铺满会话区可用宽度（两侧仍留宿主自己的 32px 内边距）。 */
 export const CHAT_WIDTH_MIN = 30
@@ -432,12 +468,35 @@ export function sanitize(raw) {
   const shapeEnabled = src.shapeEnabled !== false
   const pinLastUser = src.pinLastUser === true
   const clearBubble = src.clearBubble === true
+  // v1.16.19：钉顶气泡里图片的不透明度（%）。旧盘无此键 ⇒ 100（原样，行为不变）。
+  let imgFade = Math.round(Number(src.imgFade))
+  if (!Number.isFinite(imgFade)) imgFade = DEFAULTS.imgFade
+  imgFade = Math.min(IMG_FADE_MAX, Math.max(IMG_FADE_MIN, imgFade))
   let pinBlur = Math.round(Number(src.pinBlur) * 10) / 10   // 保留 1 位小数（1.3 / 1.5 这类微调档）
   if (!Number.isFinite(pinBlur)) pinBlur = DEFAULTS.pinBlur
   pinBlur = Math.min(PIN_BLUR_MAX, Math.max(PIN_BLUR_MIN, pinBlur))
   let pinMaxVh = Math.round(Number(src.pinMaxVh))
   if (!Number.isFinite(pinMaxVh) || pinMaxVh <= 0) pinMaxVh = DEFAULTS.pinMaxVh
   pinMaxVh = Math.min(PIN_MAX_VH_MAX, Math.max(PIN_MAX_VH_MIN, pinMaxVh))
+  // v1.16.1（2026-09-30）：输出气泡限高（比例于视口）。默认**开** —— 判据 `!== false`，
+  // 否则旧盘（没这个键）会被判成关；长回答不再把整页拉长，滚动区更稳。
+  const outputCapEnabled = src.outputCapEnabled !== false
+  let outputCapVh = Math.round(Number(src.outputCapVh))
+  if (!Number.isFinite(outputCapVh) || outputCapVh <= 0) outputCapVh = DEFAULTS.outputCapVh
+  outputCapVh = Math.min(OUTPUT_CAP_VH_MAX, Math.max(OUTPUT_CAP_VH_MIN, outputCapVh))
+  // v1.16.2：钉顶提问气泡宽度比例（%）。旧盘无此键 ⇒ 落到 55，与改前行为完全一致。
+  let pinWidthPct = Math.round(Number(src.pinWidthPct))
+  if (!Number.isFinite(pinWidthPct) || pinWidthPct <= 0) pinWidthPct = DEFAULTS.pinWidthPct
+  pinWidthPct = Math.min(PIN_WIDTH_PCT_MAX, Math.max(PIN_WIDTH_PCT_MIN, pinWidthPct))
+  // v1.16.7：普通提问气泡宽度比例（%）。旧盘无此键 ⇒ 落到 58，比原来的写死 45% 宽。
+  let userWidthPct = Math.round(Number(src.userWidthPct))
+  if (!Number.isFinite(userWidthPct) || userWidthPct <= 0) userWidthPct = DEFAULTS.userWidthPct
+  userWidthPct = Math.min(USER_WIDTH_PCT_MAX, Math.max(USER_WIDTH_PCT_MIN, userWidthPct))
+  // v1.16.3：提问气泡限高（比例于视口）。默认**开**，判据 `!== false`（旧盘缺键 ⇒ 开）。
+  const userCapEnabled = src.userCapEnabled !== false
+  let userCapVh = Math.round(Number(src.userCapVh))
+  if (!Number.isFinite(userCapVh) || userCapVh <= 0) userCapVh = DEFAULTS.userCapVh
+  userCapVh = Math.min(USER_CAP_VH_MAX, Math.max(USER_CAP_VH_MIN, userCapVh))
   // v1.5.0：chatWidth 单位从 px 改成百分比；盘上的旧 px 值（>100）由 normalizeChatWidth 落到 80%
   const chatWidth = normalizeChatWidth(src.chatWidth)
   const chatWidthEnabled = src.chatWidthEnabled === true
@@ -452,6 +511,8 @@ export function sanitize(raw) {
   const compactionBackup = readBackup(src)
   return {
     gateEnabled, ponytailEnabled, shapeEnabled, pinLastUser, clearBubble, pinBlur, pinMaxVh,
+    outputCapEnabled, outputCapVh, pinWidthPct, userWidthPct, userCapEnabled, userCapVh,
+    imgFade,
     chatWidth, chatWidthEnabled, hideResizer, hideDivider, reviewSkillEnabled, compactionBackup,
   }
 }

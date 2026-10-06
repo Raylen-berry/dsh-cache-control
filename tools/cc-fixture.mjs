@@ -2,6 +2,23 @@
 // 一个复刻宿主约束的壳（transform 根 + overflow:hidden 输入卡片），对比
 // "面板留在插槽里"（旧写法）与"portal 到 body"（新写法）。
 // 产出 cc-fixture-out\A-inline.png / B-body.png 与几何报告。
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
 import fs from 'node:fs'
 import http from 'node:http'
 import crypto from 'node:crypto'
@@ -9,16 +26,16 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 
 const HERE = import.meta.dirname
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/';
-const APP = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/';
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../';
+const APP = process.env.DSH_APP_MODULES || '../node_modules/';
 const OUT = HERE + '\\cc-fixture-out'
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const unwrap = (m) => (m && m.default && (m.default.createElement || m.default.renderToStaticMarkup)) ? m.default : m
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 fs.mkdirSync(OUT, { recursive: true })
-const React = unwrap(await import('file:///' + APP + 'react/index.js'))
-const ReactDOMServer = unwrap(await import('file:///' + APP + 'react-dom/server.js'))
+const React = unwrap(await import(__localFile(APP, 'react/index.js')))
+const ReactDOMServer = unwrap(await import(__localFile(APP, 'react-dom/server.js')))
 
 // ---- 装载 client 半：捕获注入的 CSS，拿到 chip 槽组件 ----
 let captured = null
@@ -30,7 +47,7 @@ globalThis.document = {
   head: { appendChild: (el) => { if (el && el.textContent) cssText += el.textContent } },
 }
 globalThis.fetch = () => Promise.reject(new Error('离线夹具不联网'))
-await import('file:///' + PLUGIN + 'client.js?fx' + Date.now())
+await import(__localFile(PLUGIN, 'client.js?fx') + Date.now())
 if (!captured) throw new Error('client.js 没注册 factory')
 const ex = captured.factory((name) => {
   if (name === 'react') return React
@@ -177,7 +194,7 @@ async function shoot(file, png) {
   await send('Runtime.enable')
   await send('Page.enable')
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false })
-  await send('Page.navigate', { url: 'file:///' + file.replace(/\\/g, '/') })
+  await send('Page.navigate', { url: __localFile(file, '').replace(/\\/g, '/') })
   await sleep(800)
   const ev = await send('Runtime.evaluate', { expression: MEASURE, returnByValue: true })
   if (ev.exceptionDetails) throw new Error('量测异常 ' + JSON.stringify(ev.exceptionDetails).slice(0, 240))

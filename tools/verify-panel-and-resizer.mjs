@@ -10,8 +10,25 @@
 // 假 DOM 用的结构与真实页面一致的关键点：
 //   会话区两竖杠 = <div data-width-handle="left" style="cursor:col-resize">（._8JRpoa_widthHandle）
 //   侧栏分隔条   = <div style="cursor:col-resize">，**没有** data-width-handle（._1tdjgG_handle）
-const PLUGIN = process.env.DSH_CC_PLUGIN || 'D:/DeepSeek/dsh-plugins/dsh-cache-control/'
-const APP = process.env.DSH_APP_MODULES || 'D:/deepseek-harness/DSH Desktop/resources/app/node_modules/'
+import { fileURLToPath as __f2p, pathToFileURL as __p2u } from 'node:url'
+import __pathMod from 'node:path'
+// ---- 相对本文件的本地路径解析（2026-09-30 可迁移性：手工跑不带 env 也能用）----
+// PLUGIN/APP/MOD 允许是相对本文件的默认值（如 '../'）；'file:///' + '../x.js' 会被 Node
+// 判为非法 URL，pathToFileURL('../') 又按 cwd 解析。统一走 __localFile。
+// 查询串（?t=…）必须拼在 href 之后，不能塞进 new URL 的相对段。
+const __localFile = (base, tail) => {
+  if (typeof base !== 'string' || base === '') return String(tail || '')
+  if (/^[a-zA-Z][\w+.-]*:\/\//.test(base)) return base + (tail || '')
+  const here = __pathMod.dirname(__f2p(import.meta.url))
+  const abs = __pathMod.isAbsolute(base) ? base : __pathMod.resolve(here, base)
+  const href = __p2u(abs).href
+  const t = tail || ''
+  const needSlash = t !== '' && !t.startsWith('/') && !t.startsWith('?') && !t.startsWith('#') && !href.endsWith('/')
+  return (needSlash ? href + '/' : href) + t
+}
+
+const PLUGIN = process.env.DSH_CC_PLUGIN || '../'
+const APP = process.env.DSH_APP_MODULES || '../node_modules/'
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => {
@@ -114,9 +131,9 @@ globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
 globalThis.cancelAnimationFrame = (id) => clearTimeout(id)
 globalThis.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
 
-const React = await import('file:///' + APP + 'react/index.js')
+const React = await import(__localFile(APP, 'react/index.js'))
 const unwrap = (m) => (m && m.default && m.default.createElement) ? m.default : m
-await import('file:///' + PLUGIN + 'client.js?pr' + Date.now())
+await import(__localFile(PLUGIN, 'client.js?pr') + Date.now())
 if (!captured) throw new Error('client.js 未注册 factory')
 const ex = captured.factory((name) => {
   if (name === 'react') return unwrap(React)
